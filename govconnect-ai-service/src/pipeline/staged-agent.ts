@@ -19,7 +19,7 @@ import { gatewayExecute, type GatewayContext } from '../gateway/tool-gateway';
 import { STAGE_TOOL_ALLOWLIST, isParallelizable } from '../gateway/tool-policy';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { buildPrompt } from './prompt-builder';
-import { buildFallback, assertNonEmptyResponse } from './fallback-policy';
+import { buildFallback, persistFallbackTicket, assertNonEmptyResponse } from './fallback-policy';
 import {
   createPipelineContext, remainingMs,
   type PipelineContext, type Stage, type StageDecision, type ToolTraceEntry, type TurnResult,
@@ -145,8 +145,9 @@ async function runBoundedLoop(
   const toolsUsed: string[] = [];
   const gw = toGatewayContext(input, stage);
 
-  const { system, dynamicContext } = buildPrompt({
+  const { system, dynamicContext } = await buildPrompt({
     villageName: input.villageName,
+    tenantId: input.ctx.tenantId ?? undefined,
     stage,
     facts: input.facts ?? [],
     records: input.records ?? [],
@@ -154,7 +155,7 @@ async function runBoundedLoop(
     language: input.language,
   });
 
-  const { text: safeMessage } = piiInbound(input.message);
+  const { text: safeMessage } = await piiInbound(input.message, input.ctx.tenantId ?? '');
   const messages: GatewayChatMessage[] = [
     { role: 'system', content: system },
     { role: 'user', content: dynamicContext },
@@ -236,10 +237,13 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
   });
 
   const failover = (reason: string, error?: string): TurnResult => {
-    const fb = buildFallback({
-      stage, terminalState: 'FAILED', userId: input.ctx.userId,
-      traceId: input.ctx.traceId, intentHint: stageHint(stage), error,
-    });
+    const fbInput = {
+      stage, terminalState: 'FAILED' as const, userId: input.ctx.userId,
+      traceId: input.ctx.traceId, tenantId: input.ctx.tenantId ?? '',
+      channel: input.ctx.channel, intentHint: stageHint(stage), error,
+    };
+    const fb = buildFallback(fbInput);
+    persistFallbackTicket(fbInput, fb.ticketRef);
     logger.warn('[staged-agent] turn failed → fallback', {
       traceId: input.ctx.traceId, stage, reason, error: error ? redactForLog(error) : undefined,
     });
@@ -319,10 +323,13 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
   } catch (err) {
     const msg = String((err as Error)?.message ?? err);
     if (msg.includes('turn_budget_exhausted')) {
-      const fb = buildFallback({
-        stage, terminalState: 'BUDGET_EXHAUSTED', userId: input.ctx.userId,
-        traceId: input.ctx.traceId, intentHint: stageHint(stage),
-      });
+      const fbInput = {
+        stage, terminalState: 'BUDGET_EXHAUSTED' as const, userId: input.ctx.userId,
+        traceId: input.ctx.traceId, tenantId: input.ctx.tenantId ?? '',
+        channel: input.ctx.channel, intentHint: stageHint(stage),
+      };
+      const fb = buildFallback(fbInput);
+      persistFallbackTicket(fbInput, fb.ticketRef);
       return finish({
         terminalState: 'BUDGET_EXHAUSTED', response: fb.response, stage,
         intent: stage, toolsUsed: [], toolTrace: [],

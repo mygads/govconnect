@@ -843,3 +843,136 @@ model ai_nlu_few_shot_examples {
 
   @@index([village_id, enabled])
 }
+
+// ── Pipeline v2 persistence (staged agent). Tables are created by
+// migration 20260929_pipeline_persistence; runtime access is via raw SQL in
+// src/pipeline/pipeline-store.ts so the code also typechecks without a
+// generated client.
+model pipeline_audit_events {
+  id          BigInt   @id @default(autoincrement())
+  occurred_at DateTime @default(now()) @db.Timestamptz(6)
+  tenant_id   String
+  trace_id    String
+  user_id     String
+  channel     String   @default("whatsapp")
+  stage       String
+  event       String
+  payload     Json     @default("{}")
+
+  @@index([tenant_id, trace_id])
+  @@index([occurred_at])
+}
+
+model pipeline_idempotency_keys {
+  tenant_id  String
+  idem_key   String
+  response   Json
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at DateTime @db.Timestamptz(6)
+
+  @@id([tenant_id, idem_key])
+  @@index([expires_at])
+}
+
+model pipeline_turn_states {
+  tenant_id            String
+  user_id              String
+  channel              String   @default("whatsapp")
+  stage                String
+  slots                Json     @default("{}")
+  assessor_confidences Json     @default("[]")
+  updated_at           DateTime @default(now()) @db.Timestamptz(6)
+  expires_at           DateTime @db.Timestamptz(6)
+
+  @@id([tenant_id, user_id, channel])
+}
+
+model pipeline_takeovers {
+  tenant_id   String
+  user_id     String
+  channel     String    @default("whatsapp")
+  taken_by    String
+  reason      String    @default("")
+  taken_at    DateTime  @default(now()) @db.Timestamptz(6)
+  expires_at  DateTime  @db.Timestamptz(6)
+  released_at DateTime? @db.Timestamptz(6)
+
+  @@id([tenant_id, user_id, channel])
+}
+
+model pipeline_nik_vault {
+  token      String   @id
+  tenant_id  String
+  ciphertext String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at DateTime @db.Timestamptz(6)
+
+  @@index([expires_at])
+}
+
+model pipeline_fallback_tickets {
+  ticket_id  String   @id
+  tenant_id  String
+  user_id    String
+  channel    String   @default("whatsapp")
+  stage      String
+  reason     String
+  detail     String   @default("")
+  status     String   @default("open")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id, status])
+}
+
+model pipeline_semantic_cache {
+  cache_key   String   @id
+  tenant_id   String
+  doc_version String   @default("")
+  question    String
+  answer      String
+  hits        Int      @default(0)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  expires_at  DateTime @db.Timestamptz(6)
+
+  @@index([tenant_id, doc_version])
+}
+
+model pipeline_improvement_proposals {
+  id         BigInt    @id @default(autoincrement())
+  tenant_id  String
+  kind       String
+  title      String
+  payload    Json      @default("{}")
+  status     String    @default("proposed")
+  decided_by String?
+  decided_at DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id, status])
+}
+
+model pipeline_lapor_outbox {
+  id            BigInt   @id @default(autoincrement())
+  tenant_id     String
+  complaint_ref String
+  payload       Json
+  tracking_id   String?
+  status        String   @default("pending")
+  attempts      Int      @default(0)
+  last_error    String   @default("")
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([status])
+}
+
+model pipeline_ingress_quarantine {
+  id         BigInt   @id @default(autoincrement())
+  tenant_id  String
+  user_id    String
+  channel    String   @default("whatsapp")
+  reason     String
+  excerpt    String   @default("")
+  reviewed   Boolean  @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+}

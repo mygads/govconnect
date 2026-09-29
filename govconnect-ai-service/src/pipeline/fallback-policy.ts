@@ -12,12 +12,17 @@
 
 import crypto from 'crypto';
 import type { Stage, TerminalState } from './stage-types';
+import { createFallbackTicket } from './pipeline-store';
+import { appendAudit } from './pipeline-store';
+import logger from '../utils/logger';
 
 export interface FallbackInput {
   stage: Stage;
   terminalState: TerminalState;
   userId: string;
   traceId: string;
+  tenantId?: string;
+  channel?: string;
   /** What the user was trying to do, in plain words (no PII). */
   intentHint?: string;
   error?: string;
@@ -54,6 +59,43 @@ export function buildFallback(input: FallbackInput): { response: string; ticketR
   ].join('\n\n');
 
   return { response, ticketRef: ticket };
+}
+
+/**
+ * Persist the fallback ticket so the temporary reference is REAL:
+ * it lands in pipeline_fallback_tickets (status=open) and in the audit
+ * trail. Fire-and-forget — never blocks the reply to the citizen.
+ */
+export function persistFallbackTicket(input: FallbackInput, ticketRef: string): void {
+  const tenantId = input.tenantId ?? '';
+  if (!tenantId) {
+    logger.warn('[fallback] no tenantId — ticket persisted to audit only', { ticketRef });
+  }
+  void (async () => {
+    try {
+      if (tenantId) {
+        await createFallbackTicket({
+          ticketId: ticketRef,
+          tenantId,
+          userId: input.userId,
+          channel: input.channel ?? 'whatsapp',
+          stage: input.stage,
+          reason: input.terminalState,
+          detail: (input.error ?? '').slice(0, 500),
+        });
+      }
+      await appendAudit({
+        tenantId, traceId: input.traceId, userId: input.userId,
+        channel: input.channel ?? 'whatsapp', stage: input.stage,
+        event: 'fallback_ticket_issued',
+        payload: { ticketRef, terminalState: input.terminalState, intentHint: input.intentHint ?? null },
+      });
+    } catch (err) {
+      logger.warn('[fallback] persistFallbackTicket failed', {
+        error: String((err as Error)?.message ?? err).slice(0, 200),
+      });
+    }
+  })();
 }
 
 /** Guard: crash loudly in dev if something tries to return an empty reply. */

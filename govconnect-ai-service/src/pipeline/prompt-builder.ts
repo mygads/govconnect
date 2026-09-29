@@ -15,6 +15,8 @@ import { piiInbound } from '../gateway/pii-gateway';
 
 export interface PromptInput {
   villageName: string;
+  /** Generic tenant id (village today). Threaded into PII handling. */
+  tenantId?: string;
   stage: Stage;
   /** Scoped facts: village profile, service info, RAG snippets (already tenant-scoped). */
   facts: string[];
@@ -47,20 +49,22 @@ export function buildStaticSystemPrompt(): string {
 }
 
 /** Dynamic per-turn context — delivered as a user-role message. */
-export function buildDynamicContext(input: PromptInput): string {
+export async function buildDynamicContext(input: PromptInput): Promise<string> {
   const lines: string[] = [];
   const now = new Date();
   lines.push(`[Konteks] Desa: ${input.villageName} | Tahap: ${input.stage} | Waktu: ${now.toLocaleString('id-ID')}`);
   if (input.language) lines.push(`[Bahasa warga] ${input.language}`);
   if (input.summary) {
-    const { text } = piiInbound(input.summary);
+    const { text } = await piiInbound(input.summary, input.tenantId ?? '');
     lines.push(`[Ringkasan percakapan]\n${text}`);
   }
   if (input.facts.length > 0) {
-    lines.push('[Fakta resmi desa]\n' + input.facts.map((f) => piiInbound(f).text).join('\n---\n'));
+    const safe = await Promise.all(input.facts.map((f) => piiInbound(f, input.tenantId ?? '')));
+    lines.push('[Fakta resmi desa]\n' + safe.map((s) => s.text).join('\n---\n'));
   }
   if (input.records.length > 0) {
-    lines.push('[Data database — PALING OTORITATIF]\n' + input.records.map((r) => piiInbound(r).text).join('\n---\n'));
+    const safe = await Promise.all(input.records.map((r) => piiInbound(r, input.tenantId ?? '')));
+    lines.push('[Data database — PALING OTORITATIF]\n' + safe.map((s) => s.text).join('\n---\n'));
   }
   lines.push('[Instruksi tahap] Jawab sesuai tahap di atas. Jangan melompat tahap.');
   return lines.join('\n\n');
@@ -71,9 +75,9 @@ export interface BuiltPrompt {
   dynamicContext: string;
 }
 
-export function buildPrompt(input: PromptInput): BuiltPrompt {
+export async function buildPrompt(input: PromptInput): Promise<BuiltPrompt> {
   return {
     system: buildStaticSystemPrompt(),
-    dynamicContext: buildDynamicContext(input),
+    dynamicContext: await buildDynamicContext(input),
   };
 }

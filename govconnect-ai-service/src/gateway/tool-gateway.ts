@@ -123,7 +123,7 @@ export async function gatewayExecute(
   // 5. PII redaction on args (inbound).
   const safeArgs: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(rawArgs)) {
-    safeArgs[k] = typeof v === 'string' ? piiInbound(v).text : v;
+    safeArgs[k] = typeof v === 'string' ? (await piiInbound(v, ctx.tenantId ?? '')).text : v;
   }
 
   // 6. Execute with per-tool timeout; retry ONLY transient.

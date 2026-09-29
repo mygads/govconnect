@@ -121,14 +121,14 @@ describe('fallback-policy (never-silent)', () => {
 describe('pii-gateway', () => {
   const NIK = '3201010101010001';
 
-  it('tokenizes NIK on inbound and detokenizes deterministically', () => {
-    const { text, tokens } = piiInbound(`NIK saya ${NIK} tolong cek`);
+  it('tokenizes NIK on inbound and detokenizes deterministically', async () => {
+    const { text, tokens } = await piiInbound(`NIK saya ${NIK} tolong cek`, 'test-tenant');
     expect(text).not.toContain(NIK);
     expect(detokenize(text, tokens)).toContain(NIK);
   });
 
-  it('redacts phone numbers on inbound', () => {
-    const { text } = piiInbound('hubungi 081234567890 ya');
+  it('redacts phone numbers on inbound', async () => {
+    const { text } = await piiInbound('hubungi 081234567890 ya', 'test-tenant');
     expect(text).not.toContain('081234567890');
   });
 
