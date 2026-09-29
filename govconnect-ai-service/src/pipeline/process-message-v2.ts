@@ -29,7 +29,7 @@ import { ingressCheck } from './ingress-guard';
 import { isVillageKilled, KILL_SWITCH_REPLY } from './kill-switch';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
 import { applyMemoryPolicy } from './memory-policy';
-import { buildFallback, persistFallbackTicket } from './fallback-policy';
+import { issueFallback } from './fallback-policy';
 import {
   confirmButtons, categoryList, validateInteractive, type InteractivePayload,
 } from './wa-interactive';
@@ -310,10 +310,7 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
         stage: 'TRIAGE' as const, terminalState: 'BUDGET_EXHAUSTED' as const,
         userId: input.userId, traceId, tenantId, channel,
       };
-      const fb = buildFallback(fbInput);
-      if (sideEffectsAllowed) {
-        persistFallbackTicket(fbInput, fb.ticketRef);
-      }
+      const fb = await issueFallback(fbInput, { persist: sideEffectsAllowed });
       return {
         success: false,
         response: fb.response,

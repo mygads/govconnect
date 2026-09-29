@@ -32,7 +32,7 @@ import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { identityDenialCopy } from './identity-ladder';
 import { buildPrompt } from './prompt-builder';
 import { resolveExperimentVariant } from '../services/experiment-framework.service';
-import { buildFallback, persistFallbackTicket, assertNonEmptyResponse } from './fallback-policy';
+import { issueFallback, assertNonEmptyResponse } from './fallback-policy';
 import {
   createPipelineContext, remainingMs,
   type PipelineContext, type Stage, type StageDecision, type ToolTraceEntry, type TurnResult,
@@ -343,10 +343,10 @@ async function executeConfirmed(
   gw: GatewayContext,
   mutation: { tool: string; args: Record<string, unknown> },
   finish: (partial: Omit<TurnResult, 'durationMs' | 'assessorCalls'>) => TurnResult,
-  failover: (reason: string, error?: string) => TurnResult,
+  failover: (reason: string, error?: string) => Promise<TurnResult>,
 ): Promise<TurnResult> {
   const r = await gatewayExecute(mutation.tool as AgentToolName, mutation.args, gw);
-  if (!r.ok) return failover(`mutation_failed:${r.error}`, r.error);
+  if (!r.ok) return await failover(`mutation_failed:${r.error}`, r.error);
   const { text: verified } = verifyAnswer(
     `Berhasil diproses. ${resultToText(r.result).slice(0, 500)}`, [r.trace],
   );
@@ -371,14 +371,16 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
     assessorCalls: input.ctx.assessorConfidences.length,
   });
 
-  const failover = (reason: string, error?: string): TurnResult => {
+  // In shadow/evaluation mode no production state may be written (P1-1).
+  const persistWrites = (input.ctx.sideEffectMode ?? 'production') === 'production';
+
+  const failover = async (reason: string, error?: string): Promise<TurnResult> => {
     const fbInput = {
       stage, terminalState: 'FAILED' as const, userId: input.ctx.userId,
       traceId: input.ctx.traceId, tenantId: input.ctx.tenantId ?? '',
       channel: input.ctx.channel, intentHint: stageHint(stage), error,
     };
-    const fb = buildFallback(fbInput);
-    persistFallbackTicket(fbInput, fb.ticketRef);
+    const fb = await issueFallback(fbInput, { persist: persistWrites });
     logger.warn('[staged-agent] turn failed → fallback', {
       traceId: input.ctx.traceId, stage, reason, error: error ? redactForLog(error) : undefined,
     });
@@ -547,8 +549,7 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
         traceId: input.ctx.traceId, tenantId: input.ctx.tenantId ?? '',
         channel: input.ctx.channel, intentHint: stageHint(stage),
       };
-      const fb = buildFallback(fbInput);
-      persistFallbackTicket(fbInput, fb.ticketRef);
+      const fb = await issueFallback(fbInput, { persist: persistWrites });
       return finish({
         terminalState: 'BUDGET_EXHAUSTED', response: fb.response, stage,
         intent: stage, toolsUsed: [], toolTrace: [],

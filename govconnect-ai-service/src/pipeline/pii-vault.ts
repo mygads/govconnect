@@ -1,8 +1,14 @@
 /**
  * Persistent NIK vault.
  *
- * Tokens (e.g. "⟦NIK:3f9a…⟧") map to AES-256-GCM ciphertext stored in the
+ * Tokens (e.g. "⟦NIK_3f9a…⟧") map to AES-256-GCM ciphertext stored in the
  * pipeline_nik_vault table. Plaintext NIK is NEVER written to disk/DB.
+ *
+ * Token format is canonicalized on "⟦NIK_<12 hex>⟧" (underscore) to match
+ * TOKEN_RE in gateway/pii-gateway.ts, which is what detokenizePersistent
+ * uses to find tokens. (An older colon variant "⟦NIK:…⟧" may exist in the
+ * DB from before; vaultResolveNik looks tokens up verbatim, so those still
+ * resolve — only newly minted tokens use the canonical format.)
  *
  * Key management:
  * - Key comes from NIK_VAULT_KEY (64 hex chars = 32 bytes).
@@ -55,7 +61,7 @@ const memVault = new Map<string, { cipher: string; tenantId: string; expiresAt: 
 
 /** Store a plaintext NIK, return the opaque token. Plaintext never persists. */
 export async function vaultStoreNik(plainNik: string, tenantId: string): Promise<string> {
-  const token = `⟦NIK:${randomBytes(6).toString('hex')}⟧`;
+  const token = `⟦NIK_${randomBytes(6).toString('hex')}⟧`;
   const key = getKey();
   if (!key) {
     // Degraded: memory-only, plaintext never leaves the process.

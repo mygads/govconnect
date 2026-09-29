@@ -43,8 +43,11 @@ const INTENT_LINE: Record<string, string> = {
 };
 
 /** Structured fallback including the ticket ref for persistence. */
-export function buildFallback(input: FallbackInput): { response: string; ticketRef: string } {
-  const ticket = mintTempTicket();
+export function buildFallback(
+  input: FallbackInput,
+  ticketRef?: string,
+): { response: string; ticketRef: string } {
+  const ticket = ticketRef ?? mintTempTicket();
   const intentLine = INTENT_LINE[input.intentHint ?? ''] ?? 'pesan Anda';
 
   const first =
@@ -62,21 +65,95 @@ export function buildFallback(input: FallbackInput): { response: string; ticketR
 }
 
 /**
- * Persist the fallback ticket so the temporary reference is REAL:
- * it lands in pipeline_fallback_tickets (status=open) and in the audit
- * trail. Fire-and-forget — never blocks the reply to the citizen.
+ * Mint a ticket id AND persist it atomically (best-effort): the INSERT uses
+ * ON CONFLICT DO NOTHING, and on id collision we re-mint (max attempts).
+ * P2-9 (deep audit): the citizen must never hold a reference that is not in
+ * the DB. On DB outage we still return a reference (never-silent wins) but
+ * mark it explicitly unpersisted.
  */
-export function persistFallbackTicket(input: FallbackInput, ticketRef: string): void {
+async function mintUniqueTicketId(
+  input: FallbackInput,
+): Promise<{ ticketRef: string; persisted: boolean }> {
   const tenantId = input.tenantId ?? '';
   if (!tenantId) {
-    logger.warn('[fallback] no tenantId — ticket persisted to audit only', { ticketRef });
+    const ticketRef = mintTempTicket();
+    logger.warn('[fallback] no tenantId — ticket issued without DB persistence', { ticketRef });
+    return { ticketRef, persisted: false };
   }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const ticketRef = mintTempTicket();
+    const res = await createFallbackTicket({
+      ticketId: ticketRef,
+      tenantId,
+      userId: input.userId,
+      channel: input.channel ?? 'whatsapp',
+      stage: input.stage,
+      reason: input.terminalState,
+      detail: (input.error ?? '').slice(0, 500),
+    });
+    if (res === 'inserted') return { ticketRef, persisted: true };
+    if (res === 'conflict') {
+      logger.warn('[fallback] ticket id collision — re-minting', { attempt, ticketRef });
+      continue;
+    }
+    logger.warn('[fallback] ticket DB unavailable — issuing unpersisted reference', { ticketRef });
+    return { ticketRef, persisted: false };
+  }
+  // Unreachable in practice (3 × 1/16.7M collisions), but never return empty.
+  const ticketRef = mintTempTicket();
+  logger.error('[fallback] ticket id collision exhausted retries — issuing unpersisted reference', { ticketRef });
+  return { ticketRef, persisted: false };
+}
+
+/**
+ * Atomic fallback: mint + persist + audit, then build the user-facing
+ * response. The reference inside the response is the same one that was
+ * persisted — the "reference is REAL" invariant of the never-silent
+ * guarantee. Pass { persist: false } in shadow/evaluation mode so no
+ * production state is written (P1-1).
+ */
+export async function issueFallback(
+  input: FallbackInput,
+  opts: { persist?: boolean } = {},
+): Promise<{ response: string; ticketRef: string; persisted: boolean }> {
+  const persist = opts.persist ?? true;
+  const { ticketRef, persisted } = persist
+    ? await mintUniqueTicketId(input)
+    : { ticketRef: mintTempTicket(), persisted: false };
+  if (persist) {
+    try {
+      await appendAudit({
+        tenantId: input.tenantId ?? '', traceId: input.traceId, userId: input.userId,
+        channel: input.channel ?? 'whatsapp', stage: input.stage,
+        event: 'fallback_ticket_issued',
+        payload: {
+          ticketRef, persisted,
+          terminalState: input.terminalState, intentHint: input.intentHint ?? null,
+        },
+      });
+    } catch (err) {
+      logger.warn('[fallback] fallback_ticket_issued audit failed', {
+        error: String((err as Error)?.message ?? err).slice(0, 200),
+      });
+    }
+  }
+  const { response } = buildFallback(input, ticketRef);
+  assertNonEmptyResponse(response, 'issueFallback');
+  return { response, ticketRef, persisted };
+}
+
+/**
+ * @deprecated Use {@link issueFallback} — it mints, persists (collision-safe)
+ * and audits atomically. Kept as a fire-and-forget wrapper so existing
+ * callers don't break; it delegates to issueFallback with persist enabled.
+ */
+export function persistFallbackTicket(input: FallbackInput, ticketRef: string): void {
   void (async () => {
     try {
-      if (tenantId) {
+      if (input.tenantId) {
         await createFallbackTicket({
           ticketId: ticketRef,
-          tenantId,
+          tenantId: input.tenantId,
           userId: input.userId,
           channel: input.channel ?? 'whatsapp',
           stage: input.stage,
@@ -85,7 +162,7 @@ export function persistFallbackTicket(input: FallbackInput, ticketRef: string): 
         });
       }
       await appendAudit({
-        tenantId, traceId: input.traceId, userId: input.userId,
+        tenantId: input.tenantId ?? '', traceId: input.traceId, userId: input.userId,
         channel: input.channel ?? 'whatsapp', stage: input.stage,
         event: 'fallback_ticket_issued',
         payload: { ticketRef, terminalState: input.terminalState, intentHint: input.intentHint ?? null },

@@ -335,24 +335,35 @@ export async function vaultDelete(token: string, tenantId: string): Promise<void
 
 // ── Fallback tickets ──────────────────────────────────────────────────────
 
+/**
+ * Insert a fallback ticket.
+ *
+ * P2-9 (deep audit): `ticket_id` is random, so a collision is astronomically
+ * unlikely — but on collision the old code failed silently while the citizen
+ * already held the reference. Now the INSERT is `ON CONFLICT DO NOTHING` and
+ * the caller can detect the collision and re-mint, so the "reference is REAL"
+ * invariant of the never-silent guarantee actually holds.
+ */
 export async function createFallbackTicket(input: {
   ticketId: string; tenantId: string; userId: string; channel: string;
   stage: string; reason: string; detail: string;
-}): Promise<boolean> {
+}): Promise<'inserted' | 'conflict' | 'unavailable'> {
   const db = await getDb();
-  if (!db) return dbDown('createFallbackTicket', false);
+  if (!db) return dbDown('createFallbackTicket', 'unavailable');
   try {
-    await db.$executeRawUnsafe(
+    const rows = (await db.$queryRawUnsafe(
       `INSERT INTO pipeline_fallback_tickets
          (ticket_id, tenant_id, user_id, channel, stage, reason, detail, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'open')`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'open')
+       ON CONFLICT (ticket_id) DO NOTHING
+       RETURNING ticket_id`,
       input.ticketId, input.tenantId, input.userId, input.channel,
       input.stage, input.reason, input.detail,
-    );
-    return true;
+    )) as Array<{ ticket_id: string }>;
+    return rows.length > 0 ? 'inserted' : 'conflict';
   } catch (err) {
     logger.warn('[pipeline-store] createFallbackTicket failed', { error: String((err as Error)?.message ?? err).slice(0, 200) });
-    return false;
+    return 'unavailable';
   }
 }
 
@@ -484,20 +495,34 @@ export async function laporEnqueue(
   }
 }
 
+/**
+ * Minutes after which a row stuck in 'sending' (crash between claim and
+ * markResult) is reclaimed for redelivery. P2-8 (deep audit): without this,
+ * a crash left rows in 'sending' forever because the claim query only
+ * selected 'pending'/'failed'.
+ */
+export function getLaporSendingReclaimMinutes(): number {
+  const raw = Number(process.env.LAPOR_SENDING_RECLAIM_MINUTES ?? '30');
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 30;
+}
+
 export async function laporClaimPending(limit = 10): Promise<Array<Record<string, unknown>>> {
   const db = await getDb();
   if (!db) return dbDown('laporClaimPending', []);
+  const reclaimMinutes = getLaporSendingReclaimMinutes();
   try {
     return (await db.$queryRawUnsafe(
       `UPDATE pipeline_lapor_outbox SET status='sending', attempts=attempts+1, updated_at=now()
         WHERE id IN (
           SELECT id FROM pipeline_lapor_outbox
-          WHERE status IN ('pending','failed') AND attempts < 5
+          WHERE (status IN ('pending','failed') AND attempts < 5)
+             OR (status='sending' AND attempts < 5
+                 AND updated_at < now() - ($2 || ' minutes')::interval)
           ORDER BY id LIMIT $1
           FOR UPDATE SKIP LOCKED
         )
        RETURNING id, tenant_id, complaint_ref, payload, attempts`,
-      limit,
+      limit, String(reclaimMinutes),
     )) as Array<Record<string, unknown>>;
   } catch {
     return dbDown('laporClaimPending', []);
