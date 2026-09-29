@@ -3,7 +3,8 @@ import { getAdminSession, resolveVillageId } from '@/lib/admin-session'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
 
 /** POST /api/ktp-verifications/:id/reject — { reason } (reviewer = session admin). */
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const session = await getAdminSession(request)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const villageId = resolveVillageId(session, request)
@@ -13,7 +14,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const reason = String(body.reason ?? '').trim()
   if (!reason) return NextResponse.json({ error: 'reason required' }, { status: 400 })
 
-  const url = buildUrl(ServicePath.AI, `/api/ktp-verifications/${encodeURIComponent(params.id)}/reject`)
+  const url = buildUrl(ServicePath.AI, `/api/ktp-verifications/${encodeURIComponent(id)}/reject`)
   try {
     const res = await apiFetch(url, {
       method: 'POST',

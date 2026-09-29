@@ -121,7 +121,7 @@ describe('resolveExperimentVariant', () => {
     rampPct?: number;
     variants?: Array<{ key: string; is_control: boolean; config: unknown }>;
   } = {}) {
-    mockQuery.mockImplementation(async (sql: string) => {
+    mockQuery.mockImplementation((async (sql: string, ..._values: any[]): Promise<any> => {
       if (sql.includes('FROM ai.experiments')) return [{ id: 'exp1', name: 'tone-test' }];
       if (sql.includes('FROM ai.experiment_ramps')) return [{ pct: opts.rampPct ?? 100 }];
       if (sql.includes('FROM ai.experiment_variants')) {
@@ -131,7 +131,7 @@ describe('resolveExperimentVariant', () => {
         ];
       }
       return [];
-    });
+    }) as typeof mockQuery extends { mockImplementation: (fn: infer F) => any } ? F : never);
   }
 
   it('resolves treatment deterministically and audits the assignment', async () => {

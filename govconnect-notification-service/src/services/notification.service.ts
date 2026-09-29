@@ -445,7 +445,7 @@ export async function sendNotification(params: SendNotificationParams): Promise<
         reference_number,
         entity_status,
         delivery_status: 'sent',
-        message_id: messageId,
+        message_id: messageId ?? '',
         provider_status: providerStatus,
       });
       // R12: after a DONE notification is delivered, ask ai-service to send
@@ -454,8 +454,8 @@ export async function sendNotification(params: SendNotificationParams): Promise<
       // the notification flow.
       if (notificationType === 'status_updated' && entity_status === 'DONE') {
         void triggerCsatSurvey({
-          village_id,
-          user_id: resolvedIdentifier,
+          village_id: village_id ?? '',
+          user_id: resolvedIdentifier ?? '',
           channel: resolvedChannel,
           complaint_id: reference_number ?? '',
         }).catch(() => undefined);

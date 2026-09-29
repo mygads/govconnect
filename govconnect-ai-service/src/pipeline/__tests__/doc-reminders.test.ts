@@ -18,7 +18,7 @@ import {
 const mockGetDb = vi.mocked(getDb);
 const mockAppendAudit = vi.mocked(appendAudit);
 
-function fakeDb(overrides: Record<string, any> = {}) {
+function fakeDb(overrides: Record<string, any> = {}): any {
   return {
     $queryRawUnsafe: vi.fn(async () => []),
     $executeRawUnsafe: vi.fn(async () => 1),
@@ -64,7 +64,7 @@ describe('runDocReminderSweep', () => {
       ]),
     });
     mockGetDb.mockResolvedValue(db as any);
-    const sender = vi.fn(async () => true);
+    const sender = vi.fn(async (..._args: any[]) => true);
     const r = await runDocReminderSweep({ sender });
     expect(r).toEqual({ due: 1, sent: 1, failed: 0 });
     expect(sender).toHaveBeenCalledTimes(1);
@@ -82,7 +82,7 @@ describe('runDocReminderSweep', () => {
       $executeRawUnsafe: vi.fn(async () => 0), // claim failed → already sent
     });
     mockGetDb.mockResolvedValue(db as any);
-    const sender = vi.fn(async () => true);
+    const sender = vi.fn(async (..._args: any[]) => true);
     const r = await runDocReminderSweep({ sender });
     expect(r.sent).toBe(0);
     expect(sender).not.toHaveBeenCalled();
@@ -126,7 +126,7 @@ describe('broadcast opt-in', () => {
       }),
     });
     mockGetDb.mockResolvedValue(db as any);
-    const sender = vi.fn(async () => true);
+    const sender = vi.fn(async (..._args: any[]) => true);
     const r = await sendBroadcast({
       villageId: 'v1', userIds: ['u1', 'u2', 'u3'], text: 'pengumuman', sentBy: 'admin',
       sender,
@@ -147,7 +147,7 @@ describe('broadcast opt-in', () => {
       }),
     });
     mockGetDb.mockResolvedValue(db as any);
-    const sender = vi.fn(async () => true);
+    const sender = vi.fn(async (..._args: any[]) => true);
     await sendBroadcast({
       villageId: 'v1', userIds: ['u1', 'u2', 'u3'], text: 'pengumuman', sentBy: 'admin',
       sender,

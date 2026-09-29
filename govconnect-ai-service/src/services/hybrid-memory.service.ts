@@ -9,6 +9,7 @@ import {
   upsertUserMemoryVector,
   type UserMemoryVectorSearchResult,
 } from './memory-vector.service';
+import { LEGACY_VILLAGE_SCOPE, normalizeVillageScope } from './profile-scope';
 
 const MEMORY_SUMMARY_CACHE = new LRUCache<string, string>({
   maxSize: 2000,
@@ -311,8 +312,10 @@ export async function deleteAllMemories(wa_user_id: string): Promise<void> {
  * metadata_json.invalidated = true instead of deleting; every read path
  * must honor the flag or "forgotten" memories keep being served.
  */
-export function isMemoryInvalidated(entry: { metadata_json?: unknown }): boolean {
-  const meta = entry.metadata_json as { invalidated?: unknown } | null | undefined;
+export function isMemoryInvalidated(entry: unknown): boolean {
+  const meta = (entry as { metadata_json?: unknown } | null | undefined)?.metadata_json as {
+    invalidated?: unknown;
+  } | null | undefined;
   return meta?.invalidated === true;
 }
 
@@ -376,13 +379,13 @@ export async function searchUserMemories(input: {
     // P1-4: drop soft-invalidated entries (metadata_json.invalidated = true)
     // before they can reach the agent. memoryInvalidateEntry only marks the
     // flag — without this filter the "deleted" memory kept being served.
-    // (Explicit param types: the prisma client types are unavailable in
-    // this environment, so the candidate arrays are implicitly any.)
+    // (No explicit callback param types: annotating them would narrow the
+    // filtered arrays and break assignability to MemoryEntryRow[] downstream.)
     const liveLexicalCandidates = lexicalCandidates.filter(
-      (e: { metadata_json?: unknown }) => !isMemoryInvalidated(e),
+      (e) => !isMemoryInvalidated(e),
     );
     const liveSemanticCandidates = semanticCandidates.filter(
-      (e: { metadata_json?: unknown }) => !isMemoryInvalidated(e),
+      (e) => !isMemoryInvalidated(e),
     );
 
     let merged = mergeMemoryCandidates(liveLexicalCandidates, liveSemanticCandidates, input.query, queryTerms);
@@ -447,10 +450,20 @@ export async function buildHybridMemorySummary(input: {
   }
 
   try {
+    // W5: durable_user_profiles has a composite PK (village_id, wa_user_id);
+    // mirror the legacy fallback from user-profile.service.ts.
+    const profilePromise = (async () => {
+      const vid = normalizeVillageScope(input.village_id);
+      const stored = await prisma.durable_user_profiles.findUnique({
+        where: { village_id_wa_user_id: { village_id: vid, wa_user_id: input.wa_user_id } },
+      });
+      if (stored || vid === LEGACY_VILLAGE_SCOPE) return stored;
+      return prisma.durable_user_profiles.findUnique({
+        where: { village_id_wa_user_id: { village_id: LEGACY_VILLAGE_SCOPE, wa_user_id: input.wa_user_id } },
+      });
+    })();
     const [profile, rankedMemories] = await Promise.all([
-      prisma.durable_user_profiles.findUnique({
-        where: { wa_user_id: input.wa_user_id },
-      }),
+      profilePromise,
       searchUserMemories({
         wa_user_id: input.wa_user_id,
         query: input.query,

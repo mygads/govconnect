@@ -12,11 +12,11 @@ import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
  *   never pull another village's numbers.
  * - superadmins: must pass ?village_ids= explicitly (they manage all villages).
  */
-export async function GET(request: NextRequest, { params }: { params: { scope: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ scope: string }> }) {
+  const { scope } = await params
   const session = await getAdminSession(request)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const scope = params.scope
   if (scope !== 'district' && scope !== 'province') {
     return NextResponse.json({ error: "scope must be 'district' or 'province'" }, { status: 400 })
   }

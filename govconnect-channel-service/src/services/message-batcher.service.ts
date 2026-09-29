@@ -207,14 +207,14 @@ async function publishToAI(
       });
 
       // Retry later
-      scheduleRetry(village_id, wa_user_id, message_id, message_text, received_at, mediaInfo, spamResult, extra);
+      scheduleRetry(village_id, wa_user_id, message_id, message_text, received_at, mediaInfo, spamResult);
     }
   } else {
     logger.warn('RabbitMQ not connected, scheduling retry', {
       wa_user_id,
       message_id,
     });
-    scheduleRetry(village_id, wa_user_id, message_id, message_text, received_at, mediaInfo, spamResult, extra);
+    scheduleRetry(village_id, wa_user_id, message_id, message_text, received_at, mediaInfo, spamResult);
   }
 }
 
@@ -229,7 +229,6 @@ function scheduleRetry(
   received_at: string,
   mediaInfo?: any,
   spamResult?: SpamCheckResult,
-  extra?: { buttonId?: string | null },
 ): void {
   const retryKey = `${village_id}:${wa_user_id}:${message_id}`;
 
