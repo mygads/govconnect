@@ -21,6 +21,11 @@ import {
   EmbeddingStats,
 } from '../types/embedding.types';
 import { callAIGatewayEmbeddings, isAIGatewayEnabledAsync } from './ai-gateway.service';
+import {
+  isLocalEmbeddingEnabled,
+  localEmbed,
+  getLocalEmbeddingModel,
+} from './local-embedding.provider';
 import { getCurrentBillingContext } from './ai-turn-billing.service';
 import { registerInterval } from '../utils/timer-registry';
 
@@ -263,6 +268,46 @@ async function requestGatewayEmbeddings(
 
 registerInterval(cleanupExpiredCache, 5 * 60 * 1000, 'embedding-cache-cleanup');
 
+let localDimsWarned = false;
+
+/**
+ * W18: route to the self-hosted provider when LOCAL_EMBEDDING=true.
+ * The local model has FIXED native dims (384 for the default multilingual
+ * model) — independent of the gateway's configured outputDimensionality.
+ * A loud one-time warning is logged because the KB vector store must be
+ * (re-)indexed with local embeddings; mixing providers in one index
+ * silently degrades retrieval.
+ */
+async function requestEmbeddings(
+  input: string | string[],
+  model: string,
+  outputDimensionality: number,
+  layerCall: 'embedding_single' | 'embedding_batch',
+  context?: EmbeddingConfig['context'],
+): Promise<{ embeddings: number[][]; model: string; durationMs: number }> {
+  if (isLocalEmbeddingEnabled()) {
+    const started = Date.now();
+    const texts = Array.isArray(input) ? input : [input];
+    const embeddings = await localEmbed(texts);
+    const nativeDims = embeddings[0]?.length ?? 0;
+    if (!localDimsWarned) {
+      localDimsWarned = true;
+      logger.warn('[embedding] LOCAL_EMBEDDING active — vector space changed', {
+        model: getLocalEmbeddingModel(),
+        nativeDims,
+        gatewayDims: outputDimensionality,
+        note: 'Re-index the KB vector store with local embeddings. Do not mix gateway and local vectors in one index.',
+      });
+    }
+    return {
+      embeddings,
+      model: `local:${getLocalEmbeddingModel()}`,
+      durationMs: Date.now() - started,
+    };
+  }
+  return requestGatewayEmbeddings(input, model, outputDimensionality, layerCall, context);
+}
+
 export function getEmbeddingCacheStats(): {
   size: number;
   hits: number;
@@ -326,7 +371,7 @@ export async function generateEmbedding(
   }
 
   try {
-    const gatewayResult = await requestGatewayEmbeddings(text, model, outputDimensionality, 'embedding_single', getEffectiveEmbeddingContext(taskType, options.context));
+    const gatewayResult = await requestEmbeddings(text, model, outputDimensionality, 'embedding_single', getEffectiveEmbeddingContext(taskType, options.context));
     const rawValues = gatewayResult.embeddings[0];
     const finalized = finalizeEmbeddingValues(rawValues, outputDimensionality, normalize);
 
@@ -425,7 +470,7 @@ export async function generateBatchEmbeddings(
   }
 
   try {
-    const gatewayResult = await requestGatewayEmbeddings(nonBlankTexts, model, outputDimensionality, 'embedding_batch', getEffectiveEmbeddingContext(taskType, options.context));
+    const gatewayResult = await requestEmbeddings(nonBlankTexts, model, outputDimensionality, 'embedding_batch', getEffectiveEmbeddingContext(taskType, options.context));
     const nonBlankEmbeddings = gatewayResult.embeddings.map((values) => {
       const finalized = finalizeEmbeddingValues(values, outputDimensionality, normalize);
       return {
