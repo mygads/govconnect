@@ -537,6 +537,7 @@ export async function memoryFindByKey(
     const rows = (await db.$queryRawUnsafe(
       `SELECT id, memory_type, memory_key, content FROM user_memory_entries
         WHERE wa_user_id=$1 AND village_id=$2 AND memory_key=$3
+          AND (metadata_json->>'invalidated' IS DISTINCT FROM 'true')
         ORDER BY created_at DESC LIMIT 1`,
       waUserId, tenantId, key,
     )) as MemoryRow[];

@@ -108,26 +108,32 @@ export async function searchUserMemoryVectors(
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
   const sqlMinScore = minScore;
   const villageFilter = villageId
-    ? Prisma.sql`AND village_id = ${villageId}`
-    : Prisma.sql`AND village_id IS NULL`;
+    ? Prisma.sql`AND v.village_id = ${villageId}`
+    : Prisma.sql`AND v.village_id IS NULL`;
   const typeFilter = memoryTypes && memoryTypes.length > 0
-    ? Prisma.sql`AND memory_type IN (${Prisma.join(memoryTypes)})`
+    ? Prisma.sql`AND v.memory_type IN (${Prisma.join(memoryTypes)})`
     : Prisma.empty;
 
   try {
+    // P1-4: exclude soft-invalidated memories (entries.metadata_json.invalidated
+    // = true). The vectors table is denormalized, so join the entries table
+    // for the invalidation flag; without this, INVALIDATE had no effect on
+    // the semantic read path.
     const results = await prisma.$queryRaw<UserMemoryVectorRow[]>`
       SELECT
-        memory_entry_id,
-        wa_user_id,
-        village_id,
-        memory_type,
-        content,
-        importance,
-        1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) AS similarity,
-        created_at
-      FROM ai.user_memory_vectors
-      WHERE wa_user_id = ${waUserId}
-        AND 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
+        v.memory_entry_id,
+        v.wa_user_id,
+        v.village_id,
+        v.memory_type,
+        v.content,
+        v.importance,
+        1 - (v.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) AS similarity,
+        v.created_at
+      FROM ai.user_memory_vectors v
+      JOIN ai.user_memory_entries e ON e.id = v.memory_entry_id
+      WHERE v.wa_user_id = ${waUserId}
+        AND (e.metadata_json->>'invalidated' IS DISTINCT FROM 'true')
+        AND 1 - (v.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
         ${villageFilter}
         ${typeFilter}
       ORDER BY similarity DESC

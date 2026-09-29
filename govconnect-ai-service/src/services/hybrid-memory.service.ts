@@ -306,6 +306,16 @@ export async function deleteAllMemories(wa_user_id: string): Promise<void> {
   }
 }
 
+/**
+ * P1-4: soft-invalidation check. memoryInvalidateEntry() marks
+ * metadata_json.invalidated = true instead of deleting; every read path
+ * must honor the flag or "forgotten" memories keep being served.
+ */
+export function isMemoryInvalidated(entry: { metadata_json?: unknown }): boolean {
+  const meta = entry.metadata_json as { invalidated?: unknown } | null | undefined;
+  return meta?.invalidated === true;
+}
+
 export async function searchUserMemories(input: {
   wa_user_id: string;
   query: string;
@@ -363,10 +373,22 @@ export async function searchUserMemories(input: {
       })(),
     ]);
 
-    let merged = mergeMemoryCandidates(lexicalCandidates, semanticCandidates, input.query, queryTerms);
+    // P1-4: drop soft-invalidated entries (metadata_json.invalidated = true)
+    // before they can reach the agent. memoryInvalidateEntry only marks the
+    // flag — without this filter the "deleted" memory kept being served.
+    // (Explicit param types: the prisma client types are unavailable in
+    // this environment, so the candidate arrays are implicitly any.)
+    const liveLexicalCandidates = lexicalCandidates.filter(
+      (e: { metadata_json?: unknown }) => !isMemoryInvalidated(e),
+    );
+    const liveSemanticCandidates = semanticCandidates.filter(
+      (e: { metadata_json?: unknown }) => !isMemoryInvalidated(e),
+    );
 
-    if (merged.length === 0 && lexicalCandidates.length > 0) {
-      merged = lexicalCandidates
+    let merged = mergeMemoryCandidates(liveLexicalCandidates, liveSemanticCandidates, input.query, queryTerms);
+
+    if (merged.length === 0 && liveLexicalCandidates.length > 0) {
+      merged = liveLexicalCandidates
         .map((entry) => {
           const recencyScore = computeRecencyScore(entry.created_at);
           const importanceScore = clampImportance(entry.importance);
