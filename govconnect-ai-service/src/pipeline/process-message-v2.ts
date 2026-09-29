@@ -63,6 +63,7 @@ import {
 } from './pipeline-store';
 import type { ProcessMessageInput, ProcessMessageResult } from '../services/ump-types';
 import { redactForLog } from '../gateway/pii-gateway';
+import { extractTopicKey } from '../services/kb-suggester-core';
 import logger from '../utils/logger';
 
 /**
@@ -566,6 +567,9 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       terminalState: turn.terminalState,
       degraded: turn.degraded,
       toolsUsed: turn.toolsUsed,
+      // R5: deterministic topic key (from PII-redacted text) so the KB
+      // suggester can cluster "10× tanya X" without reading raw messages.
+      topic: extractTopicKey(redactForLog(input.message)),
     });
 
     return result;
