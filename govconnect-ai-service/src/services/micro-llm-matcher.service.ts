@@ -11,6 +11,7 @@
 
 import logger from '../utils/logger';
 import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabledAsync } from './ai-gateway.service';
+import { callSmallTier } from '../llm/small-tier';
 import type { CallType } from './token-usage.service';
 
 // ---------- Model Priority ----------
@@ -24,6 +25,18 @@ async function callMicroLLM(
   call_type: CallType,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<string | null> {
+  // A6: small self-host tier first (MODEL_TIER_SMALL, default off).
+  // Any failure/misconfiguration → null → falls through to the main gateway.
+  try {
+    const small = await callSmallTier(
+      [{ role: 'system', content: prompt }],
+      { temperature: 0.1, maxTokens: call_type === 'summarize' ? 250 : 300 },
+    );
+    if (small) return small.text;
+  } catch {
+    // callSmallTier is designed never to throw; stay fail-safe regardless.
+  }
+
   if (!(await isAIGatewayEnabledAsync('llm', context?.village_id ?? null))) {
     logger.error('Micro LLM skipped: LLM gateway lane is not configured');
     return null;
