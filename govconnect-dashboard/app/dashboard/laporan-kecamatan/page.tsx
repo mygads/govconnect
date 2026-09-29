@@ -61,6 +61,131 @@ const MONTHS = [
   "Juli", "Agustus", "September", "Oktober", "November", "Desember",
 ]
 
+/**
+ * R11 — Heatmap volume tiket per desa.
+ * Intensitas warna merah sebanding dengan jumlah tiket (max-normalized).
+ */
+function VillageHeatmap({ villages }: { villages: VillageSummary[] }) {
+  const withData = villages.filter((v) => v.data_available)
+  if (withData.length === 0) return null
+  const max = Math.max(...withData.map((v) => v.tickets_total), 1)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Heatmap volume tiket per desa</CardTitle>
+        <CardDescription>Intensitas warna = jumlah tiket bulan ini (maks {max}).</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+          {withData.map((v) => {
+            const intensity = v.tickets_total / max
+            return (
+              <div
+                key={v.village_id}
+                className="rounded-md p-3 border"
+                style={{ backgroundColor: `rgba(220, 38, 38, ${0.06 + intensity * 0.5})` }}
+                title={`${v.village_name}: ${v.tickets_total} tiket`}
+              >
+                <div className="text-sm font-medium truncate">{v.village_name}</div>
+                <div className="text-2xl font-bold">{v.tickets_total}</div>
+                <div className="text-xs text-muted-foreground">tiket</div>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * R11 — Perbandingan SLA antar desa.
+ * Bar horizontal rata-rata jam penyelesaian per desa; garis acuan SLA P3
+ * (2 jam jam kerja, arsitektur-final §11). Hijau ≤ SLA, kuning ≤ 2×, merah > 2×.
+ */
+const SLA_TARGET_HOURS = 2
+
+function SlaComparison({ villages }: { villages: VillageSummary[] }) {
+  const rows = villages
+    .filter((v) => v.data_available && v.avg_resolution_hours != null)
+    .sort((a, b) => (a.avg_resolution_hours ?? 0) - (b.avg_resolution_hours ?? 0))
+  if (rows.length === 0) return null
+  const max = Math.max(...rows.map((v) => v.avg_resolution_hours ?? 0), SLA_TARGET_HOURS)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Perbandingan SLA antar desa</CardTitle>
+        <CardDescription>
+          Rata-rata jam penyelesaian vs target SLA {SLA_TARGET_HOURS} jam (P3, arsitektur-final §11).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {rows.map((v) => {
+          const h = v.avg_resolution_hours ?? 0
+          const pct = Math.min(100, (h / max) * 100)
+          const color =
+            h <= SLA_TARGET_HOURS ? "bg-green-500"
+            : h <= SLA_TARGET_HOURS * 2 ? "bg-yellow-500"
+            : "bg-red-500"
+          return (
+            <div key={v.village_id}>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="font-medium truncate">{v.village_name}</span>
+                <span className="text-muted-foreground tabular-nums">{h.toFixed(1)} jam</span>
+              </div>
+              <div className="h-2.5 rounded-full bg-muted relative">
+                <div className={`h-2.5 rounded-full ${color}`} style={{ width: `${pct}%` }} />
+                <div
+                  className="absolute top-0 h-2.5 w-0.5 bg-foreground/60"
+                  style={{ left: `${(SLA_TARGET_HOURS / max) * 100}%` }}
+                  title={`Target SLA ${SLA_TARGET_HOURS} jam`}
+                />
+              </div>
+            </div>
+          )
+        })}
+        <div className="flex gap-4 text-xs text-muted-foreground pt-1">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> ≤ {SLA_TARGET_HOURS} jam</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" /> ≤ {SLA_TARGET_HOURS * 2} jam</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" /> &gt; {SLA_TARGET_HOURS * 2} jam</span>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * R11 — Tren kategori pengaduan agregat tingkat kecamatan.
+ */
+function CategoryTrend({ byCategory }: { byCategory: Array<{ kategori: string; count: number }> }) {
+  if (!byCategory || byCategory.length === 0) return null
+  const max = Math.max(...byCategory.map((c) => c.count), 1)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Tren kategori pengaduan</CardTitle>
+        <CardDescription>Agregat seluruh desa pada periode ini.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {byCategory.slice(0, 10).map((c) => (
+          <div key={c.kategori}>
+            <div className="flex justify-between text-sm mb-1">
+              <span className="font-medium truncate">{c.kategori}</span>
+              <span className="text-muted-foreground tabular-nums">{c.count}</span>
+            </div>
+            <div className="h-2.5 rounded-full bg-muted">
+              <div
+                className="h-2.5 rounded-full bg-blue-500"
+                style={{ width: `${(c.count / max) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function LaporanKecamatanPage() {
   const { toast } = useToast()
   const { user } = useAuth()
@@ -180,6 +305,10 @@ export default function LaporanKecamatanPage() {
               </Card>
             ))}
           </div>
+
+          <VillageHeatmap villages={rollup.villages} />
+          <SlaComparison villages={rollup.villages} />
+          <CategoryTrend byCategory={rollup.totals.by_category} />
 
           <Card>
             <CardHeader>

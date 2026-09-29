@@ -31,6 +31,7 @@ import { firstHeader, getParam } from '../utils/http';
 import { internalApiKeyMatches } from '../utils/internal-auth';
 import { clearRetrievalCache } from '../services/rag.service';
 import { clearCache, invalidateVillageCache } from '../services/response-cache.service';
+import { semanticCacheInvalidate } from '../pipeline/pipeline-store';
 import { withAiBillingTurn } from '../services/ai-turn-billing.service';
 
 const router = Router();
@@ -198,6 +199,8 @@ router.post('/', async (req: Request, res: Response) => {
       });
       clearRetrievalCache(resolvedScope.villageId);
       if (resolvedScope.villageId) invalidateVillageCache(resolvedScope.villageId);
+      // R7: KB changed → invalidate semantic cache so new content is retrievable.
+      void semanticCacheInvalidate(resolvedScope.villageId ?? 'global').catch(() => undefined);
 
       return {
         statusCode: 201,
@@ -276,6 +279,8 @@ router.put('/:id', async (req: Request, res: Response) => {
       });
       clearRetrievalCache(resolvedScope.villageId);
       if (resolvedScope.villageId) invalidateVillageCache(resolvedScope.villageId);
+      // R7: KB changed → invalidate semantic cache so updated content is retrievable.
+      void semanticCacheInvalidate(resolvedScope.villageId ?? 'global').catch(() => undefined);
 
       return {
         statusCode: 200,
@@ -318,6 +323,15 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     logger.info('Deleting knowledge vector', { id });
 
+    // R7: fetch village_id BEFORE delete for tenant-aware cache invalidation.
+    let villageIdForInvalidate: string | null = null;
+    try {
+      const existing = await getKnowledgeVector(id);
+      villageIdForInvalidate = (existing as any)?.village_id ?? null;
+    } catch {
+      // Best-effort; fall through to global invalidation.
+    }
+
     const deleted = await deleteKnowledgeVector(id);
 
     if (!deleted) {
@@ -329,6 +343,8 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     clearRetrievalCache();
     clearCache();
+    // R7: KB changed → invalidate semantic cache (tenant-aware when possible).
+    void semanticCacheInvalidate(villageIdForInvalidate ?? 'global').catch(() => undefined);
 
     res.json({ status: 'success', deleted: true });
   } catch (error: any) {

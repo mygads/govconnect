@@ -40,6 +40,7 @@ import { applyMemoryPolicy } from './memory-policy';
 import { issueFallback } from './fallback-policy';
 import {
   confirmButtons, categoryList, validateInteractive, type InteractivePayload,
+  resolveTriageCategory,
 } from './wa-interactive';
 
 /** Stage-native interactive attachments (degrade to plain text). */
@@ -349,6 +350,25 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       audit('INGRESS', 'turn_state_restored', { stage: prior.stage });
     }
 
+    // 0b. R1: Triage list id binding. When the citizen taps a category in the
+    // interactive triage list, channel-service forwards the row id as buttonId.
+    // Bind it deterministically to the category instead of re-classifying text.
+    const triageCategory = resolveTriageCategory(input.buttonId);
+    if (triageCategory) {
+      audit('TRIAGE', 'category_selected', {
+        categoryId: triageCategory.id,
+        categoryTitle: triageCategory.title,
+        typeKey: triageCategory.typeKey,
+      });
+      // Pre-fill the category slot so the COLLECT stage skips re-asking.
+      ctx.slots['kategori'] = triageCategory.title;
+      ctx.slots['kategori_id'] = triageCategory.id;
+      ctx.slots['kategori_type_key'] = triageCategory.typeKey;
+      // Rewrite the message to the category title for downstream routing —
+      // the id is authoritative, the text is just for the LLM context.
+      input.message = triageCategory.title;
+    }
+
     // 0c. Ingress guard: rate limit + anomaly quarantine (never-silent).
     const ingress = await ingressCheck({
       tenantId, userId: input.userId, channel, traceId, message: input.message,
@@ -380,6 +400,7 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       confirmed: input.confirmed,
       message: input.message,
       pending: pendingForConfirm,
+      channel,
     });
     const confirmationMeta = {
       processingTimeMs: Date.now() - started,
@@ -553,6 +574,11 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
     let decision = routeMessage({ message: input.message });
     if (confirmation.kind === 'execute') {
       // Bound confirm_send → skip fresh routing, go straight to EXECUTE.
+      // For webchat text confirmation, mark confirmed so the EXECUTE stage
+      // (which gates on input.confirmed) can proceed.
+      if (channel === 'webchat' && !input.confirmed) {
+        (input as { confirmed?: boolean }).confirmed = true;
+      }
       audit('VERIFY', 'confirmation_bound', { tool: pendingForConfirm?.tool ?? null });
       decision = {
         stage: 'EXECUTE',
@@ -1016,6 +1042,7 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
   } finally {
     // Finalize accrual BEFORE resolution accounting: recordResolution sums
     // rows with billing_status='accrued' for this billing group.
+    // R9 anomaly detection is wired inside finalizeAiBillingTurn (fire-and-forget).
     if (billingTurn) {
       await finishAiBillingTurn(billingTurn).catch(() => undefined);
     }

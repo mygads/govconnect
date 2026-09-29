@@ -82,6 +82,9 @@ export function resolveConfirmation(input: {
   confirmed?: boolean;
   message: string;
   pending: PendingMutation | null;
+  /** Channel of the turn. Webchat has no interactive buttons, so explicit
+   *  text confirmation executes directly instead of re-showing buttons. */
+  channel?: 'whatsapp' | 'webchat';
 }): ConfirmationResolution {
   const btn = input.buttonId ?? null;
 
@@ -97,9 +100,12 @@ export function resolveConfirmation(input: {
   if (btn === 'cancel_request') {
     return { kind: 'cancel' };
   }
-  // Affirmative TEXT ("Ya") never executes — re-enter VERIFY so the citizen
-  // gets the confirm buttons again.
+  // Affirmative TEXT ("Ya"):
+  // - WhatsApp: never executes — re-enter VERIFY so the citizen gets the
+  //   confirm buttons again (button.id is authoritative).
+  // - Webchat: no buttons exist, so explicit text confirmation executes.
   if (input.pending && !input.confirmed && isExplicitConfirmation(input.message)) {
+    if (input.channel === 'webchat') return { kind: 'execute' };
     return { kind: 'reverify' };
   }
   return { kind: 'route' };

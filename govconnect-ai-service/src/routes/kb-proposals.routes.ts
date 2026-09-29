@@ -106,4 +106,45 @@ router.post('/suggest', async (req: Request, res: Response) => {
   res.json({ success: true, village_id: villageId, proposals_created: created.length, proposals: created });
 });
 
+/**
+ * POST /api/kb-proposals/:id/publish — human publishes an approved proposal to the KB.
+ *
+ * R5: This is the missing publish endpoint. Flow:
+ *   pending → approved (human review) → published (this endpoint, human action)
+ *
+ * Only proposals in 'approved' status can be published. Publishing writes the
+ * draft content into ai.knowledge_vectors (with embedding generated) and marks
+ * the proposal as 'published'. This is a deliberate human step — the suggester
+ * never auto-publishes.
+ */
+router.post('/:id/publish', async (req: Request, res: Response) => {
+  const publisher = String(req.body?.publisher ?? '').trim();
+  if (!publisher) return res.status(400).json({ error: 'publisher required' });
+
+  const current = await prismaProposalStore.get(req.params.id);
+  if (!current) return res.status(404).json({ error: 'proposal not found' });
+
+  if (current.status !== 'approved') {
+    return res.status(409).json({
+      error: `cannot publish proposal in status '${current.status}' — must be 'approved' first`,
+    });
+  }
+
+  try {
+    const { publishProposalToKb } = await import('../services/kb-publish.service');
+    const result = await publishProposalToKb(current, publisher);
+    res.json({
+      success: true,
+      proposal_id: current.id,
+      vector_id: result.vectorId,
+      note: 'Proposal published to knowledge base.',
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      error: 'publish failed',
+      detail: err?.message ?? String(err),
+    });
+  }
+});
+
 export default router;

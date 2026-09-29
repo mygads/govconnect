@@ -19,7 +19,11 @@
  * does NOT claim a working production integration.
  */
 
-import { laporEnqueue, laporClaimPending, laporMarkResult, appendAudit } from './pipeline-store';
+import {
+  laporEnqueue, laporClaimPending, laporMarkResult, laporUpdateStatusByTrackingId,
+  laporGetSentForStatusSync, appendAudit,
+} from './pipeline-store';
+import { registerInterval } from '../utils/timer-registry';
 import logger from '../utils/logger';
 
 export const LAPOR_ENABLED = process.env.LAPOR_ENABLED === 'true';
@@ -136,6 +140,183 @@ export async function drainLaporOutbox(
         id, false, undefined, String((err as Error)?.message ?? err).slice(0, 200),
       );
       result.failed += 1;
+    }
+  }
+  return result;
+}
+
+// ── W17: scheduler ────────────────────────────────────────────────────
+
+/**
+ * Interval drain outbox (ms). Default 5 menit. 0/non-angka → scheduler mati.
+ * Hanya berjalan bila LAPOR_ENABLED=true (sender terkonfigurasi).
+ */
+export function getLaporDrainIntervalMs(): number {
+  const raw = Number(process.env.LAPOR_DRAIN_INTERVAL_MS ?? '300000');
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+}
+
+let drainSchedulerStarted = false;
+
+/**
+ * W17: pemanggil otomatis untuk drainLaporOutbox(). Sebelumnya fungsi ini
+ * tidak punya pemanggil selain endpoint manual /internal/lapor/drain —
+ * sisi kirim ≈ STUB. Scheduler in-process ini berjalan tiap
+ * LAPOR_DRAIN_INTERVAL_MS dan memanggil drainLaporOutbox().
+ * Idempotent & aman konkurensi via claim SKIP LOCKED di DB.
+ */
+export function startLaporDrainScheduler(): void {
+  if (drainSchedulerStarted) return;
+  const intervalMs = getLaporDrainIntervalMs();
+  if (intervalMs <= 0) {
+    logger.info('[lapor-bridge] drain scheduler disabled (LAPOR_DRAIN_INTERVAL_MS<=0)');
+    return;
+  }
+  if (!LAPOR_ENABLED) {
+    logger.info('[lapor-bridge] drain scheduler not started (LAPOR_ENABLED=false)');
+    return;
+  }
+  drainSchedulerStarted = true;
+  registerInterval(() => {
+    drainLaporOutbox(25).then((r) => {
+      if (r.sent > 0 || r.failed > 0) {
+        logger.info('[lapor-bridge] scheduled drain', r);
+      }
+    }).catch((err) => {
+      logger.warn('[lapor-bridge] scheduled drain failed', {
+        error: String((err as Error)?.message ?? err).slice(0, 120),
+      });
+    });
+  }, intervalMs, 'lapor-drain');
+  logger.info('[lapor-bridge] drain scheduler started', { intervalMs });
+}
+
+/** Test hook: reset flag scheduler. */
+export function __resetLaporDrainSchedulerForTest(): void {
+  drainSchedulerStarted = false;
+}
+
+// ── W17: sync status balik ────────────────────────────────────────────
+
+/**
+ * Status update dari sisi LAPOR!.
+ *
+ * HONEST SCOPE: bentuk API resmi SP4N-LAPOR! bersifat deployment-specific
+ * dan tidak diklaim ada. Interface ini mendukung dua jalur:
+ * 1. Webhook push: operator/LAPOR! POST ke /internal/lapor/webhook.
+ * 2. Operator-assisted: admin mengisi tracking_id + status manual via
+ *    endpoint yang sama bila API LAPOR! tidak tersedia.
+ * 3. Polling: pollLaporStatusUpdates() menanyakan status ke LAPOR_API_URL
+ *    bila endpoint-nya dikonfigurasi.
+ */
+export interface LaporStatusUpdate {
+  tracking_id: string;
+  /** Status dari sisi LAPOR!, mis. 'diterima' | 'diproses' | 'selesai' | 'ditolak'. */
+  status: string;
+  note?: string;
+  /** Sumber update: 'webhook' | 'poll' | 'manual'. */
+  source: 'webhook' | 'poll' | 'manual';
+}
+
+const FINAL_LAPOR_STATUSES = new Set(
+  ['selesai', 'ditolak', 'closed', 'rejected', 'done'],
+);
+
+/**
+ * Terapkan satu status update: tulis ke outbox + audit trail.
+ * Pure terhadap validasi; never-throw.
+ */
+export async function applyLaporStatusUpdate(
+  update: LaporStatusUpdate,
+): Promise<{ applied: boolean; outboxId: number | null }> {
+  try {
+    const trackingId = (update.tracking_id ?? '').trim();
+    const status = (update.status ?? '').trim().toLowerCase();
+    if (!trackingId || !status) {
+      return { applied: false, outboxId: null };
+    }
+    const outboxId = await laporUpdateStatusByTrackingId(
+      trackingId, status, update.note,
+    );
+    if (outboxId == null) {
+      logger.warn('[lapor-bridge] status update for unknown tracking_id', {
+        trackingId, source: update.source,
+      });
+      return { applied: false, outboxId: null };
+    }
+    await appendAudit({
+      tenantId: '', traceId: trackingId, userId: '',
+      channel: 'whatsapp', stage: 'EXECUTE', event: 'lapor_status_sync',
+      payload: {
+        outboxId, laporStatus: status, source: update.source,
+        isFinal: FINAL_LAPOR_STATUSES.has(status),
+      },
+    }).catch(() => undefined);
+    logger.info('[lapor-bridge] status synced', {
+      outboxId, trackingId, status, source: update.source,
+    });
+    return { applied: true, outboxId };
+  } catch (err) {
+    logger.warn('[lapor-bridge] applyLaporStatusUpdate failed', {
+      error: String((err as Error)?.message ?? err).slice(0, 120),
+    });
+    return { applied: false, outboxId: null };
+  }
+}
+
+/**
+ * Polling status balik: untuk baris 'sent' yang punya tracking_id dan belum
+ * final, tanyakan status ke LAPOR_API_URL lalu terapkan via
+ * applyLaporStatusUpdate(). Dijalankan manual via
+ * POST /internal/lapor/poll-status atau dari scheduler bila diinginkan.
+ *
+ * Bila LAPOR_API_URL tidak terkonfigurasi → skip (operator-assisted via
+ * webhook/manual tetap bisa dipakai).
+ */
+export async function pollLaporStatusUpdates(
+  limit = 20,
+): Promise<{ checked: number; updated: number; skipped: number }> {
+  const result = { checked: 0, updated: 0, skipped: 0 };
+  if (!senderConfigured()) {
+    logger.info('[lapor-bridge] status poll skipped: sender not configured');
+    result.skipped = 1;
+    return result;
+  }
+  const rows = await laporGetSentForStatusSync(limit);
+  for (const row of rows) {
+    const trackingId = String(row.tracking_id ?? '');
+    if (!trackingId) continue;
+    result.checked += 1;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 15_000);
+      // Bentuk endpoint dokumentasi best-effort; deployment-specific.
+      const res = await fetch(
+        `${LAPOR_API_URL}/laporan/${encodeURIComponent(trackingId)}/status`,
+        {
+          headers: { Authorization: `Bearer ${LAPOR_API_KEY}` },
+          signal: ctrl.signal,
+        },
+      );
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const status =
+        typeof json.status === 'string' ? json.status
+        : typeof json.state === 'string' ? json.state
+        : '';
+      if (!status) continue;
+      const applied = await applyLaporStatusUpdate({
+        tracking_id: trackingId,
+        status,
+        note: typeof json.note === 'string' ? json.note : undefined,
+        source: 'poll',
+      });
+      if (applied.applied) result.updated += 1;
+    } catch (err) {
+      logger.debug('[lapor-bridge] status poll item failed', {
+        trackingId, error: String((err as Error)?.message ?? err).slice(0, 100),
+      });
     }
   }
   return result;

@@ -240,6 +240,11 @@ async function runBoundedLoop(
 
   let model = 'unknown';
   let finalText = '';
+  // BUG-008 companion: free-tier models sometimes return tool_calls in a
+  // malformed shape (unparseable). Accepting the empty text as final would
+  // silently drop the turn; retry once before letting failover handle it.
+  let malformedToolCallRetries = 0;
+  const MAX_MALFORMED_TOOL_CALL_RETRIES = 1;
 
   for (let i = 0; i < MAX_AGENT_ITERATIONS; i++) {
     const budget = remainingMs(input.ctx);
@@ -276,6 +281,20 @@ async function runBoundedLoop(
     const calls = parseToolCalls(result.message);
     if (calls.length === 0) {
       finalText = (result.text || '').trim();
+      // BUG-008 companion: the model returned tool_calls we could not parse
+      // (malformed shape). The text is empty and no tools can execute — retry
+      // the LLM call once instead of accepting an empty final answer.
+      const rawToolCalls = (result.message as { tool_calls?: unknown } | undefined)?.tool_calls;
+      if (!finalText && Array.isArray(rawToolCalls) && rawToolCalls.length > 0
+          && malformedToolCallRetries < MAX_MALFORMED_TOOL_CALL_RETRIES) {
+        malformedToolCallRetries++;
+        logger.warn('[staged-agent] unparseable tool_calls; retrying LLM call', {
+          traceId: input.ctx.traceId, stage, retry: malformedToolCallRetries,
+          rawCount: rawToolCalls.length,
+        });
+        finalText = '';
+        continue;
+      }
       break;
     }
 
@@ -412,6 +431,16 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
         toolsUsed: [], toolTrace: [], degraded: false,
       });
     }
+    // ── W1: user-initiated cancellation → CANCELLED (any stage) ──
+    // User dapat membatalkan kapan saja; turn berakhir tanpa side effect.
+    if (isCancellation(input.message)) {
+      return finish({
+        terminalState: 'CANCELLED',
+        response: 'Baik, proses dibatalkan. Tidak ada data yang disimpan. Ada lagi yang bisa saya bantu?',
+        stage: 'CLOSE', intent: 'cancelled',
+        toolsUsed: [], toolTrace: [], degraded: false,
+      });
+    }
     if (stage === 'EMERGENCY') {
       const { text, trace } = await emergencyReply(input);
       const { text: verified } = verifyAnswer(text, trace);
@@ -419,6 +448,18 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
         terminalState: 'SUCCEEDED', response: verified, stage, intent: 'emergency',
         toolsUsed: trace.filter((t) => t.success).map((t) => t.tool),
         toolTrace: trace, degraded: false,
+      });
+    }
+    // ── HANDOFF: deterministic human handoff — W1 WAITING_FOR_HUMAN ──
+    // Turn berakhir di sini; manusia yang melanjutkan. Tidak ada LLM call.
+    // (Ringkasan handoff disimpan oleh pemanggil/takeover.ts bila diperlukan.)
+    if (stage === 'HANDOFF') {
+      return finish({
+        terminalState: 'WAITING_FOR_HUMAN',
+        response: 'Baik, saya teruskan ke petugas desa ya. Mohon tunggu sebentar, petugas akan segera membantu. 🙏',
+        guidanceText: 'Menunggu petugas manusia.',
+        stage, intent: 'handoff',
+        toolsUsed: [], toolTrace: [], degraded: false,
       });
     }
 
@@ -435,14 +476,6 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
             ? `Sebelum verifikasi, saya masih butuh satu info: ${missing.prompt}`
             : 'Mohon maaf, saya belum tahu jenis laporan Anda. Bisa dijelaskan Anda ingin melapor atau mengurus surat?',
           stage: 'COLLECT', intent: 'collect_incomplete',
-          toolsUsed: [], toolTrace: [], degraded: false,
-        });
-      }
-      if (isCancellation(input.message)) {
-        return finish({
-          terminalState: 'SUCCEEDED',
-          response: 'Baik, proses dibatalkan. Tidak ada data yang disimpan. Ada lagi yang bisa saya bantu?',
-          stage: 'CLOSE', intent: 'cancelled',
           toolsUsed: [], toolTrace: [], degraded: false,
         });
       }

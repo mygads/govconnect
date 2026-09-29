@@ -129,3 +129,47 @@ export function validateInteractive(p: InteractivePayload): boolean {
     rows.length >= 1 && rows.length <= 10 &&
     rows.every((r) => r.title.length > 0);
 }
+
+// ── R1: Triage list id binding ─────────────────────────────────────────────
+// The triage category list is sent with row ids (cat_jalan, cat_sampah, ...).
+// When the citizen taps a row, channel-service forwards the id as buttonId.
+// This resolver binds the id back to a structured category so the pipeline
+// can route deterministically instead of re-classifying the display text.
+
+export interface TriageCategory {
+  /** Row id from the interactive list (e.g. 'cat_jalan'). */
+  id: string;
+  /** Human-readable category name. */
+  title: string;
+  /** Description shown in the list. */
+  description: string;
+  /** Suggested complaint type name_key for DB lookup. */
+  typeKey: string;
+}
+
+/** Map from triage list row id → structured category. */
+const TRIAGE_CATEGORY_BY_ID: Record<string, TriageCategory> = {
+  cat_jalan:  { id: 'cat_jalan',  title: 'Jalan rusak',      description: 'Jalan berlubang, rusak, atau jembatan', typeKey: 'jalan_rusak' },
+  cat_sampah: { id: 'cat_sampah', title: 'Sampah',           description: 'Sampah menumpuk atau tidak diangkut',   typeKey: 'sampah_menumpuk' },
+  cat_air:    { id: 'cat_air',    title: 'Air bersih',       description: 'Air mati, PDAM, atau kekeringan',       typeKey: 'air_bersih' },
+  cat_lampu:  { id: 'cat_lampu',  title: 'Penerangan jalan', description: 'Lampu jalan mati atau gelap',           typeKey: 'lampu_jalan_mati' },
+  cat_banjir: { id: 'cat_banjir', title: 'Banjir / drainase',description: 'Banjir atau saluran mampet',            typeKey: 'banjir_drainase' },
+  cat_admin:  { id: 'cat_admin',  title: 'Administrasi',     description: 'KTP, KK, surat-surat',                 typeKey: 'administrasi' },
+  cat_lain:   { id: 'cat_lain',   title: 'Lainnya',          description: 'Keperluan lain, tulis manual',         typeKey: 'lainnya' },
+};
+
+/**
+ * Resolve a triage list row id to its structured category.
+ * Returns null for unknown ids (caller should fall back to text classification).
+ */
+export function resolveTriageCategory(rowId: string | null | undefined): TriageCategory | null {
+  if (!rowId || typeof rowId !== 'string') return null;
+  const key = rowId.trim();
+  if (!key.startsWith('cat_')) return null;
+  return TRIAGE_CATEGORY_BY_ID[key] ?? null;
+}
+
+/** Check if a button/row id is a triage category selection. */
+export function isTriageCategoryId(rowId: string | null | undefined): boolean {
+  return resolveTriageCategory(rowId) !== null;
+}

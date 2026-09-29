@@ -225,14 +225,30 @@ export async function clearTurnState(
   } catch { /* best effort */ }
 }
 
-// ── Takeover (TTL) ────────────────────────────────────────────────────────
+// ── Takeover (TTL + state machine, W4) ────────────────────────────────────
+// States: AI_ACTIVE → HANDOFF_PENDING → HUMAN_ACTIVE → NUDGE → (auto-handback) AI_ACTIVE
+/** Takeover state machine states (W4). */
+export type TakeoverState = 'AI_ACTIVE' | 'HANDOFF_PENDING' | 'HUMAN_ACTIVE' | 'NUDGE';
 
 export interface Takeover {
   takenBy: string;
   reason: string;
   takenAt: string;
   expiresAt: string;
+  /** W4: current state machine state. */
+  state: TakeoverState;
+  /** W4: kapan manusia terakhir aktif (untuk deteksi NUDGE). */
+  lastHumanActivityAt: string | null;
+  /** W4: kapan nudge dikirim (untuk timing auto-handback). */
+  nudgeSentAt: string | null;
 }
+
+/** W4: NUDGE dikirim setelah 30 menit tanpa aktivitas manusia. */
+export const TAKEOVER_NUDGE_AFTER_MS = 30 * 60 * 1000;
+/** W4: auto-handback ke AI 10 menit setelah nudge tanpa respons. */
+export const TAKEOVER_AUTO_HANDBACK_AFTER_MS = 10 * 60 * 1000;
+/** W4: HANDOFF_PENDING timeout — kembali ke AI jika manusia tak kunjung ambil alih. */
+export const TAKEOVER_HANDOFF_PENDING_TIMEOUT_MS = 15 * 60 * 1000;
 
 export async function getTakeover(
   tenantId: string, userId: string, channel = 'whatsapp',
@@ -241,13 +257,57 @@ export async function getTakeover(
   if (!db) return dbDown('getTakeover', null);
   try {
     const rows = (await db.$queryRawUnsafe(
-      `SELECT taken_by, reason, taken_at, expires_at FROM pipeline_takeovers
+      `SELECT taken_by, reason, taken_at, expires_at, state,
+              last_human_activity_at, nudge_sent_at FROM pipeline_takeovers
         WHERE tenant_id=$1 AND user_id=$2 AND channel=$3
           AND released_at IS NULL AND expires_at > now()`,
       tenantId, userId, channel,
-    )) as Array<{ taken_by: string; reason: string; taken_at: string; expires_at: string }>;
+    )) as Array<{
+      taken_by: string; reason: string; taken_at: string; expires_at: string;
+      state: string; last_human_activity_at: string | null; nudge_sent_at: string | null;
+    }>;
     if (rows.length === 0) return null;
-    return { takenBy: rows[0].taken_by, reason: rows[0].reason, takenAt: String(rows[0].taken_at), expiresAt: String(rows[0].expires_at) };
+    const r = rows[0];
+    const now = Date.now();
+    let state = (r.state || 'HUMAN_ACTIVE') as TakeoverState;
+
+    // ── W4: lazy state transitions (dievaluasi saat read, tanpa cron) ──
+    const lastActivity = r.last_human_activity_at ? new Date(r.last_human_activity_at).getTime() : new Date(r.taken_at).getTime();
+
+    if (state === 'HANDOFF_PENDING') {
+      // Timeout: manusia tak kunjung ambil alih → kembali ke AI.
+      const pendingSince = new Date(r.taken_at).getTime();
+      if (now - pendingSince > TAKEOVER_HANDOFF_PENDING_TIMEOUT_MS) {
+        await releaseTakeover(tenantId, userId, channel).catch(() => undefined);
+        return null; // → AI_ACTIVE
+      }
+      // Masih menunggu — bukan takeover aktif (AI boleh bicara sambil menunggu).
+      return null;
+    }
+
+    if (state === 'HUMAN_ACTIVE' && now - lastActivity > TAKEOVER_NUDGE_AFTER_MS) {
+      // 30 menit tanpa aktivitas manusia → NUDGE.
+      state = 'NUDGE';
+      await db.$executeRawUnsafe(
+        `UPDATE pipeline_takeovers SET state='NUDGE', nudge_sent_at=now()
+          WHERE tenant_id=$1 AND user_id=$2 AND channel=$3 AND released_at IS NULL`,
+        tenantId, userId, channel,
+      ).catch(() => undefined);
+    } else if (state === 'NUDGE') {
+      // 10 menit setelah nudge tanpa respons → auto-handback ke AI.
+      const nudgeAt = r.nudge_sent_at ? new Date(r.nudge_sent_at).getTime() : lastActivity;
+      if (now - nudgeAt > TAKEOVER_AUTO_HANDBACK_AFTER_MS) {
+        await releaseTakeover(tenantId, userId, channel).catch(() => undefined);
+        return null; // → AI_ACTIVE
+      }
+    }
+
+    return {
+      takenBy: r.taken_by, reason: r.reason,
+      takenAt: String(r.taken_at), expiresAt: String(r.expires_at),
+      state, lastHumanActivityAt: r.last_human_activity_at ? String(r.last_human_activity_at) : null,
+      nudgeSentAt: r.nudge_sent_at ? String(r.nudge_sent_at) : null,
+    };
   } catch {
     return dbDown('getTakeover', null);
   }
@@ -256,23 +316,81 @@ export async function getTakeover(
 export async function setTakeover(
   tenantId: string, userId: string, takenBy: string, reason: string,
   ttlMs: number, channel = 'whatsapp',
+  /** W4: state awal. Default HUMAN_ACTIVE (admin langsung ambil alih). */
+  initialState: TakeoverState = 'HUMAN_ACTIVE',
 ): Promise<boolean> {
   const db = await getDb();
   if (!db) return dbDown('setTakeover', false);
   try {
     await db.$executeRawUnsafe(
       `INSERT INTO pipeline_takeovers
-         (tenant_id, user_id, channel, taken_by, reason, taken_at, expires_at, released_at)
-       VALUES ($1,$2,$3,$4,$5, now(), now() + ($6 || ' milliseconds')::interval, NULL)
+         (tenant_id, user_id, channel, taken_by, reason, taken_at, expires_at, released_at,
+          state, last_human_activity_at, nudge_sent_at)
+       VALUES ($1,$2,$3,$4,$5, now(), now() + ($6 || ' milliseconds')::interval, NULL,
+               $7, now(), NULL)
        ON CONFLICT (tenant_id, user_id, channel) DO UPDATE SET
          taken_by=EXCLUDED.taken_by, reason=EXCLUDED.reason,
-         taken_at=now(), expires_at=EXCLUDED.expires_at, released_at=NULL`,
-      tenantId, userId, channel, takenBy, reason, String(ttlMs),
+         taken_at=now(), expires_at=EXCLUDED.expires_at, released_at=NULL,
+         state=EXCLUDED.state, last_human_activity_at=now(), nudge_sent_at=NULL`,
+      tenantId, userId, channel, takenBy, reason, String(ttlMs), initialState,
     );
     return true;
   } catch (err) {
     logger.warn('[pipeline-store] setTakeover failed', { error: String((err as Error)?.message ?? err).slice(0, 200) });
     return false;
+  }
+}
+
+/**
+ * W4: catat aktivitas manusia (pesan dari admin/petugas).
+ * - HANDOFF_PENDING → HUMAN_ACTIVE (manusia mulai bicara)
+ * - NUDGE → HUMAN_ACTIVE (manusia kembali aktif)
+ * - HUMAN_ACTIVE → refresh last_human_activity_at
+ */
+export async function recordHumanActivity(
+  tenantId: string, userId: string, channel = 'whatsapp',
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE pipeline_takeovers
+         SET last_human_activity_at=now(),
+             state=CASE WHEN state IN ('HANDOFF_PENDING','NUDGE') THEN 'HUMAN_ACTIVE' ELSE state END,
+             nudge_sent_at=CASE WHEN state='NUDGE' THEN NULL ELSE nudge_sent_at END
+        WHERE tenant_id=$1 AND user_id=$2 AND channel=$3
+          AND released_at IS NULL AND expires_at > now()`,
+      tenantId, userId, channel,
+    );
+  } catch { /* best effort */ }
+}
+
+/**
+ * W4: cek apakah nudge perlu dikirim (untuk dipanggil periodik/cron atau saat read).
+ * Mengembalikan daftar takeover yang baru saja masuk state NUDGE.
+ */
+export async function findTakeoversNeedingNudge(
+  limit = 100,
+): Promise<Array<{ tenantId: string; userId: string; channel: string; takenBy: string }>> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    // Ambil yang HUMAN_ACTIVE dan sudah lewat 30 menit tanpa aktivitas.
+    // getTakeover() sudah melakukan transisi lazy, tapi fungsi ini untuk
+    // batch nudge (mis. cron) agar admin dapat notifikasi proaktif.
+    const rows = (await db.$queryRawUnsafe(
+      `SELECT tenant_id, user_id, channel, taken_by FROM pipeline_takeovers
+        WHERE released_at IS NULL AND expires_at > now()
+          AND state = 'HUMAN_ACTIVE'
+          AND COALESCE(last_human_activity_at, taken_at) < now() - interval '30 minutes'
+        LIMIT $1`,
+      limit,
+    )) as Array<{ tenant_id: string; user_id: string; channel: string; taken_by: string }>;
+    return rows.map((r) => ({
+      tenantId: r.tenant_id, userId: r.user_id, channel: r.channel, takenBy: r.taken_by,
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -543,6 +661,56 @@ export async function laporMarkResult(
       ok ? 'sent' : 'failed', trackingId ?? null, (error ?? '').slice(0, 500), id,
     );
   } catch { /* best effort */ }
+}
+
+/**
+ * W17: update status LAPOR! dari sisi LAPOR! (webhook atau polling),
+ * dicari via tracking_id. Terpisah dari `status` (status kirim outbox).
+ * Juga me-reset last_error agar tidak tertutup info basi.
+ */
+export async function laporUpdateStatusByTrackingId(
+  trackingId: string, laporStatus: string, note?: string,
+): Promise<number | null> {
+  const db = await getDb();
+  if (!db) return dbDown('laporUpdateStatusByTrackingId', null);
+  try {
+    const rows = (await db.$queryRawUnsafe(
+      `UPDATE pipeline_lapor_outbox
+         SET lapor_status=$1, lapor_status_note=$2,
+             lapor_status_updated_at=now(), updated_at=now()
+        WHERE tracking_id=$3
+       RETURNING id`,
+      laporStatus.slice(0, 64), (note ?? '').slice(0, 500), trackingId,
+    )) as Array<{ id: number | string }>;
+    return rows.length > 0 ? Number(rows[0]!.id) : null;
+  } catch {
+    return dbDown('laporUpdateStatusByTrackingId', null);
+  }
+}
+
+/**
+ * W17: ambil baris yang sudah terkirim (punya tracking_id) untuk polling
+ * status balik. Hanya yang belum mencapai status final.
+ */
+export async function laporGetSentForStatusSync(
+  limit = 20,
+): Promise<Array<Record<string, unknown>>> {
+  const db = await getDb();
+  if (!db) return dbDown('laporGetSentForStatusSync', []);
+  try {
+    return (await db.$queryRawUnsafe(
+      `SELECT id, tenant_id, complaint_ref, tracking_id, lapor_status
+         FROM pipeline_lapor_outbox
+        WHERE status='sent' AND tracking_id IS NOT NULL
+          AND (lapor_status IS NULL
+               OR lapor_status NOT IN ('selesai','ditolak','closed','rejected','done'))
+        ORDER BY lapor_status_updated_at NULLS FIRST, id
+        LIMIT $1`,
+      limit,
+    )) as Array<Record<string, unknown>>;
+  } catch {
+    return dbDown('laporGetSentForStatusSync', []);
+  }
 }
 
 // ── Cost accounting ─────────────────────────────────────────────────────

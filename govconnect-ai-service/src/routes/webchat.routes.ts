@@ -20,6 +20,8 @@ import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { processUnifiedMessage, ProcessMessageResult, isProcessingFailure, hasDeliverableFallback } from '../services/unified-message-processor.service';
+import { processMessageV2 } from '../pipeline/process-message-v2';
+import { getPipelineMode } from '../pipeline/feature-flags';
 import {
   saveWebchatMessage,
   updateWebchatAIStatus,
@@ -76,20 +78,25 @@ async function processWebchatMessage(params: {
   messageId?: string;
   batchedMessageIds?: string[];
 }): Promise<ProcessMessageResult> {
-  logger.debug('Processing webchat with UNIFIED processor (same as WhatsApp)', {
+  logger.debug('Processing webchat with pipeline-aware processor (same as WhatsApp)', {
     userId: params.userId,
   });
 
-  // Use SAME processor as WhatsApp for 100% consistency
-  return processUnifiedMessage({
+  // Honor PIPELINE_MODE like the WhatsApp path: v2 when 'on', v1 otherwise.
+  // Previously webchat hardcoded v1 even when PIPELINE_MODE=on.
+  const umpInput = {
     userId: params.userId,
     message: params.message,
-    channel: 'webchat',
+    channel: 'webchat' as const,
     conversationHistory: params.conversationHistory,
     villageId: params.village_id,
     messageId: params.messageId,
     batchedMessageIds: params.batchedMessageIds,
-  });
+  };
+  if (getPipelineMode(params.village_id) === 'on') {
+    return processMessageV2(umpInput);
+  }
+  return processUnifiedMessage(umpInput);
 }
 
 function resolveWebchatAIStatusAfterReply(params: {

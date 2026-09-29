@@ -19,11 +19,23 @@ import { createHash } from 'crypto';
 import { appendAudit } from './pipeline-store';
 import logger from '../utils/logger';
 import { isOcrConfigured } from './ocr-ktp';
+import {
+  dHash,
+  hammingDistance,
+  moderateImage,
+  blurImage,
+  isSharpAvailable,
+  PHASH_NEAR_DUP_THRESHOLD,
+} from './media-perceptual';
 
 export interface MediaSignal {
   hasImage: boolean;
   sha256?: string;
+  /** W15: 64-bit dHash (perceptual) — catches near-duplicates SHA-256 misses. */
+  phash?: string;
   duplicate: boolean;
+  /** 'exact' (SHA-256) or 'near' (pHash Hamming distance). */
+  duplicateKind?: 'exact' | 'near';
   duplicateOfMessageId?: string;
   exifStripped: boolean;
   redaction: 'done' | 'degraded' | 'not_applicable';
@@ -53,9 +65,22 @@ export interface MediaSignal {
   promptFact?: string;
 }
 
-// Per-process dedup registry: sha256 → messageId.
+// Per-process dedup registries: sha256 → messageId (exact), phash → messageId (near).
 // NOTE: not shared across replicas; a DB-backed media registry is a known gap.
 const seenHashes = new Map<string, string>();
+const seenPhashes = new Map<string, string>();
+
+/**
+ * W15: redaction mode is env-driven, not hardcoded.
+ * - 'degraded' (default): no redaction possible — image never reaches the LLM.
+ * - 'blur': whole-image blur via sharp before any downstream use. This is a
+ *   privacy fallback, NOT targeted face/plate detection (no detection model
+ *   in this environment). Honest about its limits.
+ */
+const REDACT_MODE = (process.env.MEDIA_REDACT_MODE ?? 'degraded').toLowerCase();
+function redactMode(): 'degraded' | 'blur' {
+  return REDACT_MODE === 'blur' && isSharpAvailable() ? 'blur' : 'degraded';
+}
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -268,6 +293,12 @@ export function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 
+/** Test hook: clear in-process dedup registries. */
+export function __clearMediaDedupRegistries(): void {
+  seenHashes.clear();
+  seenPhashes.clear();
+}
+
 export async function processImageMedia(input: {
   tenantId: string;
   userId: string;
@@ -306,10 +337,10 @@ export async function processImageMedia(input: {
   if (dupOf && dupOf !== input.messageId) {
     await appendAudit({
       tenantId, traceId, userId, channel, stage: 'INGRESS', event: 'media_duplicate',
-      payload: { sha256: hash.slice(0, 16) + '…', duplicateOf: dupOf },
+      payload: { sha256: hash.slice(0, 16) + '…', duplicateOf: dupOf, duplicateKind: 'exact' },
     }).catch(() => undefined);
     return {
-      hasImage: true, sha256: hash, duplicate: true, duplicateOfMessageId: dupOf,
+      hasImage: true, sha256: hash, duplicate: true, duplicateKind: 'exact', duplicateOfMessageId: dupOf,
       exifStripped: false, redaction: 'degraded', forwardToLlm: false,
       estimatedKind: 'unknown', bytes: bytes.length,
       fraudSignals: ['duplicate_image'],
@@ -318,6 +349,38 @@ export async function processImageMedia(input: {
     };
   }
   seenHashes.set(hash, input.messageId ?? `${Date.now()}`);
+
+  // W15: perceptual near-duplicate check (dHash). Catches resized /
+  // recompressed / re-encoded copies that exact SHA-256 misses.
+  const phash = await dHash(bytes);
+  if (phash) {
+    let nearDupOf: string | undefined;
+    for (const [seen, msgId] of seenPhashes) {
+      if (msgId !== input.messageId && hammingDistance(phash, seen) <= PHASH_NEAR_DUP_THRESHOLD) {
+        nearDupOf = msgId;
+        break;
+      }
+    }
+    if (nearDupOf) {
+      await appendAudit({
+        tenantId, traceId, userId, channel, stage: 'INGRESS', event: 'media_duplicate',
+        payload: { phash, duplicateOf: nearDupOf, duplicateKind: 'near' },
+      }).catch(() => undefined);
+      return {
+        hasImage: true, sha256: hash, phash, duplicate: true, duplicateKind: 'near',
+        duplicateOfMessageId: nearDupOf,
+        exifStripped: false, redaction: 'degraded', forwardToLlm: false,
+        estimatedKind: 'unknown', bytes: bytes.length,
+        fraudSignals: ['duplicate_image', 'near_duplicate_image'],
+        promptFact: '[SINYAL MEDIA] Gambar yang dilampirkan sangat mirip dengan gambar yang sudah dikirim ' +
+          'sebelumnya (duplikat visual). Jangan meminta ulang; perlakukan sebagai bukti yang sama.',
+      };
+    }
+    seenPhashes.set(phash, input.messageId ?? `${Date.now()}`);
+  }
+
+  // W15: moderation (heuristic, review-oriented — never auto-rejects).
+  const moderation = await moderateImage(bytes);
 
   // EXIF strip (best-effort, JPEG only).
   let exifStripped = false;
@@ -329,18 +392,35 @@ export async function processImageMedia(input: {
     }
   }
 
-  // Face/plate redaction: NO image library and NO detection model in this
-  // environment → cannot redact → degraded. The image NEVER reaches the LLM.
-  const redaction: MediaSignal['redaction'] = 'degraded';
+  // Face/plate redaction: env-driven (MEDIA_REDACT_MODE).
+  // - 'blur': whole-image blur via sharp (privacy fallback; NOT targeted
+  //   face/plate detection — no detection model in this environment).
+  // - 'degraded' (default): redaction unavailable — image NEVER reaches LLM.
+  const mode = redactMode();
+  const redaction: MediaSignal['redaction'] = mode === 'blur' ? 'done' : 'degraded';
+  let redactedBytes: Buffer | undefined;
+  if (mode === 'blur') {
+    const blurred = await blurImage(bytes);
+    if (blurred) {
+      redactedBytes = blurred;
+    } else {
+      logger.warn('[media-pipeline] blur redaction failed → degraded', { traceId });
+    }
+  }
+  const effectiveRedaction: MediaSignal['redaction'] =
+    mode === 'blur' && redactedBytes ? 'done' : 'degraded';
 
   // A4 — basic fraud signals (heuristics, for admin review only).
   const fraudSignals = computeFraudSignals({ bytes, sha256: hash, duplicate: false });
+  if (moderation.flagged) fraudSignals.push('moderation_review');
 
   await appendAudit({
     tenantId, traceId, userId, channel, stage: 'INGRESS', event: 'media_intake',
     payload: {
-      sha256: hash.slice(0, 16) + '…', bytes: bytes.length,
-      exifStripped, redaction, forwardToLlm: false, fraudSignals,
+      sha256: hash.slice(0, 16) + '…', phash: phash ?? null, bytes: bytes.length,
+      exifStripped, redaction: effectiveRedaction, redactMode: mode,
+      forwardToLlm: false, fraudSignals,
+      moderation: { flagged: moderation.flagged, skinRatio: moderation.skinRatio },
     },
   }).catch(() => undefined);
 
@@ -354,19 +434,25 @@ export async function processImageMedia(input: {
     : '';
 
   return {
-    hasImage: true, sha256: hash, duplicate: false,
-    exifStripped, redaction, forwardToLlm: false,
+    hasImage: true, sha256: hash, phash: phash ?? undefined, duplicate: false,
+    exifStripped, redaction: effectiveRedaction, forwardToLlm: false,
     estimatedKind: kind, bytes: bytes.length,
     fraudSignals,
     bytesForOcr: isOcrConfigured() ? bytes : undefined,
-    retainedBytes: input.retainBytes ? bytes : undefined,
+    retainedBytes: input.retainBytes ? (redactedBytes ?? bytes) : undefined,
     promptFact:
       '[SINYAL MEDIA] Warga melampirkan 1 gambar ' +
       `(${kind === 'unknown' ? 'jenis tidak diketahui' : kind}, hash ${hash.slice(0, 12)}…). ` +
-      'Redaksi wajah/plat nomor BELUM tersedia di environment ini, sehingga gambar tidak diteruskan ' +
-      'ke AI. Perlakukan sebagai bukti visual yang belum terverifikasi; ' +
+      (effectiveRedaction === 'done'
+        ? 'Gambar telah diburamkan (blur) untuk privasi sebelum diproses lebih lanjut. '
+        : 'Redaksi wajah/plat nomor BELUM tersedia di environment ini, sehingga gambar tidak diteruskan ' +
+          'ke AI. ') +
+      'Perlakukan sebagai bukti visual yang belum terverifikasi; ' +
       'jika isi gambar penting untuk laporan, minta warga mendeskripsikannya dengan kata-kata. ' +
       'JANGAN meminta warga mengirim ulang gambar yang sama.' +
+      (moderation.flagged
+        ? ' PERHATIAN: gambar ditandai untuk review moderasi (heuristik). Teruskan ke admin.'
+        : '') +
       fraudNote,
   };
 }

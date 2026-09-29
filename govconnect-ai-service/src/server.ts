@@ -10,6 +10,8 @@ import { getAllAIGatewayInfoAsync } from './services/ai-gateway.service';
 import { startDocumentOcrWorker } from './services/document-ingest.service';
 import { installMicroAssessor } from './pipeline/micro-assessor';
 import { assertVaultKeyConfigured } from './pipeline/pii-vault';
+import { startLaporDrainScheduler } from './pipeline/lapor-bridge';
+import { startKbSuggesterScheduler } from './services/kb-suggester-scheduler';
 
 // UNIFIED PROCESSOR - same architecture for WhatsApp and Webchat
 // No more pattern matching, full LLM understanding
@@ -47,6 +49,10 @@ async function startServer() {
     
     await startConsuming(processMessage);
     startDocumentOcrWorker();
+    // W17: start the LAPOR! outbox drain scheduler (no-op unless LAPOR_ENABLED).
+    startLaporDrainScheduler();
+    // R5: start the KB suggester scheduler (no-op unless KB_SUGGESTER_ENABLED).
+    startKbSuggesterScheduler();
 
     // Start Express server (for health checks)
     server = app.listen(config.port, () => {
