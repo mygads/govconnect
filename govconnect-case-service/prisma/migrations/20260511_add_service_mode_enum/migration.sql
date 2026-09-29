@@ -11,10 +11,10 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE services_dynamic
+ALTER TABLE cases.services_dynamic
   ALTER COLUMN mode DROP DEFAULT;
 
-UPDATE services_dynamic
+UPDATE cases.services_dynamic
 SET mode = CASE
   WHEN mode IS NULL THEN 'OFFLINE'
   WHEN BTRIM(LOWER(mode)) = 'online' THEN 'ONLINE'
@@ -23,7 +23,7 @@ SET mode = CASE
   ELSE 'OFFLINE'
 END;
 
-ALTER TABLE services_dynamic
+ALTER TABLE cases.services_dynamic
   ALTER COLUMN mode TYPE "ServiceMode"
   USING (
     CASE

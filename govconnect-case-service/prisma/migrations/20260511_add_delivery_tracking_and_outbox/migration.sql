@@ -4,18 +4,18 @@
 -- possible to tell apart "we wrote DONE to DB" from "warga benar-benar
 -- tahu laporannya selesai".
 
-ALTER TABLE "complaints"
+ALTER TABLE cases."complaints"
   ADD COLUMN IF NOT EXISTS "status_notified_at" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "status_delivered_at" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "last_delivery_message_id" TEXT;
 
-ALTER TABLE "service_requests"
+ALTER TABLE cases."service_requests"
   ADD COLUMN IF NOT EXISTS "status_notified_at" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "status_delivered_at" TIMESTAMP(3),
   ADD COLUMN IF NOT EXISTS "last_delivery_message_id" TEXT;
 
 -- ==================== EVENT OUTBOX ====================
-CREATE TABLE IF NOT EXISTS "event_outbox" (
+CREATE TABLE IF NOT EXISTS cases."event_outbox" (
   "id"             TEXT        NOT NULL,
   "routing_key"    TEXT        NOT NULL,
   "payload_json"   JSONB       NOT NULL,
@@ -33,10 +33,10 @@ CREATE TABLE IF NOT EXISTS "event_outbox" (
 );
 
 CREATE INDEX IF NOT EXISTS "event_outbox_status_next_retry_idx"
-  ON "event_outbox" ("status", "next_retry_at");
+  ON cases."event_outbox" ("status", "next_retry_at");
 
 CREATE INDEX IF NOT EXISTS "event_outbox_routing_created_idx"
-  ON "event_outbox" ("routing_key", "created_at");
+  ON cases."event_outbox" ("routing_key", "created_at");
 
 CREATE INDEX IF NOT EXISTS "event_outbox_correlation_idx"
-  ON "event_outbox" ("correlation_id");
+  ON cases."event_outbox" ("correlation_id");

@@ -1507,6 +1507,14 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
               timeout = setTimeout(() => reject(new Error('Micro-NLU budget timeout')), remaining);
             }),
           ]);
+        } catch (err) {
+          // Fail-open: a slow or failing micro-classifier must not kill the whole message.
+          // Fall back to the rule-based classifier result instead of 503.
+          logger.warn('[UnifiedProcessor] Micro-NLU classifier failed, using fallback', {
+            error: err instanceof Error ? err.message : String(err),
+            elapsed: Date.now() - t0,
+          });
+          return fallback;
         } finally {
           if (timeout) clearTimeout(timeout);
         }
