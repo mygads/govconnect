@@ -36,6 +36,7 @@ export const TOOL_IDENTITY_MIN: Record<AgentToolName, IdentityLevel> = {
   get_important_contact: 'L0',
   search_knowledge: 'L0',
   search_documents: 'L0',
+  load_skill: 'L0',
   // L1 — own data, channel-authenticated.
   search_user_memory: 'L1',
   get_my_history: 'L1',

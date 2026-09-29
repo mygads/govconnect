@@ -13,6 +13,21 @@
 import type { Stage } from './stage-types';
 import { piiInbound } from '../gateway/pii-gateway';
 
+/**
+ * R4 L1: fetch the village skill index for prompt injection. Lazy import so
+ * prompt-builder's static import graph stays free of the prisma chain
+ * (unit tests run without a generated Prisma client). Fail-soft: null on
+ * any error → the turn simply has no skill index.
+ */
+async function skillIndexLines(tenantId: string): Promise<string | null> {
+  try {
+    const mod = await import('../services/skill-loader.service');
+    return mod.renderSkillIndexForPrompt(await mod.getSkillIndex(tenantId));
+  } catch {
+    return null;
+  }
+}
+
 export interface PromptInput {
   villageName: string;
   /** Generic tenant id (village today). Threaded into PII handling. */
@@ -52,6 +67,10 @@ export function buildStaticSystemPrompt(): string {
     // returns data for any query). The model executes the skip; compliance is
     // measured via the rag_after_db_hit telemetry in staged-agent.
     '8. Hemat tool: bila data database (profil desa, info layanan, kontak) sudah menjawab pertanyaan warga, JANGAN panggil search_knowledge/search_documents. Database (P0) selalu lebih otoritatif daripada dokumen, jadi RAG sesudah DB yang menjawab hanya membuang biaya dan token.',
+    // R4 progressive disclosure: the skill INDEX (L1) arrives in dynamic
+    // context; the full procedure (L2) is pulled via load_skill only when
+    // relevant — never dump procedures you have not loaded.
+    '9. Prosedur resmi: bila [Panduan prosedur desa] di konteks mencantumkan panduan yang relevan, baca dulu via tool load_skill sebelum menjawab. Jangan menjawab tata cara dari ingatan bila ada panduannya.',
   ].join('\n');
 }
 
@@ -72,6 +91,13 @@ export async function buildDynamicContext(input: PromptInput): Promise<string> {
   if (input.records.length > 0) {
     const safe = await Promise.all(input.records.map((r) => piiInbound(r, input.tenantId ?? '')));
     lines.push('[Data database — PALING OTORITATIF]\n' + safe.map((s) => s.text).join('\n---\n'));
+  }
+  // R4 L1 progressive disclosure: skill index for stages that answer
+  // procedural questions. Compact (slug + one-liner each); the full
+  // procedure loads on demand via load_skill. Fail-soft on DB outage.
+  if ((input.stage === 'INFORMATION' || input.stage === 'COLLECT') && input.tenantId) {
+    const rendered = await skillIndexLines(input.tenantId);
+    if (rendered) lines.push(rendered);
   }
   lines.push('[Instruksi tahap] Jawab sesuai tahap di atas. Jangan melompat tahap.');
   return lines.join('\n\n');

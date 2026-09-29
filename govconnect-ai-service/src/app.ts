@@ -34,6 +34,7 @@ import knowledgeConsistencyRoutes from './routes/knowledge-consistency.routes';
 import searchRoutes from './routes/search.routes';
 import uploadRoutes from './routes/upload.routes';
 import kbProposalsRoutes from './routes/kb-proposals.routes';
+import skillsRoutes from './routes/skills.routes';
 import webchatRoutes from './routes/webchat.routes';
 import statusRoutes from './routes/status.routes';
 import testingRoutes from './routes/testing.routes';
@@ -1852,6 +1853,7 @@ app.use(
 app.use('/api/search', searchRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/kb-proposals', kbProposalsRoutes);
+app.use('/api/skills', skillsRoutes);
 app.use('/api/webchat', webchatRoutes);
 app.use('/api/status', internalAuthMiddleware, statusRoutes);
 app.use('/api/testing', testingRoutes);

@@ -155,6 +155,28 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'load_skill',
+      strict: true,
+      description:
+        'Baca panduan prosedur/SKILL.md desa secara lengkap (Level 2). ' +
+        'Gunakan ketika [Panduan prosedur desa] di konteks mencantumkan panduan yang relevan dengan pertanyaan warga. ' +
+        'Hanya membaca; tidak mengubah apa pun.',
+      parameters: {
+        type: 'object',
+        properties: {
+          slug: {
+            type: 'string',
+            description: 'Slug panduan dari daftar [Panduan prosedur desa], contoh: "sktm".',
+          },
+        },
+        required: ['slug'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'search_user_memory',
       strict: true,
       description:
@@ -368,6 +390,7 @@ export type AgentToolName =
   | 'get_important_contact'
   | 'search_knowledge'
   | 'search_documents'
+  | 'load_skill'
   | 'search_user_memory'
   | 'create_complaint'
   | 'create_service_request'

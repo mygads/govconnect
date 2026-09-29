@@ -28,6 +28,7 @@ import {
 } from '../case-client.service';
 import { rememberMemoryEvent, searchUserMemories } from '../hybrid-memory.service';
 import { searchDocuments, searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
+import { loadSkill } from '../skill-loader.service';
 import { recordMemoryTrace } from '../runtime-observability.service';
 import { resolveServiceSlugFromSearch } from '../service-handler';
 import { resolveVillageSlugForPublicForm } from '../ump-utils';
@@ -347,7 +348,7 @@ function buildUserFacingToolError(
     };
   }
 
-  if (toolName === 'search_knowledge' || toolName === 'search_documents' || toolName === 'search_user_memory') {
+  if (toolName === 'search_knowledge' || toolName === 'search_documents' || toolName === 'search_user_memory' || toolName === 'load_skill') {
     return {
       code: `retrieval_tool_failed:${toolName}`,
       reply: 'Maaf Pak/Bu, saya belum bisa mengambil informasi lengkap saat ini. Coba tanyakan lagi sebentar ya, atau sebutkan keperluannya lebih spesifik.',
@@ -380,6 +381,8 @@ async function dispatchTool(
       return toolSearchKnowledge(args, ctx);
     case 'search_documents':
       return toolSearchDocuments(args, ctx);
+    case 'load_skill':
+      return toolLoadSkill(args, ctx);
     case 'search_user_memory':
       return toolSearchUserMemory(args, ctx);
     case 'create_complaint':
@@ -1083,6 +1086,58 @@ async function toolSearchDocuments(
       found: true,
       confidenceLevel: result.confidenceLevel || 'medium',
     },
+  };
+}
+
+/**
+ * R4: load_skill — Level-2 progressive disclosure. Read-only (G0),
+ * village-scoped. Returns the full SKILL.md for one active skill.
+ */
+async function toolLoadSkill(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolCallResult> {
+  const slug = typeof args.slug === 'string' ? args.slug.trim().toLowerCase() : '';
+  if (!slug) {
+    return {
+      success: false,
+      error: 'Slug panduan tidak boleh kosong.',
+      data: { suggested_response: 'Sebutkan nama panduannya ya Pak/Bu.' },
+      meta: { trustLevel: 'untrusted_retrieval', sourceKind: 'skill_retrieval', found: false, confidenceLevel: 'none' },
+    };
+  }
+  if (!ctx.villageId) {
+    return {
+      success: false,
+      error: 'Konteks desa tidak tersedia.',
+      data: { suggested_response: 'Maaf, saya belum bisa membuka panduan saat ini.' },
+      meta: { trustLevel: 'untrusted_retrieval', sourceKind: 'skill_retrieval', found: false, confidenceLevel: 'none' },
+    };
+  }
+  const skill = await loadSkill(ctx.villageId, slug);
+  if (!skill) {
+    return {
+      success: true,
+      data: {
+        found: false,
+        slug,
+        message: 'Panduan tidak ditemukan atau belum aktif untuk desa ini.',
+        suggested_response: 'Panduan yang dimaksud belum tersedia. Saya jawab dari informasi umum desa saja ya Pak/Bu.',
+      },
+      meta: { trustLevel: 'untrusted_retrieval', sourceKind: 'skill_retrieval', found: false, confidenceLevel: 'none' },
+    };
+  }
+  return {
+    success: true,
+    data: {
+      found: true,
+      slug: skill.slug,
+      title: skill.title,
+      content: skill.contentMd,
+      version: skill.version,
+      usage_policy: 'Ikuti tata cara di panduan ini langkah demi langkah. Ini prosedur resmi desa (P1); bila bertentangan dengan database, database menang.',
+    },
+    meta: { trustLevel: 'untrusted_retrieval', sourceKind: 'skill_retrieval', found: true, confidenceLevel: 'high' },
   };
 }
 

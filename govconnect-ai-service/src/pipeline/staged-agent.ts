@@ -212,6 +212,10 @@ async function runBoundedLoop(
     'get_village_profile', 'get_service_info',
     'get_important_contact', 'get_emergency_contacts',
   ]);
+  // R8 telemetry: RAG after a DB hit is wasteful semantic re-retrieval.
+  // load_skill is deliberately NOT in this set: it is a cheap indexed
+  // lookup (not embedding search) and the desired path for procedural
+  // questions per static prompt rule 9.
   const RAG_TOOLS = new Set(['search_knowledge', 'search_documents']);
 
   let model = 'unknown';

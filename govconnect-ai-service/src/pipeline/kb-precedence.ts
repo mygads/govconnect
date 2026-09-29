@@ -25,6 +25,7 @@ export type Precedence = 'P0' | 'P1' | 'P2' | 'P3';
 export function precedenceOf(toolName: string): Precedence {
   if (/^(get_|check_status|get_my_history)/.test(toolName)) return 'P0';
   if (toolName === 'search_documents') return 'P1';
+  if (toolName === 'load_skill') return 'P1'; // official village procedure (R4)
   if (toolName === 'search_knowledge') return 'P2';
   if (toolName === 'search_user_memory') return 'P2';
   return 'P2';
