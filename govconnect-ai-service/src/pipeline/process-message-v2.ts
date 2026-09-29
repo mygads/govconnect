@@ -65,9 +65,25 @@ import type { ProcessMessageInput, ProcessMessageResult } from '../services/ump-
 import { redactForLog } from '../gateway/pii-gateway';
 import logger from '../utils/logger';
 
-/** Idempotency key: same tenant+user+message within 10 min → same response. */
+/**
+ * Idempotency key (P1-2): scoped per tenant+user+channel, then message
+ * identity. Two different citizens sending identical text must NEVER share
+ * a key (cross-user replay could leak another citizen's ticket data).
+ * Same user + same text within 10 min → same response (desired dedup).
+ */
+export function buildIdempotencyKey(input: {
+  villageId?: string; userId?: string; channel?: string;
+  messageId?: string; message?: string;
+}): string {
+  const channel = input.channel === 'webchat' ? 'webchat' : 'whatsapp';
+  const msgHash = crypto.createHash('sha256')
+    .update(input.message ?? '').digest('hex').slice(0, 16);
+  return `msg:${input.villageId ?? ''}:${input.userId ?? ''}:${channel}:${input.messageId ?? 'noid'}:${msgHash}`;
+}
+
+/** Idempotency key: same tenant+user+channel+message within 10 min → same response. */
 function idemKey(input: ProcessMessageInput): string {
-  return `msg:${input.messageId ?? 'noid'}:${(input.message ?? '').length}:${(input.message ?? '').slice(0, 64)}`;
+  return buildIdempotencyKey(input);
 }
 
 export async function processMessageV2(input: ProcessMessageInput): Promise<ProcessMessageResult> {
@@ -85,10 +101,18 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     sideEffectMode: input.sideEffectMode,
   });
 
+  // P1-1: shadow/evaluation guard. Non-production modes (shadow runner,
+  // eval harness) MUST NOT write production state: turn state, idempotency
+  // store, memory policy, fallback tickets, LAPOR outbox, semantic cache.
+  // Writes are gated on `sideEffectsAllowed`; audit events always carry
+  // `isEvaluation` so shadow and production are distinguishable in the trail.
+  const sideEffectsAllowed = (input.sideEffectMode ?? 'production') === 'production';
+  const isEvaluation = input.isEvaluation ?? !sideEffectsAllowed;
+
   const audit = (stage: string, event: string, payload?: Record<string, unknown>) => {
     void appendAudit({
       tenantId, traceId, userId: input.userId, channel,
-      stage, event, payload,
+      stage, event, payload: { isEvaluation, ...(payload ?? {}) },
     });
   };
 
@@ -111,12 +135,16 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     }
 
     // 0b. Idempotency: duplicate delivery → replay stored response.
+    // Skipped in shadow/evaluation (P1-1): shadow must compute fresh, and
+    // must not read production idempotency results as its own.
     const key = idemKey(input);
-    const seen = await idempotencyCheck(tenantId, key);
-    if (seen.hit) {
-      audit('INGRESS', 'idempotent_replay', {});
-      const r = seen.response as ProcessMessageResult;
-      return { ...r, metadata: { ...(r.metadata ?? {}), traceId } };
+    if (sideEffectsAllowed) {
+      const seen = await idempotencyCheck(tenantId, key);
+      if (seen.hit) {
+        audit('INGRESS', 'idempotent_replay', {});
+        const r = seen.response as ProcessMessageResult;
+        return { ...r, metadata: { ...(r.metadata ?? {}), traceId } };
+      }
     }
 
     // 0c. Restore multi-turn state (stage + slots survive across turns).
@@ -181,11 +209,13 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       // slots, ask which part to correct (mirrors the VERIFY correction copy).
       delete ctx.slots.pendingTool;
       audit('VERIFY', 'confirmation_edit_requested', {});
-      void saveTurnState(tenantId, input.userId, {
-        stage: 'COLLECT',
-        slots: ctx.slots,
-        assessorConfidences: ctx.assessorConfidences,
-      }, channel).catch(() => undefined);
+      if (sideEffectsAllowed) {
+        void saveTurnState(tenantId, input.userId, {
+          stage: 'COLLECT',
+          slots: ctx.slots,
+          assessorConfidences: ctx.assessorConfidences,
+        }, channel).catch(() => undefined);
+      }
       return {
         success: true,
         response: CONFIRM_EDIT_COPY,
@@ -196,7 +226,9 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     }
     if (confirmation.kind === 'cancel') {
       audit('VERIFY', 'confirmation_cancelled', { buttonId: input.buttonId ?? null });
-      void clearTurnState(tenantId, input.userId, channel).catch(() => undefined);
+      if (sideEffectsAllowed) {
+        void clearTurnState(tenantId, input.userId, channel).catch(() => undefined);
+      }
       return {
         success: true,
         response: CONFIRM_CANCEL_COPY,
@@ -222,7 +254,9 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
         userId: input.userId, traceId, tenantId, channel,
       };
       const fb = buildFallback(fbInput);
-      persistFallbackTicket(fbInput, fb.ticketRef);
+      if (sideEffectsAllowed) {
+        persistFallbackTicket(fbInput, fb.ticketRef);
+      }
       return {
         success: false,
         response: fb.response,
@@ -464,19 +498,23 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     };
 
     // 4. Persist: idempotency + multi-turn state (best-effort, never blocks).
-    void idempotencyStore(tenantId, key, result, 10 * 60 * 1000).catch(() => undefined);
-    if (turn.terminalState === 'SUCCEEDED' && turn.stage !== 'CLOSE') {
-      void saveTurnState(tenantId, input.userId, {
-        stage: turn.stage,
-        slots: ctx.slots,
-        assessorConfidences: ctx.assessorConfidences,
-      }, channel).catch(() => undefined);
-    } else if (turn.stage === 'CLOSE') {
-      void clearTurnState(tenantId, input.userId, channel).catch(() => undefined);
+    // P1-1: skipped entirely in shadow/evaluation — no production writes.
+    if (sideEffectsAllowed) {
+      void idempotencyStore(tenantId, key, result, 10 * 60 * 1000).catch(() => undefined);
+      if (turn.terminalState === 'SUCCEEDED' && turn.stage !== 'CLOSE') {
+        void saveTurnState(tenantId, input.userId, {
+          stage: turn.stage,
+          slots: ctx.slots,
+          assessorConfidences: ctx.assessorConfidences,
+        }, channel).catch(() => undefined);
+      } else if (turn.stage === 'CLOSE') {
+        void clearTurnState(tenantId, input.userId, channel).catch(() => undefined);
+      }
     }
 
     // 5. Semantic cache store (informational, non-personal answers only).
-    if (turn.terminalState === 'SUCCEEDED') {
+    // P1-1: shadow must not pollute the production cache.
+    if (sideEffectsAllowed && turn.terminalState === 'SUCCEEDED') {
       void semanticCacheStore(tenantId, input.message, turn.response, decision.stage)
         .catch(() => undefined);
     }
@@ -486,16 +524,20 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     ).map((m) => m[0]);
 
     // 6. Durable memory policy (ADD/UPDATE/INVALIDATE/SKIP, never throws).
-    void applyMemoryPolicy({
-      tenantId, userId: input.userId, channel, traceId,
-      terminalState: turn.terminalState,
-      toolsUsed: turn.toolsUsed,
-      mutationRefs,
-      summary: `[${turn.intent}] ${redactForLog(turn.response).slice(0, 400)}`,
-    }).catch(() => undefined);
+    // P1-1: shadow must not mutate real user memory.
+    if (sideEffectsAllowed) {
+      void applyMemoryPolicy({
+        tenantId, userId: input.userId, channel, traceId,
+        terminalState: turn.terminalState,
+        toolsUsed: turn.toolsUsed,
+        mutationRefs,
+        summary: `[${turn.intent}] ${redactForLog(turn.response).slice(0, 400)}`,
+      }).catch(() => undefined);
+    }
 
     // 7. LAPOR! outbox: forward filed complaints (config-gated sender).
-    if (turn.toolsUsed.includes('create_complaint') && mutationRefs.length > 0) {
+    // P1-1: shadow must not enqueue real outbox items.
+    if (sideEffectsAllowed && turn.toolsUsed.includes('create_complaint') && mutationRefs.length > 0) {
       const s = ctx.slots as unknown as Record<string, unknown>;
       void enqueueComplaintToLapor({
         villageId: tenantId,
