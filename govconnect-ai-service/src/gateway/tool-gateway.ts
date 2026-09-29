@@ -17,12 +17,14 @@
  */
 
 import type { AgentToolName } from '../services/agent/tool-definitions';
-import { executeToolCall, type ToolCallResult } from '../services/agent/tool-executor';
+import { executeToolCall, type ToolCallResult, type ExecutedToolCall } from '../services/agent/tool-executor';
 import { TOOL_GRADES, STAGE_TOOL_ALLOWLIST, isParallelizable } from './tool-policy';
 import { meetsIdentityRequirement, TOOL_IDENTITY_MIN } from '../pipeline/identity-ladder';
 import type { IdentityLevel } from '../pipeline/identity-ladder';
 import { piiInbound, redactForLog } from './pii-gateway';
+import { idempotencyCheck, idempotencyStore } from '../pipeline/pipeline-store';
 import type { Stage, ToolErrorKind, ToolTraceEntry } from '../pipeline/stage-types';
+import crypto from 'crypto';
 import logger from '../utils/logger';
 
 const PER_TOOL_TIMEOUT_MS = Number(process.env.PER_TOOL_TIMEOUT_MS ?? 12000);
@@ -40,6 +42,12 @@ export interface GatewayContext {
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   /** Idempotency keys minted this turn (shared with pipeline ctx). */
   idempotencyKeys: string[];
+  /**
+   * P1-3(b): abort signal for the turn. When aborted (turn budget exhausted),
+   * the gateway refuses to start new tool executions — the orphaned loop
+   * from a lost Promise.race must not issue writes after the turn ended.
+   */
+  signal?: AbortSignal;
   /** Sliding window of recent tool signatures for loop detection. */
   recentSignatures: string[];
   /** Identity ladder level (L0/L1/L2) resolved at ingress. */
@@ -139,21 +147,73 @@ export async function gatewayExecute(
   }
 
   // 6. Execute with per-tool timeout; retry ONLY transient.
+  // P1-3(a): mutations (G2/G3) get a deterministic idempotency key per
+  // (tenant, user, tool, args-hash), computed over the PII-redacted args.
+  // The store is checked before EVERY attempt, so a retry after a timeout
+  // replays the stored result instead of executing the mutation twice
+  // (timeout != not-executed). TTL 5 min bounds the replay window; the
+  // confirmation binding (single-use pendingTool) prevents cross-turn replay.
+  // P1-3(b): an aborted turn signal refuses new executions outright.
+  const isMutation = grade === 'G2' || grade === 'G3';
+  const toolIdemKey = isMutation
+    ? `tool:${ctx.userId}:${tool}:${crypto.createHash('sha256').update(signatureOf(tool, safeArgs)).digest('hex').slice(0, 16)}`
+    : null;
   let lastErr: unknown = null;
   for (let attempt = 0; attempt <= MAX_RETRIES_TRANSIENT; attempt++) {
+    // Kept across the try/catch so a timed-out mutation can be given a
+    // grace period to land its late result before we retry.
+    let pendingExec: Promise<ExecutedToolCall> | null = null;
     try {
-      const executed = await withTimeout(
-        executeToolCall(tool, safeArgs, {
-          userId: ctx.userId,
-          villageId: ctx.tenantId,
-          channel: ctx.channel,
-          traceId: ctx.traceId,
-          isEvaluation: ctx.isEvaluation,
-          sideEffectMode: ctx.sideEffectMode,
-        }),
-        PER_TOOL_TIMEOUT_MS,
-        tool,
-      );
+      if (ctx.signal?.aborted) {
+        return fail('turn_cancelled:timeout', 'PERMANENT');
+      }
+      if (toolIdemKey) {
+        const prior = await idempotencyCheck(ctx.tenantId ?? '', toolIdemKey);
+        const stored = prior.response as { result?: ToolCallResult } | undefined;
+        if (prior.hit && stored?.result) {
+          trace.durationMs = Date.now() - started;
+          trace.success = true;
+          trace.replayed = true;
+          logger.info('[tool-gateway] idempotent replay of mutation', {
+            traceId: ctx.traceId, tool,
+          });
+          return { ok: true, result: stored.result, trace };
+        }
+      }
+      pendingExec = executeToolCall(tool, safeArgs, {
+        userId: ctx.userId,
+        villageId: ctx.tenantId,
+        channel: ctx.channel,
+        traceId: ctx.traceId,
+        isEvaluation: ctx.isEvaluation,
+        sideEffectMode: ctx.sideEffectMode,
+      });
+      let executed: ExecutedToolCall;
+      try {
+        executed = await withTimeout(pendingExec, PER_TOOL_TIMEOUT_MS, tool);
+      } catch (timeoutErr) {
+        // The call may still complete server-side after our timeout fired.
+        // Land its late result in the idempotency store whenever it settles,
+        // so a retry replays it instead of executing the mutation twice.
+        if (toolIdemKey) {
+          void pendingExec.then(
+            (late) => {
+              ctx.idempotencyKeys.push(toolIdemKey);
+              return idempotencyStore(
+                ctx.tenantId ?? '', toolIdemKey, { result: late.result }, 5 * 60 * 1000,
+              ).catch(() => undefined);
+            },
+            () => undefined,
+          );
+        }
+        throw timeoutErr;
+      }
+      if (toolIdemKey) {
+        ctx.idempotencyKeys.push(toolIdemKey);
+        await idempotencyStore(
+          ctx.tenantId ?? '', toolIdemKey, { result: executed.result }, 5 * 60 * 1000,
+        ).catch(() => undefined);
+      }
       trace.durationMs = Date.now() - started;
       trace.success = true;
       return { ok: true, result: executed.result, trace };
@@ -162,6 +222,15 @@ export async function gatewayExecute(
       const kind = classifyError(err);
       trace.errorKind = kind;
       if (kind !== 'TRANSIENT' || attempt === MAX_RETRIES_TRANSIENT) break;
+      if (toolIdemKey && pendingExec) {
+        // Grace period: let the timed-out mutation settle and store its
+        // late result before retrying — closes the timeout-but-executed
+        // race in the common case. Bounded; the retry proceeds regardless.
+        await Promise.race([
+          pendingExec.then(() => undefined, () => undefined),
+          new Promise((r) => setTimeout(r, 3000)),
+        ]);
+      }
       logger.info('[tool-gateway] transient failure, retrying once', {
         traceId: ctx.traceId, tool, attempt: attempt + 1,
         error: redactForLog(String((err as Error)?.message ?? err)),

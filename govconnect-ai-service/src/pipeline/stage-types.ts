@@ -100,6 +100,8 @@ export interface ToolTraceEntry {
   errorKind?: ToolErrorKind;
   blocked?: boolean;
   blockReason?: string;
+  /** P1-3(a): true when the result came from the idempotency store, not a fresh execution. */
+  replayed?: boolean;
 }
 
 /** Create a fresh pipeline context for one turn. */

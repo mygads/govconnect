@@ -82,7 +82,7 @@ export interface StagedAgentInput {
   language?: string;
 }
 
-function toGatewayContext(input: StagedAgentInput, stage: Stage): GatewayContext {
+function toGatewayContext(input: StagedAgentInput, stage: Stage, signal?: AbortSignal): GatewayContext {
   return {
     userId: input.ctx.userId,
     tenantId: input.ctx.tenantId,
@@ -95,6 +95,7 @@ function toGatewayContext(input: StagedAgentInput, stage: Stage): GatewayContext
     idempotencyKeys: input.ctx.idempotencyKeys,
     recentSignatures: [],
     identityLevel: input.ctx.identityLevel,
+    signal,
   };
 }
 
@@ -153,13 +154,14 @@ async function runBoundedLoop(
   input: StagedAgentInput,
   stage: Stage,
   tools: typeof AGENT_TOOLS,
+  signal?: AbortSignal,
 ): Promise<{ text: string; traces: ToolTraceEntry[]; toolsUsed: string[]; model: string; evidence: string[] }> {
   const traces: ToolTraceEntry[] = [];
   const toolsUsed: string[] = [];
   const evidence: string[] = [];
   const evidenceEntries: EvidenceEntry[] = [];
   let conflictInjected = false;
-  const gw = toGatewayContext(input, stage);
+  const gw = toGatewayContext(input, stage, signal);
 
   const { system, dynamicContext } = await buildPrompt({
     villageName: input.villageName,
@@ -445,11 +447,28 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
     const allowed = STAGE_TOOL_ALLOWLIST[stage] ?? new Set<AgentToolName>();
     const tools = AGENT_TOOLS.filter((t) => allowed.has(t.function.name as AgentToolName));
 
-    const runPromise = runBoundedLoop(input, stage, tools);
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('turn_budget_exhausted')), Math.max(1000, remainingMs(input.ctx))),
-    );
-    const { text, traces, toolsUsed, model, evidence } = await Promise.race([runPromise, timeoutPromise]);
+    // P1-3(b): the turn budget race no longer orphans the loop. On timeout
+    // the controller aborts, and the gateway refuses to start new tool
+    // executions for an aborted turn — no writes land after the turn ended.
+    // (The in-flight tool call itself cannot be hard-cancelled; P1-3(a)
+    // idempotency makes its retry safe.)
+    const controller = new AbortController();
+    const runPromise = runBoundedLoop(input, stage, tools, controller.signal);
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error('turn_budget_exhausted'));
+      }, Math.max(1000, remainingMs(input.ctx)));
+    });
+    let raced: { text: string; traces: ToolTraceEntry[]; toolsUsed: string[]; model: string; evidence: string[] };
+    try {
+      raced = await Promise.race([runPromise, timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      controller.abort();
+    }
+    const { text, traces, toolsUsed, model, evidence } = raced;
 
     if (!text.trim()) {
       return failover('empty_llm_output');
