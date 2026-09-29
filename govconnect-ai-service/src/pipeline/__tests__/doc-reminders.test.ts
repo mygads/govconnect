@@ -8,7 +8,7 @@ vi.mock('../pipeline-store', async (importOriginal) => {
   return { ...orig, getDb: vi.fn(), appendAudit: vi.fn(async () => true) };
 });
 
-import { getDb } from '../pipeline-store';
+import { getDb, appendAudit } from '../pipeline-store';
 import {
   scheduleDocReminder, runDocReminderSweep,
   setBroadcastOptIn, isBroadcastOptedIn, sendBroadcast,
@@ -16,6 +16,7 @@ import {
 } from '../doc-reminders';
 
 const mockGetDb = vi.mocked(getDb);
+const mockAppendAudit = vi.mocked(appendAudit);
 
 function fakeDb(overrides: Record<string, any> = {}) {
   return {
@@ -135,5 +136,29 @@ describe('broadcast opt-in', () => {
     expect(r.sent).toBe(1);
     expect(sender).toHaveBeenCalledTimes(1);
     expect(sender.mock.calls[0]![1]).toBe('u1');
+  });
+
+  it('sendBroadcast audits every skip (no silent skips)', async () => {
+    const consent = new Map([['u1', true], ['u2', false]]);
+    const db = fakeDb({
+      $queryRawUnsafe: vi.fn(async (sql: string, ...args: any[]) => {
+        const userId = args[1] as string;
+        return consent.get(userId) ? [{ opt_in: true }] : [];
+      }),
+    });
+    mockGetDb.mockResolvedValue(db as any);
+    const sender = vi.fn(async () => true);
+    await sendBroadcast({
+      villageId: 'v1', userIds: ['u1', 'u2', 'u3'], text: 'pengumuman', sentBy: 'admin',
+      sender,
+    });
+    const skips = mockAppendAudit.mock.calls.filter(
+      (c) => (c[0] as any).event === 'broadcast_skipped',
+    );
+    // u2 (opted out) and u3 (no row → opt-out) are both audited as skipped
+    expect(skips).toHaveLength(2);
+    expect(skips[0][0].payload).toMatchObject({ reason: 'no_consent' });
+    const skippedUsers = skips.map((c) => (c[0] as any).userId).sort();
+    expect(skippedUsers).toEqual(['u2', 'u3']);
   });
 });

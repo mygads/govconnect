@@ -232,7 +232,15 @@ export async function sendBroadcast(opts: {
     payload: { requested: result.requested, textPreview: opts.text.slice(0, 80) },
   }).catch(() => undefined);
   for (const userId of opts.userIds) {
-    if (!(await isBroadcastOptedIn(opts.villageId, userId, channel))) continue; // opt-out: silent skip
+    if (!(await isBroadcastOptedIn(opts.villageId, userId, channel))) {
+      // R16: every SKIP is audited too (no silent skips).
+      await appendAudit({
+        tenantId: opts.villageId, traceId, userId, channel,
+        stage: 'EXECUTE', event: 'broadcast_skipped',
+        payload: { sentBy: opts.sentBy, reason: 'no_consent' },
+      }).catch(() => undefined);
+      continue;
+    }
     result.optedIn += 1;
     const ok = await sender(opts.villageId, userId, opts.text);
     if (ok) result.sent += 1;
