@@ -28,6 +28,7 @@ import {
   PRECEDENCE_LABEL, type EvidenceEntry,
 } from './kb-precedence';
 import { STAGE_TOOL_ALLOWLIST, isParallelizable } from '../gateway/tool-policy';
+import { DETERMINISTIC_ONLY_STAGES } from './stage-graph';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { identityDenialCopy } from './identity-ladder';
 import { buildPrompt } from './prompt-builder';
@@ -499,6 +500,14 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
     }
 
     // ── Agent stages: bounded loop with stage allowlist ──
+    // Track A2: DETERMINISTIC_ONLY_STAGES wired as a fail-closed guard.
+    // EMERGENCY / VERIFY / EXECUTE have dedicated deterministic handlers
+    // above and must NEVER reach the LLM loop. If routing ever sends one
+    // here, throw: the turn-level catch converts this into the never-silent
+    // fallback rather than an LLM-generated answer.
+    if (DETERMINISTIC_ONLY_STAGES.has(stage)) {
+      throw new Error(`[staged-agent] deterministic-only stage reached agent loop: ${stage}`);
+    }
     const allowed = STAGE_TOOL_ALLOWLIST[stage] ?? new Set<AgentToolName>();
     const tools = AGENT_TOOLS.filter((t) => allowed.has(t.function.name as AgentToolName));
 
