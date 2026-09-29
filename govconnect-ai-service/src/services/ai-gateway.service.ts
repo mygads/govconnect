@@ -512,8 +512,27 @@ export function parseModelListEnv(envValue: string | undefined, fallback: string
   return unique.length > 0 ? unique : [...fallback];
 }
 
+/**
+ * W2: instruction prompts MUST use the `system` role, not `user`.
+ *
+ * Previously this returned `[{ role: 'user', ... }]`, which is injection-prone:
+ * the model treats instructions as user content and untrusted user text
+ * embedded in the prompt template gets the same privilege level as the
+ * instructions. All current callers pass instruction/classifier prompts
+ * (never raw conversational user content), so `system` is correct for all
+ * of them. Use buildUserPromptMessages() for genuine user content.
+ */
 export function buildPromptMessages(prompt: string): GatewayChatMessage[] {
-  return [{ role: 'user', content: prompt }];
+  return [{ role: 'system', content: prompt }];
+}
+
+/**
+ * Build a `user`-role message for genuine user conversational content
+ * (NOT instructions). Kept separate from buildPromptMessages() so the two
+ * privilege levels can never be confused again.
+ */
+export function buildUserPromptMessages(content: string): GatewayChatMessage[] {
+  return [{ role: 'user', content }];
 }
 
 function getGatewayApiKeysInAttemptOrder(kind: GatewayLaneKind, gateway: AnyGatewayConfig = getGatewayConfig(kind)): GatewayApiKey[] {
