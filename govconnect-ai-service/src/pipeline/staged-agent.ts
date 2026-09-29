@@ -31,6 +31,7 @@ import { STAGE_TOOL_ALLOWLIST, isParallelizable } from '../gateway/tool-policy';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { identityDenialCopy } from './identity-ladder';
 import { buildPrompt } from './prompt-builder';
+import { resolveExperimentVariant } from '../services/experiment-framework.service';
 import { buildFallback, persistFallbackTicket, assertNonEmptyResponse } from './fallback-policy';
 import {
   createPipelineContext, remainingMs,
@@ -185,6 +186,13 @@ async function runBoundedLoop(
     records: input.records ?? [],
     summary: input.summary,
     language: input.language,
+    // R13: deterministic experiment bucketing. Resolved once per turn;
+    // fail-soft (null → control experience). Cached 60s per village.
+    experimentVariant: await resolveExperimentVariant(
+      input.ctx.tenantId ?? undefined,
+      input.ctx.userId ?? undefined,
+      input.ctx.traceId,
+    ),
   });
 
   // P1-8: system-authority notes go out as role:'system', never role:'user'.

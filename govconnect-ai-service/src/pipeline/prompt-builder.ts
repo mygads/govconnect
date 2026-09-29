@@ -41,6 +41,18 @@ export interface PromptInput {
   summary?: string;
   /** Language the user is writing in. */
   language?: string;
+  /**
+   * R13: resolved experiment variant. The treatment promptSuffix is appended
+   * to the DYNAMIC context only (static prompt stays byte-identical for
+   * prefix caching). Shadow variants are never applied — the resolver
+   * audits the assignment and the caller serves control.
+   */
+  experimentVariant?: {
+    experimentName: string;
+    variantKey: string;
+    promptSuffix?: string;
+    shadow: boolean;
+  } | null;
 }
 
 /**
@@ -100,6 +112,12 @@ export async function buildDynamicContext(input: PromptInput): Promise<string> {
     if (rendered) lines.push(rendered);
   }
   lines.push('[Instruksi tahap] Jawab sesuai tahap di atas. Jangan melompat tahap.');
+  // R13: experiment treatment prompt suffix — operator-authored variant
+  // config, dynamic context only. Shadow variants never applied.
+  const ev = input.experimentVariant;
+  if (ev && !ev.shadow && ev.promptSuffix) {
+    lines.push(`[Varian eksperimen ${ev.experimentName}/${ev.variantKey}]\n${ev.promptSuffix}`);
+  }
   return lines.join('\n\n');
 }
 
