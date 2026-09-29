@@ -20,6 +20,12 @@ import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
 import { processImageMedia } from './media-pipeline';
+import {
+  isOcrConfigured,
+  extractKtpFields,
+  prefillSlotsFromKtp,
+  buildOcrPrefillFact,
+} from './ocr-ktp';
 import { isVoiceNote, handleVoiceNote } from './voice-pipeline';
 import { enqueueComplaintToLapor } from './lapor-bridge';
 import { resolveIdentityLevel, auditIdentityLevel } from './identity-ladder';
@@ -460,6 +466,27 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
           hasImage: media.hasImage, duplicate: media.duplicate,
           redaction: media.redaction, exifStripped: media.exifStripped,
         });
+        // 2d-bis. R14 KTP OCR pre-fill: on-prem sidecar only. OCR output is
+        // UNVERIFIED — pre-fills slots + identity candidates for explicit G2
+        // citizen confirmation; nothing enters the PII vault from here.
+        // Only runs while COLLECT still has empty identity-ish slots.
+        if (media.bytesForOcr && decision.stage === 'COLLECT' && isOcrConfigured()) {
+          const ocr = await extractKtpFields(media.bytesForOcr);
+          if (ocr) {
+            const outcome = prefillSlotsFromKtp(
+              ctx.slots as unknown as Record<string, unknown>, ocr.fields,
+            );
+            if (outcome.identityCandidates.length > 0 || outcome.dropped.length > 0) {
+              turnFacts.push(buildOcrPrefillFact(outcome));
+              audit('INGRESS', 'ocr_prefill', {
+                filledSlots: outcome.filledSlots,
+                candidates: outcome.identityCandidates.map((c) => c.field),
+                dropped: outcome.dropped.map((d) => `${d.field}:${d.reason}`),
+                overallConfidence: ocr.overallConfidence,
+              });
+            }
+          }
+        }
       } catch (err) {
         logger.debug('[processMessageV2] media intake failed', {
           error: String((err as Error)?.message ?? err).slice(0, 120),

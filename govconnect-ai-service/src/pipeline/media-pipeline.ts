@@ -18,6 +18,7 @@
 import { createHash } from 'crypto';
 import { appendAudit } from './pipeline-store';
 import logger from '../utils/logger';
+import { isOcrConfigured } from './ocr-ktp';
 
 export interface MediaSignal {
   hasImage: boolean;
@@ -30,6 +31,12 @@ export interface MediaSignal {
   forwardToLlm: boolean;
   estimatedKind: 'photo' | 'document' | 'unknown';
   bytes?: number;
+  /**
+   * R14: raw bytes for the on-prem OCR sidecar, set ONLY when OCR is
+   * configured. Never forwarded to any cloud service; used in-process
+   * for KTP pre-fill, then dropped with the turn.
+   */
+  bytesForOcr?: Buffer;
   /** System fact injected into the agent prompt. */
   promptFact?: string;
 }
@@ -179,6 +186,7 @@ export async function processImageMedia(input: {
     hasImage: true, sha256: hash, duplicate: false,
     exifStripped, redaction, forwardToLlm: false,
     estimatedKind: kind, bytes: bytes.length,
+    bytesForOcr: isOcrConfigured() ? bytes : undefined,
     promptFact:
       '[SINYAL MEDIA] Warga melampirkan 1 gambar ' +
       `(${kind === 'unknown' ? 'jenis tidak diketahui' : kind}, hash ${hash.slice(0, 12)}…). ` +

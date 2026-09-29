@@ -133,8 +133,9 @@ kritis sudah di-approve dan diterapkan.
 
 Jalankan berurutan, centang satu per satu:
 
-- [ ] `PIPELINE_MODE=on` untuk tenant desa ini SAJA (jangan global jika
-      multi-desa satu deploy)
+- [ ] `PIPELINE_MODE=on` untuk tenant desa ini SAJA via override per tenant
+      (`PIPELINE_TENANT_OVERRIDES='{"<tenant_id>":"on"}'` — jangan ubah
+      `PIPELINE_MODE` global jika multi-desa satu deploy)
 - [ ] Kirim pesan uji end-to-end dari nomor warga: sapaan → buat laporan
       (tombol "Benar, kirim") → tiket tercipta → cek status → tutup
 - [ ] Verifikasi typing indicator muncul (bukan pesan filler)
@@ -170,7 +171,7 @@ menjawab, tidak diam).
 
 | Flag | Shadow | Go-live | Keterangan |
 |---|---|---|---|
-| `PIPELINE_MODE` | `shadow` | `on` | per tenant |
+| `PIPELINE_MODE` (+ `PIPELINE_TENANT_OVERRIDES` JSON untuk per tenant) | `shadow` | `on` | global, override per tenant |
 | `WA_COST_SAVER_MODE` | `true` | `true` | 1 pesan/turn |
 | `LAPOR_ENABLED` | `false` | opsional | butuh API terverifikasi |
 | `CSAT_ENABLED` | `false` | `true` (H+3) | survei 1–5 |
