@@ -145,8 +145,12 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
 
     clearRetrievalCache(resolvedVillageId);
 
+    // R3: surface KB-router rejections to the uploader. The document row
+    // already carries status 'rejected' with the reason.
+    const kbRoute = (result as { kbRoute?: string }).kbRoute;
+    const kbRejected = kbRoute === 'rejected';
     return res.json({
-      success: true,
+      success: !kbRejected,
       documentId,
       filename: storedFile.fileName,
       fileUrl: storedFile.url,
@@ -157,7 +161,11 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       chunksCount: result.chunksCount,
       aiChunking: result.usedAiChunking,
       ocrQueued: Boolean((result as any).queuedOcr),
-      message: (result as any).queuedOcr ? 'Document queued for OCR processing' : 'Document uploaded and processed successfully',
+      kbRoute,
+      rejected: kbRejected || undefined,
+      message: kbRejected
+        ? 'Dokumen DITOLAK oleh KB router: berisi data operasional yang sudah otoritatif di sistem (jam layanan/tarif/kontak). Data ini dikelola di case-service. Update di sana.'
+        : (result as any).queuedOcr ? 'Document queued for OCR processing' : 'Document uploaded and processed successfully',
     });
   } catch (error: any) {
     logger.error('Document upload failed', { documentId, error: error.message });
@@ -200,13 +208,20 @@ router.post('/document/:documentId/process', verifyInternalKey, async (req: Requ
 
     clearRetrievalCache(document.village_id || null);
 
+    // R3: surface KB-router rejections (document row already 'rejected').
+    const kbRoute = (result as { kbRoute?: string }).kbRoute;
+    const kbRejected = kbRoute === 'rejected';
     return res.json({
-      success: true,
+      success: !kbRejected,
       documentId,
       chunksCount: result.chunksCount,
       aiChunking: result.usedAiChunking,
       ocrQueued: Boolean((result as any).queuedOcr),
-      message: (result as any).queuedOcr ? 'Document queued for OCR processing' : 'Document processed successfully',
+      kbRoute,
+      rejected: kbRejected || undefined,
+      message: kbRejected
+        ? 'Dokumen DITOLAK oleh KB router: berisi data operasional yang sudah otoritatif di sistem (jam layanan/tarif/kontak). Data ini dikelola di case-service. Update di sana.'
+        : (result as any).queuedOcr ? 'Document queued for OCR processing' : 'Document processed successfully',
     });
   } catch (error: any) {
     logger.error('Document process failed', { documentId, error: error.message });

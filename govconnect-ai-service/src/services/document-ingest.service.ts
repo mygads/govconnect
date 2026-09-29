@@ -14,6 +14,7 @@ import { withAiBillingTurn } from './ai-turn-billing.service';
 import { callAIGatewayPrompt, NoCapableGatewayModelError } from './ai-gateway.service';
 import { runDocVsDocForDocument } from './knowledge-consistency.service';
 import { runDocVsDbForDocument } from './doc-vs-db-pipeline.service';
+import { routeKnowledgeDocument, KB_REJECTED_COPY, type KbRoute } from './kb-router.service';
 
 export interface ProcessDocumentInput {
   documentId: string;
@@ -285,6 +286,37 @@ async function updateDashboardDocument(documentId: string, data: Record<string, 
 async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer' | 'mimeType' | 'fileHash' | 'tracePrefix'> & { extracted: ExtractedDocument }) {
   const docTitle = input.title || input.originalName;
   const content = unitsToText(input.extracted.units);
+
+  // R3: KB router — classify BEFORE chunking/embedding. Type-D (authoritative
+  // operational data: jam layanan, tarif, kontak) is rejected here with no
+  // vectors written; both ingest paths (direct + OCR worker) funnel through
+  // this function so the rule applies everywhere.
+  const kbDecision = routeKnowledgeDocument({
+    title: docTitle,
+    text: content,
+    category: input.category,
+  });
+  const kbRoute: KbRoute = kbDecision.route;
+  if (kbRoute === 'rejected') {
+    const reason = kbDecision.reasons.join('; ');
+    logger.info('[kb-router] document rejected (type-D: authoritative data lives in case-service)', {
+      documentId: input.documentId,
+      title: docTitle.slice(0, 80),
+      reason,
+      signals: kbDecision.signals,
+    });
+    await updateDashboardDocument(input.documentId, {
+      status: 'rejected',
+      error_message: `DITOLAK oleh KB router: ${reason}. ${KB_REJECTED_COPY}`,
+    });
+    return { chunksCount: 0, usedAiChunking: false, kbRoute };
+  }
+  logger.info('[kb-router] document routed', {
+    documentId: input.documentId,
+    kbRoute,
+    reasons: kbDecision.reasons,
+  });
+
   let smartChunks;
   let usedAiChunking = false;
 
@@ -352,6 +384,9 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
       rowRange: unit?.rowRange,
       sectionTitle: unit?.sectionTitle || chunk.title,
       paragraphRange: (chunk as any).paragraphRange,
+      // R3: KB route per chunk — R4's SKILL.md builder consumes
+      // 'skill'/'both' chunks from here.
+      kbRoute,
     };
     return {
       documentId: input.documentId,
@@ -369,7 +404,7 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
     };
   }));
 
-  return { chunksCount: finalChunks.length, usedAiChunking };
+  return { chunksCount: finalChunks.length, usedAiChunking, kbRoute };
 }
 
 /**
@@ -656,7 +691,11 @@ async function processOneOcrJob() {
         isGlobal: Boolean(payload.isGlobal),
         extracted,
       });
-      await updateDashboardDocument(documentId, { status: 'completed', error_message: null, total_chunks: result.chunksCount });
+      // R3: a type-D rejection already set status 'rejected' inside
+      // storeExtractedText — do not overwrite it with 'completed'.
+      if (result.kbRoute !== 'rejected') {
+        await updateDashboardDocument(documentId, { status: 'completed', error_message: null, total_chunks: result.chunksCount });
+      }
       if (!payload.isGlobal && result.chunksCount > 0) {
         scheduleConsistencyAuditForDocument({
           documentId,
