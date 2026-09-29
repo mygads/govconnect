@@ -17,7 +17,8 @@ import { routeMessage } from './stage-router';
 import { assessStage, shouldSuggestHandoff } from './stage-assessor';
 import { runStagedTurn, createPipelineContext, stripSystemMarkers } from './staged-agent';
 import { normalizeWithGlossary, loadGlossary } from './glossary';
-import { detectLanguage, shouldUseRegionalFallback, REGIONAL_FALLBACK_COPY, languageLabel } from './language-fallback';
+import { detectLanguage, shouldUseRegionalFallback, REGIONAL_FALLBACK_COPY, languageLabel, type AssessorLanguageHint } from './language-fallback';
+import { detectLanguage as assessLanguage } from '../services/language-detection.service';
 import { scheduleDocReminder } from './doc-reminders';
 import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
@@ -378,16 +379,30 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       // fail-open: message flows through unchanged
     }
 
-    // 0g. A3 regional-language fallback: heuristic detection AFTER glossary
-    // normalization. On detection we do NOT guess intent — friendly reply
-    // asking to continue in Indonesian. Fail-open on weak signals.
+    // 0g. A3 regional-language fallback: light heuristic AFTER glossary
+    // normalization, plus the language assessor as a second opinion.
+    // On detection we do NOT guess intent — friendly reply asking to
+    // continue in Indonesian. Fail-open on weak signals.
     try {
       const det = detectLanguage(input.message ?? '');
-      if (shouldUseRegionalFallback(det)) {
+      let assessor: AssessorLanguageHint | undefined;
+      try {
+        const a = assessLanguage(input.message ?? '');
+        assessor = {
+          regional: a.primary !== 'indonesian',
+          confidence: a.confidence,
+          language: a.primary,
+        };
+      } catch {
+        assessor = undefined; // assessor failure → heuristic only
+      }
+      if (shouldUseRegionalFallback(det, assessor)) {
         audit('INGRESS', 'regional_language_fallback', {
           language: languageLabel(det.language),
           confidence: Math.round(det.confidence * 100) / 100,
           markers: det.markers,
+          assessorLanguage: assessor?.language,
+          assessorConfidence: assessor ? Math.round(assessor.confidence * 100) / 100 : undefined,
         });
         return {
           success: true,

@@ -38,8 +38,28 @@ describe('detectLanguage', () => {
     expect(shouldUseRegionalFallback(d)).toBe(false);
   });
 
-  it('fallback copy is friendly and asks for Indonesian', () => {
-    expect(REGIONAL_FALLBACK_COPY).toContain('Bahasa Indonesia');
-    expect(REGIONAL_FALLBACK_COPY).not.toContain('error');
+  it('fallback copy matches the decided wording exactly', () => {
+    expect(REGIONAL_FALLBACK_COPY).toBe(
+      'Saya paling lancar Bahasa Indonesia — boleh lanjut Bahasa Indonesia?',
+    );
+  });
+
+  it('assessor confirms a weak (single-marker) heuristic signal', () => {
+    const d = detectLanguage('abdi mau tanya tentang KTP'); // 1 marker: 'abdi'
+    expect(d.markerHits).toBeGreaterThanOrEqual(1);
+    expect(shouldUseRegionalFallback(d)).toBe(false); // heuristic alone: fail-open
+    expect(shouldUseRegionalFallback(d, { regional: true, confidence: 0.6, language: 'sundanese' })).toBe(true);
+  });
+
+  it('assessor alone (zero marker hits) never triggers', () => {
+    const d = detectLanguage('bagaimana cara mengurus KTP?');
+    expect(d.markerHits).toBe(0);
+    expect(shouldUseRegionalFallback(d, { regional: true, confidence: 0.9 })).toBe(false);
+  });
+
+  it('low-confidence assessor does not confirm a weak signal', () => {
+    const d = detectLanguage('abdi mau tanya tentang KTP');
+    expect(shouldUseRegionalFallback(d, { regional: true, confidence: 0.1 })).toBe(false);
+    expect(shouldUseRegionalFallback(d, { regional: false, confidence: 0.9 })).toBe(false);
   });
 });
