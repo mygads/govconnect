@@ -5,6 +5,8 @@
  * - When WHISPER_ENABLED=true: download audio → transcribe (OpenAI-compatible
  *   /audio/transcriptions endpoint) → cleanup with a mini-LLM
  *   (micro_nlu lane, cheap tier) → the transcript enters the text pipeline.
+ * - Language: the server auto-detects unless WHISPER_LANGUAGE is set. Never
+ *   hardcode a language hint — forcing 'id' corrupts regional-language audio.
  * - When not configured (or transcription fails): a deterministic,
  *   never-silent reply asking the citizen to send text instead.
  * - Graceful degradation is explicit: no Whisper endpoint is fabricated.
@@ -17,6 +19,10 @@ const WHISPER_ENABLED = process.env.WHISPER_ENABLED === 'true';
 const WHISPER_API_URL = (process.env.WHISPER_API_URL ?? '').replace(/\/$/, '');
 const WHISPER_API_KEY = process.env.WHISPER_API_KEY ?? '';
 const WHISPER_MODEL = process.env.WHISPER_MODEL ?? 'whisper-1';
+// Optional language hint. When UNSET, the field is omitted and the server
+// auto-detects the language. Do NOT default to 'id': forcing Indonesian
+// corrupts transcription of regional languages (Jawa, Sunda, ...).
+const WHISPER_LANGUAGE = (process.env.WHISPER_LANGUAGE ?? '').trim();
 
 export const VOICE_UNAVAILABLE_COPY =
   'Maaf, untuk saat ini saya belum bisa mendengarkan voice note. ' +
@@ -57,7 +63,9 @@ export async function transcribeVoiceNote(audioUrl: string): Promise<string | nu
     const form = new FormData();
     form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'voice.ogg');
     form.append('model', WHISPER_MODEL);
-    form.append('language', 'id');
+    // Only hint the language when explicitly configured. Omitting it lets the
+    // transcription server auto-detect (important for regional languages).
+    if (WHISPER_LANGUAGE) form.append('language', WHISPER_LANGUAGE);
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 90_000);
     const res = await fetch(`${WHISPER_API_URL}/audio/transcriptions`, {

@@ -92,6 +92,7 @@ __pycache__/
 *$py.class
 .Python
 venv/
+.venv/
 env/
 
 # Lock files (optional - uncomment if you want to ignore)
