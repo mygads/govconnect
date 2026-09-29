@@ -488,3 +488,24 @@ model gemini_api_key_usage {
   @@index([period_type, period_key])
   @@index([key_id, model, period_type, period_key])
 }
+
+// ==================== BROADCAST DRAFTS (2-step approval) ====================
+// Draft pesan broadcast WA: dibuat oleh satu admin, harus di-approve oleh
+// admin LAIN (approver != created_by) sebelum bisa dikirim.
+model broadcast_drafts {
+  id          String   @id @default(cuid())
+  village_id  String
+  message     String
+  recipients  String[] @default([])
+  created_by  String
+  created_at  DateTime @default(now())
+  status      String   @default("draft") // draft | approved | rejected | sent
+  approved_by String?
+  approved_at DateTime?
+  reject_note String?
+  sent_at     DateTime?
+  send_result Json?
+
+  @@index([village_id, status])
+  @@index([village_id, created_at])
+}
