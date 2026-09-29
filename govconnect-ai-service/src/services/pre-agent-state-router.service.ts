@@ -1834,12 +1834,12 @@ export async function tryHandleLatePreAgentState(
         messagePreview: message.substring(0, 60),
       });
     } else {
-      const userProfile = await getAutoFillSuggestionsWithFallback(userId);
+      const userProfile = await getAutoFillSuggestionsWithFallback(userId, villageId); // W5: village-scoped
 
       if (pendingComplaint.waitingFor === 'nama') {
         if (identityDecision.action === 'resume' && identityDecision.extractedName) {
           const extractedName = identityDecision.extractedName;
-          updateProfile(userId, { nama_lengkap: extractedName });
+          updateProfile(userId, { nama_lengkap: extractedName }, villageId); // W5: village-scoped
           syncNameToChannelService(userId, extractedName, villageId, channel);
 
           if (pendingComplaint.channel === 'webchat' && !userProfile.no_hp) {
@@ -1886,7 +1886,7 @@ export async function tryHandleLatePreAgentState(
 
       if (identityDecision.action === 'resume' && identityDecision.extractedPhone) {
         const phone = identityDecision.extractedPhone;
-        updateProfile(userId, { no_hp: phone });
+        updateProfile(userId, { no_hp: phone }, villageId); // W5: village-scoped
         const channelUpper = (pendingComplaint.channel || 'webchat').toUpperCase() as 'WHATSAPP' | 'WEBCHAT';
         updateConversationUserProfile(userId, { user_phone: phone }, pendingComplaint.village_id, channelUpper)
           .catch(() => {});
@@ -2124,7 +2124,7 @@ export async function tryHandleLatePreAgentState(
     }
 
     addPendingPhoto(userId, mediaUrl);
-    const savedProfile = await getAutoFillSuggestionsWithFallback(userId);
+    const savedProfile = await getAutoFillSuggestionsWithFallback(userId, villageId); // W5: village-scoped
     const userName = savedProfile.nama_lengkap;
     const nameGreeting = userName ? ` ${userName}` : '';
     tracker.complete();

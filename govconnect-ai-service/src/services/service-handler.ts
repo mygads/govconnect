@@ -340,7 +340,7 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
     const baseUrl = getPublicFormBaseUrl();
     const villageSlug = await resolveVillageSlugForPublicForm(villageId);
     const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug || service_slug, userId, channel === 'webchat' ? 'webchat' : 'whatsapp');
-    recordServiceUsage(userId, service.slug || service_slug);
+    recordServiceUsage(userId, service.slug || service_slug, villageId); // W5: village-scoped
     void rememberMemoryEvent({
       wa_user_id: userId,
       village_id: villageId || service.village_id || service.villageId,

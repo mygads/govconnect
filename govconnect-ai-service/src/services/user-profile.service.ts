@@ -1,15 +1,20 @@
 /**
  * User Profile & Preference Memory Service
- * 
+ *
  * Menyimpan dan mengelola preferensi user untuk personalisasi response:
  * - Bahasa/gaya komunikasi (formal/informal)
  * - Alamat default (untuk laporan)
  * - Layanan yang sering digunakan
  * - Riwayat interaksi
- * 
+ *
  * Hybrid memory:
  * - Hot path: in-memory LRU cache untuk akses cepat
  * - Long-term: durable_user_profiles di PostgreSQL untuk survive restart
+ *
+ * W5 (P0 privacy): profiles are keyed by (village_id, wa_user_id), NOT by
+ * wa_user_id alone. The old single-key layout mixed PII (NIK/nama/alamat)
+ * across villages. Every public function accepts an optional trailing
+ * `village_id`; callers that know the village MUST pass it.
  */
 
 import logger from '../utils/logger';
@@ -17,6 +22,15 @@ import { LRUCache } from '../utils/lru-cache';
 import crypto from 'crypto';
 import prisma from '../lib/prisma';
 import { deleteAllMemories } from './hybrid-memory.service';
+import {
+  LEGACY_VILLAGE_SCOPE,
+  normalizeVillageScope,
+  buildProfileCacheKey,
+  isKeyForUser,
+} from './profile-scope';
+
+// Re-export scoping helpers so existing import sites keep working.
+export { LEGACY_VILLAGE_SCOPE, normalizeVillageScope, buildProfileCacheKey, isKeyForUser };
 
 // ==================== PII ENCRYPTION (Temuan 5) ====================
 
@@ -93,41 +107,43 @@ export type PreferredLanguage = 'indonesian' | 'sundanese' | 'javanese' | 'auto'
 
 export interface UserProfile {
   wa_user_id: string;
-  
+  /** Village scope (W5). '' = legacy row written before scoping. */
+  village_id: string;
+
   // Communication preferences
   preferred_language: PreferredLanguage;
   communication_style: CommunicationStyle;
   response_detail: 'brief' | 'detailed' | 'auto';
-  
+
   // UU PDP consent tracking
   data_consent: boolean;             // User has given consent for data processing
   data_consent_at?: Date;            // When consent was given
   data_consent_version?: string;     // Version of consent policy
-  
+
   // Default data (untuk auto-fill)
   default_address?: string;
   default_rt_rw?: string;
   default_kelurahan?: string;
-  
+
   // Personal data (dari interaksi sebelumnya)
   nama_lengkap?: string;
   nik?: string;
   no_hp?: string;
-  
+
   // Usage patterns
   frequent_services: string[]; // ['SKD', 'SKTM', 'jalan_rusak']
   total_complaints: number;
   total_service_requests: number;
-  
+
   // Interaction history
   first_interaction: Date;
   last_interaction: Date;
   total_messages: number;
-  
+
   // Sentiment tracking
   avg_sentiment_score: number;
   frustration_count: number; // Berapa kali menunjukkan frustasi
-  
+
   // Metadata
   created_at: Date;
   updated_at: Date;
@@ -146,6 +162,7 @@ export interface ProfileUpdate {
 }
 
 // Hot-path memory cache. Durable backing lives in PostgreSQL.
+// Cache key is buildProfileCacheKey(village_id, wa_user_id) — NEVER wa_user_id alone.
 const profileCache = new LRUCache<string, UserProfile>({
   maxSize: 2000,
   ttlMs: 24 * 60 * 60 * 1000, // 24 hours
@@ -156,7 +173,7 @@ const profilePersistTimers = new Map<string, NodeJS.Timeout>();
 const profileHydrationInFlight = new Map<string, Promise<void>>();
 const PROFILE_PERSIST_DEBOUNCE_MS = 500;
 
-logger.info('👤 User Profile Service initialized (hybrid cache + durable store)');
+logger.info('👤 User Profile Service initialized (hybrid cache + durable store, village-scoped)');
 
 function mergeDistinctServices(primary: string[], secondary: string[]): string[] {
   const merged = [...secondary, ...primary].filter(Boolean);
@@ -170,6 +187,7 @@ function mergeProfiles(local: UserProfile, durable: UserProfile | null): UserPro
 
   return {
     wa_user_id: local.wa_user_id,
+    village_id: local.village_id || durable.village_id,
     preferred_language: local.preferred_language !== 'auto' ? local.preferred_language : durable.preferred_language,
     communication_style: local.communication_style !== 'auto' ? local.communication_style : durable.communication_style,
     response_detail: local.response_detail !== 'auto' ? local.response_detail : durable.response_detail,
@@ -197,39 +215,43 @@ function mergeProfiles(local: UserProfile, durable: UserProfile | null): UserPro
   };
 }
 
-function scheduleProfilePersist(wa_user_id: string): void {
-  const existing = profilePersistTimers.get(wa_user_id);
+function scheduleProfilePersist(wa_user_id: string, village_id?: string): void {
+  const key = buildProfileCacheKey(village_id, wa_user_id);
+  const existing = profilePersistTimers.get(key);
   if (existing) {
     clearTimeout(existing);
   }
 
   const timer = setTimeout(() => {
-    profilePersistTimers.delete(wa_user_id);
-    persistProfileToDurableStore(wa_user_id).catch((error: any) => {
+    profilePersistTimers.delete(key);
+    persistProfileToDurableStore(wa_user_id, village_id).catch((error: any) => {
       logger.warn('Failed to persist durable user profile', {
         wa_user_id,
+        village_id: normalizeVillageScope(village_id),
         error: error.message,
       });
     });
   }, PROFILE_PERSIST_DEBOUNCE_MS);
 
-  profilePersistTimers.set(wa_user_id, timer);
+  profilePersistTimers.set(key, timer);
 }
 
-async function persistProfileToDurableStore(wa_user_id: string): Promise<void> {
-  const localProfile = profileCache.get(wa_user_id);
+async function persistProfileToDurableStore(wa_user_id: string, village_id?: string): Promise<void> {
+  const key = buildProfileCacheKey(village_id, wa_user_id);
+  const localProfile = profileCache.get(key);
   if (!localProfile) {
     return;
   }
 
+  const vid = normalizeVillageScope(village_id);
   const profile = mergeProfiles(
     localProfile,
-    await loadProfileFromDurableStore(wa_user_id, { cacheResult: false }),
+    await loadProfileFromDurableStore(wa_user_id, village_id, { cacheResult: false }),
   );
-  profileCache.set(wa_user_id, profile);
+  profileCache.set(key, profile);
 
   await prisma.durable_user_profiles.upsert({
-    where: { wa_user_id },
+    where: { village_id_wa_user_id: { village_id: vid, wa_user_id } },
     update: {
       preferred_language: profile.preferred_language,
       communication_style: profile.communication_style,
@@ -254,6 +276,7 @@ async function persistProfileToDurableStore(wa_user_id: string): Promise<void> {
       created_at: profile.created_at,
     },
     create: {
+      village_id: vid,
       wa_user_id,
       preferred_language: profile.preferred_language,
       communication_style: profile.communication_style,
@@ -278,16 +301,41 @@ async function persistProfileToDurableStore(wa_user_id: string): Promise<void> {
       created_at: profile.created_at,
     },
   });
+
+  // Lazy migration (W5): a scoped write absorbs the legacy row so the old
+  // unscoped PII does not linger under the legacy key.
+  if (vid !== LEGACY_VILLAGE_SCOPE) {
+    await prisma.durable_user_profiles.deleteMany({
+      where: { wa_user_id, village_id: LEGACY_VILLAGE_SCOPE },
+    }).catch(() => {});
+  }
 }
 
 async function loadProfileFromDurableStore(
   wa_user_id: string,
+  village_id?: string,
   options: { cacheResult?: boolean } = {},
 ): Promise<UserProfile | null> {
+  const key = buildProfileCacheKey(village_id, wa_user_id);
+  const vid = normalizeVillageScope(village_id);
   try {
-    const stored = await prisma.durable_user_profiles.findUnique({
-      where: { wa_user_id },
+    let stored = await prisma.durable_user_profiles.findUnique({
+      where: { village_id_wa_user_id: { village_id: vid, wa_user_id } },
     });
+
+    if (!stored && vid !== LEGACY_VILLAGE_SCOPE) {
+      // Legacy fallback (W5): rows written before village scoping. The next
+      // write lazily migrates them to the scoped key.
+      stored = await prisma.durable_user_profiles.findUnique({
+        where: { village_id_wa_user_id: { village_id: LEGACY_VILLAGE_SCOPE, wa_user_id } },
+      });
+      if (stored) {
+        logger.info('👤 Legacy (unscoped) profile found; will migrate on next write', {
+          wa_user_id,
+          village_id: vid,
+        });
+      }
+    }
 
     if (!stored) {
       return null;
@@ -295,6 +343,7 @@ async function loadProfileFromDurableStore(
 
     const profile: UserProfile = {
       wa_user_id: stored.wa_user_id,
+      village_id: stored.village_id,
       preferred_language: stored.preferred_language as PreferredLanguage,
       communication_style: stored.communication_style as CommunicationStyle,
       response_detail: stored.response_detail as 'brief' | 'detailed' | 'auto',
@@ -320,93 +369,102 @@ async function loadProfileFromDurableStore(
     };
 
     if (options.cacheResult !== false) {
-      profileCache.set(wa_user_id, profile);
+      profileCache.set(key, profile);
     }
     return profile;
   } catch (error: any) {
     logger.warn('Failed to load durable user profile', {
       wa_user_id,
+      village_id: vid,
       error: error.message,
     });
     return null;
   }
 }
 
-function maybeHydrateProfileCache(wa_user_id: string): void {
-  if (profileHydrationInFlight.has(wa_user_id)) {
+function maybeHydrateProfileCache(wa_user_id: string, village_id?: string): void {
+  const key = buildProfileCacheKey(village_id, wa_user_id);
+  if (profileHydrationInFlight.has(key)) {
     return;
   }
 
-  const loadPromise = loadProfileFromDurableStore(wa_user_id, { cacheResult: false })
+  const loadPromise = loadProfileFromDurableStore(wa_user_id, village_id, { cacheResult: false })
     .then((durableProfile) => {
       if (!durableProfile) {
         return;
       }
 
-      const cached = profileCache.get(wa_user_id);
+      const cached = profileCache.get(key);
       if (!cached) {
-        profileCache.set(wa_user_id, durableProfile);
+        profileCache.set(key, durableProfile);
         return;
       }
 
-      profileCache.set(wa_user_id, mergeProfiles(cached, durableProfile));
+      profileCache.set(key, mergeProfiles(cached, durableProfile));
     })
     .catch((error: any) => {
       logger.debug('Durable profile hydration skipped', {
         wa_user_id,
+        village_id: normalizeVillageScope(village_id),
         error: error.message,
       });
     })
     .finally(() => {
-      profileHydrationInFlight.delete(wa_user_id);
+      profileHydrationInFlight.delete(key);
     });
 
-  profileHydrationInFlight.set(wa_user_id, loadPromise);
+  profileHydrationInFlight.set(key, loadPromise);
 }
 
 // ==================== CORE FUNCTIONS ====================
 
 /**
- * Get or create user profile
+ * Get or create user profile (village-scoped).
  */
-export function getProfile(wa_user_id: string): UserProfile {
-  let profile = profileCache.get(wa_user_id);
-  
+export function getProfile(wa_user_id: string, village_id?: string): UserProfile {
+  const key = buildProfileCacheKey(village_id, wa_user_id);
+  let profile = profileCache.get(key);
+
   if (!profile) {
-    profile = createDefaultProfile(wa_user_id);
-    profileCache.set(wa_user_id, profile);
-    maybeHydrateProfileCache(wa_user_id);
-    
-    logger.info('👤 New user profile created', { wa_user_id });
+    profile = createDefaultProfile(wa_user_id, village_id);
+    profileCache.set(key, profile);
+    maybeHydrateProfileCache(wa_user_id, village_id);
+
+    logger.info('👤 New user profile created', {
+      wa_user_id,
+      village_id: normalizeVillageScope(village_id),
+    });
   }
-  
+
   return profile;
 }
 
-export async function getProfileWithFallback(wa_user_id: string): Promise<UserProfile> {
-  const cached = profileCache.get(wa_user_id);
+export async function getProfileWithFallback(wa_user_id: string, village_id?: string): Promise<UserProfile> {
+  const key = buildProfileCacheKey(village_id, wa_user_id);
+  const cached = profileCache.get(key);
   if (cached) {
     return cached;
   }
 
-  const durable = await loadProfileFromDurableStore(wa_user_id);
+  const durable = await loadProfileFromDurableStore(wa_user_id, village_id);
   if (durable) {
     return durable;
   }
 
-  const profile = createDefaultProfile(wa_user_id);
-  profileCache.set(wa_user_id, profile);
+  const profile = createDefaultProfile(wa_user_id, village_id);
+  profileCache.set(key, profile);
   return profile;
 }
 
 /**
  * Create default profile for new user
  */
-function createDefaultProfile(wa_user_id: string): UserProfile {
+function createDefaultProfile(wa_user_id: string, village_id?: string): UserProfile {
   const now = new Date();
-  
+
   return {
     wa_user_id,
+    village_id: normalizeVillageScope(village_id),
     preferred_language: 'auto',
     communication_style: 'auto',
     response_detail: 'auto',
@@ -428,8 +486,9 @@ function createDefaultProfile(wa_user_id: string): UserProfile {
  * Clear/reset user profile — removes all personal data (name, phone, etc.)
  * Used when admin clears a conversation or user resets their chat.
  */
-export function clearProfile(wa_user_id: string): void {
-  const existing = profileCache.get(wa_user_id);
+export function clearProfile(wa_user_id: string, village_id?: string): void {
+  const key = buildProfileCacheKey(village_id, wa_user_id);
+  const existing = profileCache.get(key);
   if (existing) {
     // Reset personal fields but keep interaction stats
     existing.nama_lengkap = undefined;
@@ -439,38 +498,68 @@ export function clearProfile(wa_user_id: string): void {
     existing.default_rt_rw = undefined;
     existing.default_kelurahan = undefined;
     existing.updated_at = new Date();
-    scheduleProfilePersist(wa_user_id);
-    logger.info('👤 Profile cleared (personal data reset)', { wa_user_id });
+    scheduleProfilePersist(wa_user_id, village_id);
+    logger.info('👤 Profile cleared (personal data reset)', {
+      wa_user_id,
+      village_id: normalizeVillageScope(village_id),
+    });
   }
 }
 
 /**
  * Fully delete user profile from cache — removes the entire entry.
  * Used when admin deletes a conversation so AI has zero memory of the user.
- * Tidak ada persistence durable di layer ini; penghapusan hanya membersihkan cache aktif.
+ *
+ * When village_id is provided, only that village's scoped profile is deleted.
+ * When omitted (admin wipe), ALL village scopes for this user are deleted —
+ * iterate the cache because keys are now scoped.
  */
-export function deleteProfile(wa_user_id: string): boolean {
-  const existingTimer = profilePersistTimers.get(wa_user_id);
-  if (existingTimer) {
-    clearTimeout(existingTimer);
-    profilePersistTimers.delete(wa_user_id);
+export function deleteProfile(wa_user_id: string, village_id?: string): boolean {
+  let existed = false;
+
+  if (village_id !== undefined) {
+    const key = buildProfileCacheKey(village_id, wa_user_id);
+    const existingTimer = profilePersistTimers.get(key);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      profilePersistTimers.delete(key);
+    }
+    existed = profileCache.delete(key);
+    prisma.durable_user_profiles.deleteMany({
+      where: { wa_user_id, village_id: normalizeVillageScope(village_id) },
+    }).catch(() => {});
+  } else {
+    // Admin wipe: remove every scoped entry for this user.
+    for (const [cacheKey] of profileCache.entries()) {
+      if (isKeyForUser(cacheKey, wa_user_id)) {
+        const existingTimer = profilePersistTimers.get(cacheKey);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          profilePersistTimers.delete(cacheKey);
+        }
+        if (profileCache.delete(cacheKey)) {
+          existed = true;
+        }
+      }
+    }
+    prisma.durable_user_profiles.deleteMany({
+      where: { wa_user_id },
+    }).catch(() => {});
   }
 
-  const existed = profileCache.delete(wa_user_id);
   if (existed) {
-    logger.info('🗑️ Profile fully deleted', { wa_user_id });
+    logger.info('🗑️ Profile fully deleted', {
+      wa_user_id,
+      village_id: village_id === undefined ? '(all scopes)' : normalizeVillageScope(village_id),
+    });
   }
-
-  prisma.durable_user_profiles.deleteMany({
-    where: { wa_user_id },
-  }).catch(() => {});
   deleteAllMemories(wa_user_id).catch(() => {});
 
   return existed;
 }
 
-export function recordComplaintCreated(wa_user_id: string, category?: string): UserProfile {
-  const profile = getProfile(wa_user_id);
+export function recordComplaintCreated(wa_user_id: string, category?: string, village_id?: string): UserProfile {
+  const profile = getProfile(wa_user_id, village_id);
   profile.total_complaints += 1;
   profile.last_interaction = new Date();
   profile.updated_at = new Date();
@@ -487,16 +576,16 @@ export function recordComplaintCreated(wa_user_id: string, category?: string): U
     }
   }
 
-  scheduleProfilePersist(wa_user_id);
+  scheduleProfilePersist(wa_user_id, village_id);
   return profile;
 }
 
 /**
  * Update user profile
  */
-export function updateProfile(wa_user_id: string, updates: ProfileUpdate): UserProfile {
-  const profile = getProfile(wa_user_id);
-  
+export function updateProfile(wa_user_id: string, updates: ProfileUpdate, village_id?: string): UserProfile {
+  const profile = getProfile(wa_user_id, village_id);
+
   // Apply updates
   if (updates.preferred_language !== undefined) profile.preferred_language = updates.preferred_language;
   if (updates.communication_style !== undefined) profile.communication_style = updates.communication_style;
@@ -507,12 +596,16 @@ export function updateProfile(wa_user_id: string, updates: ProfileUpdate): UserP
   if (updates.nama_lengkap !== undefined) profile.nama_lengkap = updates.nama_lengkap;
   if (updates.nik !== undefined) profile.nik = encryptPii(updates.nik);
   if (updates.no_hp !== undefined) profile.no_hp = encryptPii(updates.no_hp);
-  
+
   profile.updated_at = new Date();
-  scheduleProfilePersist(wa_user_id);
-  
-  logger.debug('👤 Profile updated', { wa_user_id, updates: Object.keys(updates) });
-  
+  scheduleProfilePersist(wa_user_id, village_id);
+
+  logger.debug('👤 Profile updated', {
+    wa_user_id,
+    village_id: normalizeVillageScope(village_id),
+    updates: Object.keys(updates),
+  });
+
   return profile;
 }
 
@@ -522,36 +615,37 @@ export function updateProfile(wa_user_id: string, updates: ProfileUpdate): UserP
 export function recordInteraction(
   wa_user_id: string,
   sentimentScore: number,
-  intent?: string
+  intent?: string,
+  village_id?: string,
 ): void {
-  const profile = getProfile(wa_user_id);
-  
+  const profile = getProfile(wa_user_id, village_id);
+
   profile.total_messages++;
   profile.last_interaction = new Date();
-  
+
   // Update average sentiment (rolling average)
   const oldAvg = profile.avg_sentiment_score;
   const n = Math.min(profile.total_messages, 100); // Cap at 100 for rolling average
   profile.avg_sentiment_score = oldAvg + (sentimentScore - oldAvg) / n;
-  
+
   // Track frustration
   if (sentimentScore < -0.5) {
     profile.frustration_count++;
   }
 
-  scheduleProfilePersist(wa_user_id);
+  scheduleProfilePersist(wa_user_id, village_id);
 }
 
 /**
  * Record service usage (untuk tracking frequent services)
  */
-export function recordServiceUsage(wa_user_id: string, serviceCode: string): void {
-  const profile = getProfile(wa_user_id);
-  
+export function recordServiceUsage(wa_user_id: string, serviceCode: string, village_id?: string): void {
+  const profile = getProfile(wa_user_id, village_id);
+
   // Add to frequent services if not already there
   if (!profile.frequent_services.includes(serviceCode)) {
     profile.frequent_services.push(serviceCode);
-    
+
     // Keep only last 10 services
     if (profile.frequent_services.length > 10) {
       profile.frequent_services.shift();
@@ -561,37 +655,40 @@ export function recordServiceUsage(wa_user_id: string, serviceCode: string): voi
     profile.frequent_services = profile.frequent_services.filter(s => s !== serviceCode);
     profile.frequent_services.push(serviceCode);
   }
-  
+
   profile.updated_at = new Date();
-  scheduleProfilePersist(wa_user_id);
+  scheduleProfilePersist(wa_user_id, village_id);
 }
 
 /**
  * Learn user data from message (auto-extract and save)
  */
-export function learnFromMessage(wa_user_id: string, message: string): void {
-  const profile = getProfile(wa_user_id);
+export function learnFromMessage(wa_user_id: string, message: string, village_id?: string): void {
+  const profile = getProfile(wa_user_id, village_id);
   let updated = false;
-  
+
   // NIK extraction REMOVED — chat never asks for NIK, passive extraction
   // causes false positives (any 16-digit number) and privacy concerns.
   // NIK is only collected via public service form (Case Service).
-  
+
   // Extract phone if not already saved
   if (!profile.no_hp) {
     const phoneMatch = message.match(/\b(08\d{8,12})\b/);
     if (phoneMatch) {
       profile.no_hp = encryptPii(phoneMatch[1]);
       updated = true;
-      logger.debug('👤 Learned phone from message (encrypted)', { wa_user_id });
+      logger.debug('👤 Learned phone from message (encrypted)', {
+        wa_user_id,
+        village_id: normalizeVillageScope(village_id),
+      });
     }
   }
-  
+
   // Detect communication style from message
   if (profile.communication_style === 'auto') {
     const informalPatterns = /\b(gw|gue|gua|lu|lo|elu|elo|bro|sis|gan|cuy|wkwk|haha|dong|deh|sih|nih)\b/i;
     const formalPatterns = /\b(saya|anda|bapak|ibu|mohon|terima kasih|dengan hormat)\b/i;
-    
+
     if (informalPatterns.test(message)) {
       profile.communication_style = 'informal';
       updated = true;
@@ -600,19 +697,19 @@ export function learnFromMessage(wa_user_id: string, message: string): void {
       updated = true;
     }
   }
-  
+
   if (updated) {
     profile.updated_at = new Date();
-    scheduleProfilePersist(wa_user_id);
+    scheduleProfilePersist(wa_user_id, village_id);
   }
 }
 
 /**
  * Save address from successful complaint (untuk auto-fill berikutnya)
  */
-export function saveDefaultAddress(wa_user_id: string, alamat: string, rt_rw?: string): void {
-  const profile = getProfile(wa_user_id);
-  
+export function saveDefaultAddress(wa_user_id: string, alamat: string, rt_rw?: string, village_id?: string): void {
+  const profile = getProfile(wa_user_id, village_id);
+
   // Only save if address is specific enough
   if (alamat && alamat.length >= 10) {
     profile.default_address = alamat;
@@ -620,9 +717,13 @@ export function saveDefaultAddress(wa_user_id: string, alamat: string, rt_rw?: s
       profile.default_rt_rw = rt_rw;
     }
     profile.updated_at = new Date();
-    scheduleProfilePersist(wa_user_id);
+    scheduleProfilePersist(wa_user_id, village_id);
 
-    logger.debug('👤 Saved default address', { wa_user_id, alamat: alamat.substring(0, 30) });
+    logger.debug('👤 Saved default address', {
+      wa_user_id,
+      village_id: normalizeVillageScope(village_id),
+      alamat: alamat.substring(0, 30),
+    });
   }
 }
 
@@ -631,22 +732,22 @@ export function saveDefaultAddress(wa_user_id: string, alamat: string, rt_rw?: s
 /**
  * Get profile context for LLM prompt
  */
-export function getProfileContext(wa_user_id: string): string {
-  const profile = getProfile(wa_user_id);
-  
+export function getProfileContext(wa_user_id: string, village_id?: string): string {
+  const profile = getProfile(wa_user_id, village_id);
+
   const parts: string[] = [];
-  
+
   // Communication style hint
   if (profile.communication_style === 'informal') {
     parts.push('User berkomunikasi dengan gaya INFORMAL/santai. Gunakan bahasa yang santai dan friendly.');
   } else if (profile.communication_style === 'formal') {
     parts.push('User berkomunikasi dengan gaya FORMAL. Gunakan bahasa yang sopan dan profesional.');
   }
-  
+
   // Returning user context
   if (profile.total_messages > 5) {
     parts.push(`User ini sudah pernah berinteraksi ${profile.total_messages}x sebelumnya.`);
-    
+
     if (profile.total_complaints > 0) {
       parts.push(`Sudah membuat ${profile.total_complaints} laporan sebelumnya.`);
     }
@@ -654,37 +755,37 @@ export function getProfileContext(wa_user_id: string): string {
       parts.push(`Sudah membuat ${profile.total_service_requests} layanan sebelumnya.`);
     }
   }
-  
+
   // Frustration warning
   if (profile.frustration_count >= 3 || profile.avg_sentiment_score < -0.3) {
     parts.push('⚠️ User ini pernah menunjukkan frustasi. Berikan response yang lebih empati dan helpful.');
   }
-  
+
   // Known data (Temuan 6: mask full name before sending to LLM)
   if (profile.nama_lengkap) {
     const masked = maskName(profile.nama_lengkap);
     parts.push(`Nama user: ${masked}`);
   }
-  
+
   if (parts.length === 0) {
     return '';
   }
-  
+
   return `\n[USER PROFILE]\n${parts.join('\n')}`;
 }
 
 /**
  * Get auto-fill suggestions for forms
  */
-export function getAutoFillSuggestions(wa_user_id: string): {
+export function getAutoFillSuggestions(wa_user_id: string, village_id?: string): {
   alamat?: string;
   rt_rw?: string;
   nama_lengkap?: string;
   nik?: string;
   no_hp?: string;
 } {
-  const profile = getProfile(wa_user_id);
-  
+  const profile = getProfile(wa_user_id, village_id);
+
   return {
     alamat: profile.default_address,
     rt_rw: profile.default_rt_rw,
@@ -694,14 +795,14 @@ export function getAutoFillSuggestions(wa_user_id: string): {
   };
 }
 
-export async function getAutoFillSuggestionsWithFallback(wa_user_id: string): Promise<{
+export async function getAutoFillSuggestionsWithFallback(wa_user_id: string, village_id?: string): Promise<{
   alamat?: string;
   rt_rw?: string;
   nama_lengkap?: string;
   nik?: string;
   no_hp?: string;
 }> {
-  const profile = await getProfileWithFallback(wa_user_id);
+  const profile = await getProfileWithFallback(wa_user_id, village_id);
 
   return {
     alamat: profile.default_address,
@@ -715,21 +816,22 @@ export async function getAutoFillSuggestionsWithFallback(wa_user_id: string): Pr
 /**
  * Check if user is a returning user
  */
-export function isReturningUser(wa_user_id: string): boolean {
-  const profile = profileCache.get(wa_user_id);
+export function isReturningUser(wa_user_id: string, village_id?: string): boolean {
+  const key = buildProfileCacheKey(village_id, wa_user_id);
+  const profile = profileCache.get(key);
   return profile !== undefined && profile.total_messages > 1;
 }
 
 /**
  * Get user's most frequent service
  */
-export function getMostFrequentService(wa_user_id: string): string | null {
-  const profile = getProfile(wa_user_id);
-  
+export function getMostFrequentService(wa_user_id: string, village_id?: string): string | null {
+  const profile = getProfile(wa_user_id, village_id);
+
   if (profile.frequent_services.length === 0) {
     return null;
   }
-  
+
   // Return most recent (last in array)
   return profile.frequent_services[profile.frequent_services.length - 1];
 }
@@ -741,39 +843,46 @@ const CONSENT_VERSION = '1.0';
 /**
  * Record user data processing consent
  */
-export function recordConsent(wa_user_id: string): UserProfile {
-  const profile = getProfile(wa_user_id);
+export function recordConsent(wa_user_id: string, village_id?: string): UserProfile {
+  const profile = getProfile(wa_user_id, village_id);
   profile.data_consent = true;
   profile.data_consent_at = new Date();
   profile.data_consent_version = CONSENT_VERSION;
   profile.updated_at = new Date();
-  profileCache.set(wa_user_id, profile);
-  scheduleProfilePersist(wa_user_id);
-  logger.info('📋 User data consent recorded', { wa_user_id, version: CONSENT_VERSION });
+  profileCache.set(buildProfileCacheKey(village_id, wa_user_id), profile);
+  scheduleProfilePersist(wa_user_id, village_id);
+  logger.info('📋 User data consent recorded', {
+    wa_user_id,
+    village_id: normalizeVillageScope(village_id),
+    version: CONSENT_VERSION,
+  });
   return profile;
 }
 
 /**
  * Revoke user data processing consent and delete PII
  */
-export function revokeConsent(wa_user_id: string): void {
-  const profile = getProfile(wa_user_id);
+export function revokeConsent(wa_user_id: string, village_id?: string): void {
+  const profile = getProfile(wa_user_id, village_id);
   profile.data_consent = false;
   profile.data_consent_at = undefined;
   profile.nama_lengkap = undefined;
   profile.nik = undefined;
   profile.no_hp = undefined;
   profile.updated_at = new Date();
-  profileCache.set(wa_user_id, profile);
-  scheduleProfilePersist(wa_user_id);
-  logger.info('📋 User consent revoked, PII deleted', { wa_user_id });
+  profileCache.set(buildProfileCacheKey(village_id, wa_user_id), profile);
+  scheduleProfilePersist(wa_user_id, village_id);
+  logger.info('📋 User consent revoked, PII deleted', {
+    wa_user_id,
+    village_id: normalizeVillageScope(village_id),
+  });
 }
 
 /**
  * Check if user has given consent for PII storage
  */
-export function hasConsent(wa_user_id: string): boolean {
-  const profile = profileCache.get(wa_user_id);
+export function hasConsent(wa_user_id: string, village_id?: string): boolean {
+  const profile = profileCache.get(buildProfileCacheKey(village_id, wa_user_id));
   return profile?.data_consent === true;
 }
 

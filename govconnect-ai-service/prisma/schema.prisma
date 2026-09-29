@@ -491,7 +491,10 @@ model rate_limit_blacklist {
 // Long-term structured memory for reusable user facts/preferences.
 
 model durable_user_profiles {
-  wa_user_id             String    @id
+  // W5: composite key (village_id, wa_user_id). Legacy rows (pre-scoping) use
+  // village_id = '' and are lazily migrated by user-profile.service.ts.
+  village_id             String    @default("")
+  wa_user_id             String
   preferred_language     String    @default("auto")
   communication_style    String    @default("auto")
   response_detail        String    @default("auto")
@@ -515,6 +518,7 @@ model durable_user_profiles {
   created_at             DateTime  @default(now())
   updated_at             DateTime  @updatedAt
 
+  @@id([village_id, wa_user_id])
   @@index([last_interaction])
   @@index([updated_at])
 }

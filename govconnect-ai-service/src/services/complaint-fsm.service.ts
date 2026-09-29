@@ -312,7 +312,7 @@ export async function submitComplaintDraft(input: {
 
   try {
     const { createComplaint } = await import('./case-client.service');
-    const profile = await getAutoFillSuggestionsWithFallback(input.userId);
+    const profile = await getAutoFillSuggestionsWithFallback(input.userId, input.draft.village_id); // W5: village-scoped
 
     const complaintId = await createComplaint({
       wa_user_id: input.channel === 'whatsapp' ? input.userId : undefined,

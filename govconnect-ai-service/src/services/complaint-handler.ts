@@ -253,7 +253,7 @@ export async function handleComplaintCreation(
 
   // ==================== NAME & PHONE VALIDATION ====================
   const isWebchatChannel = channel === 'webchat';
-  const userProfile = getProfile(userId);
+  const userProfile = getProfile(userId, villageId); // W5: village-scoped profile
   const hasName = !!userProfile.nama_lengkap;
   const hasPhone = !!userProfile.no_hp;
 
@@ -321,8 +321,8 @@ export async function handleComplaintCreation(
   if (complaintId) {
     rateLimiterService.recordReport(userId, villageId);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
-    saveDefaultAddress(userId, alamat, rt_rw);
-    recordComplaintCreated(userId, kategori);
+    saveDefaultAddress(userId, alamat, rt_rw, villageId); // W5: village-scoped
+    recordComplaintCreated(userId, kategori, villageId); // W5: village-scoped
     recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
     recordDataCollected(userId, 'kategori', kategori);
     if (alamat) {
@@ -528,7 +528,7 @@ export async function handlePendingAddressConfirmation(
 
     const complaintTypeConfig = await resolveComplaintTypeConfig(pendingConfirm.kategori, pendingConfirm.village_id);
     const isEmergency = typeof complaintTypeConfig?.is_urgent === 'boolean' ? complaintTypeConfig.is_urgent : false;
-    const userProfile = getProfile(userId);
+    const userProfile = getProfile(userId, pendingConfirm.village_id); // W5: village-scoped
 
     const complaintId = await createComplaint({
       wa_user_id: channel === 'webchat' ? undefined : userId,
@@ -553,8 +553,8 @@ export async function handlePendingAddressConfirmation(
 
     rateLimiterService.recordReport(userId, pendingConfirm.village_id);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
-    saveDefaultAddress(userId, pendingConfirm.alamat, '');
-    recordComplaintCreated(userId, pendingConfirm.kategori);
+    saveDefaultAddress(userId, pendingConfirm.alamat, '', pendingConfirm.village_id); // W5
+    recordComplaintCreated(userId, pendingConfirm.kategori, pendingConfirm.village_id); // W5
     recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
     void rememberMemoryEvent({
       wa_user_id: userId,
@@ -600,7 +600,7 @@ export async function handlePendingAddressConfirmation(
 
     const typeConfig = await resolveComplaintTypeConfig(pendingConfirm.kategori, pendingConfirm.village_id);
     const isUrgent = typeof typeConfig?.is_urgent === 'boolean' ? typeConfig.is_urgent : false;
-    const profile = getProfile(userId);
+    const profile = getProfile(userId, pendingConfirm.village_id); // W5: village-scoped
 
     const complaintId = await createComplaint({
       wa_user_id: channel === 'webchat' ? undefined : userId,
@@ -625,8 +625,8 @@ export async function handlePendingAddressConfirmation(
 
     rateLimiterService.recordReport(userId, pendingConfirm.village_id);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
-    saveDefaultAddress(userId, message.trim(), '');
-    recordComplaintCreated(userId, pendingConfirm.kategori);
+    saveDefaultAddress(userId, message.trim(), '', pendingConfirm.village_id); // W5
+    recordComplaintCreated(userId, pendingConfirm.kategori, pendingConfirm.village_id); // W5
     recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
     void rememberMemoryEvent({
       wa_user_id: userId,

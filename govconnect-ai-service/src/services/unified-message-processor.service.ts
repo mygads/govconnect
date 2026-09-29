@@ -2103,7 +2103,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     ].filter(Boolean).join('\n\n') || undefined;
 
     const [savedProfile, memorySummary, sentiment, villageProfile] = await Promise.all([
-      getAutoFillSuggestionsWithFallback(userId),
+      getAutoFillSuggestionsWithFallback(userId, resolvedVillageId), // W5: village-scoped
       sideEffectMode === 'knowledge_test'
         ? Promise.resolve(undefined)
         : buildHybridMemorySummary({
