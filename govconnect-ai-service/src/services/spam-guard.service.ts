@@ -19,6 +19,7 @@
  */
 
 import logger from '../utils/logger';
+import { spamGuardStateKey } from './rate-limit-keys';
 
 // ==================== CONFIGURATION ====================
 
@@ -75,8 +76,12 @@ setInterval(() => {
 
 // ==================== CORE FUNCTIONS ====================
 
+/**
+ * W8: village-scoped spam-guard key — delegates to the pure, unit-tested
+ * builder in rate-limit-keys.ts so the tenant isolation invariant is locked.
+ */
 function stateKey(villageId: string | undefined, waUserId: string): string {
-  return `${villageId || 'unknown'}:${waUserId}`;
+  return spamGuardStateKey(villageId, waUserId);
 }
 
 /**

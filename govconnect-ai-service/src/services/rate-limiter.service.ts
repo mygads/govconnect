@@ -11,6 +11,7 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { registerInterval } from '../utils/timer-registry';
 import prisma from '../lib/prisma';
+import { rateLimitScopeKey } from './rate-limit-keys';
 
 interface UserRateData {
   wa_user_id: string;
@@ -77,7 +78,7 @@ class RateLimiterService {
   }
 
   private getScopeKey(wa_user_id: string, village_id?: string | null): string {
-    return `${village_id || '__global__'}:${wa_user_id}`;
+    return rateLimitScopeKey(wa_user_id, village_id);
   }
 
   private getScopeLabel(village_id?: string | null): string {
