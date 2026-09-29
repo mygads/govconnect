@@ -2048,13 +2048,18 @@ async function selectAllowedTools(
 
   if (isVillageProfileQuery && !hasMixedIntentFamilies) {
     add('get_village_profile');
+    // BUGFIX(TEST): jangan deny search_knowledge/search_documents di sini;
+    // tambahkan sebagai fallback. get_village_profile membaca dari
+    // dashboard-service; bila dashboard mati atau profil kosong, agen tidak punya
+    // fallback dan menjawab "belum tersedia" padahal KB punya jawabannya.
+    // Presedens DB-tetap-menang dijaga oleh prompt
+    // ("DATA RESMI DARI DATABASE ... bersifat otoritatif") + db-rag-reconciler.
+    add('search_knowledge', 'search_documents');
     deny(
       'get_important_contact',
       'get_emergency_contacts',
       'get_service_info',
       'create_service_request',
-      'search_knowledge',
-      'search_documents',
       'create_complaint',
       'get_complaint_categories',
       'get_my_history',
