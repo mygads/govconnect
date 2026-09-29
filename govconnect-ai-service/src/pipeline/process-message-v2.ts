@@ -24,11 +24,9 @@ import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
 import { processImageMedia } from './media-pipeline';
 import {
-  isOcrConfigured,
-  extractKtpFields,
-  prefillSlotsFromKtp,
-  buildOcrPrefillFact,
-} from './ocr-ktp';
+  createKtpVerification, getVerifiedIdentity, prefillSlotsFromVerifiedIdentity,
+  KTP_RECEIVED_COPY, MAX_KTP_PHOTO_BYTES,
+} from './ktp-verification';
 import { isVoiceNote, handleVoiceNote } from './voice-pipeline';
 import { enqueueComplaintToLapor } from './lapor-bridge';
 import { resolveIdentityLevel, auditIdentityLevel } from './identity-ladder';
@@ -504,40 +502,98 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
     // check. Raw pixels never reach the LLM; only the signal fact does.
     if (input.mediaUrl && /image|photo|jpeg|jpg|png/i.test(input.mediaType ?? '')) {
       try {
+        // KTP verification intake takes precedence over generic media
+        // handling: identity L2 was requested and the citizen now sends a
+        // photo → create a PENDING manual review request. Automatic OCR is
+        // PARKED (user decision 2026-09-29) and is never called here.
+        const ktpSlotSet = ctx.slots._awaitingKtpPhoto === true;
+        if (ktpSlotSet && ctx.identityLevel === 'L2') {
+          // Verified between turns — stale request marker, drop it.
+          delete ctx.slots._awaitingKtpPhoto;
+        }
+        const awaitingKtp = ktpSlotSet && ctx.identityLevel !== 'L2';
         const media = await processImageMedia({
           tenantId, userId: input.userId, channel, traceId,
           mediaUrl: input.mediaUrl, mediaType: input.mediaType, messageId: input.messageId,
+          retainBytes: awaitingKtp,
         });
+        if (awaitingKtp) {
+          delete ctx.slots._awaitingKtpPhoto;
+          let reply = KTP_RECEIVED_COPY;
+          let ktpIntent = 'ktp_verification_submitted';
+          const bytes = media.retainedBytes;
+          if (bytes && bytes.length <= MAX_KTP_PHOTO_BYTES && sideEffectsAllowed) {
+            const created = await createKtpVerification({
+              villageId: tenantId, userId: input.userId, channel,
+              photoBytes: bytes, photoMime: input.mediaType,
+            });
+            if (!created) {
+              ctx.slots._awaitingKtpPhoto = true; // keep waiting — retryable
+              reply = 'Maaf, foto KTP belum dapat kami terima saat ini. Silakan coba kirim ulang beberapa saat lagi.';
+              ktpIntent = 'ktp_verification_failed';
+            }
+          } else {
+            ctx.slots._awaitingKtpPhoto = true; // keep waiting — retryable
+            reply = bytes
+              ? 'Maaf, ukuran foto terlalu besar. Silakan kirim ulang foto KTP yang lebih kecil.'
+              : 'Maaf, foto tidak dapat kami unduh. Silakan kirim ulang foto KTP yang jelas.';
+            ktpIntent = 'ktp_verification_failed';
+          }
+          audit('INGRESS', 'ktp_photo_intake', { intent: ktpIntent });
+          if (sideEffectsAllowed) {
+            await saveTurnState(tenantId, input.userId, {
+              stage: 'COLLECT',
+              slots: ctx.slots,
+              assessorConfidences: ctx.assessorConfidences,
+            }, channel).catch(() => undefined);
+          }
+          return {
+            success: true,
+            response: reply,
+            intent: ktpIntent,
+            metadata: {
+              processingTimeMs: Date.now() - started,
+              hasKnowledge: false,
+              agentMode: 'single_orchestrator',
+              traceId,
+            },
+          };
+        }
         if (media.promptFact) turnFacts.push(media.promptFact);
         audit('INGRESS', 'media_signal', {
           hasImage: media.hasImage, duplicate: media.duplicate,
           redaction: media.redaction, exifStripped: media.exifStripped,
         });
-        // 2d-bis. R14 KTP OCR pre-fill: on-prem sidecar only. OCR output is
-        // UNVERIFIED — pre-fills slots + identity candidates for explicit G2
-        // citizen confirmation; nothing enters the PII vault from here.
-        // Only runs while COLLECT still has empty identity-ish slots.
-        if (media.bytesForOcr && decision.stage === 'COLLECT' && isOcrConfigured()) {
-          const ocr = await extractKtpFields(media.bytesForOcr);
-          if (ocr) {
-            const outcome = prefillSlotsFromKtp(
-              ctx.slots as unknown as Record<string, unknown>, ocr.fields,
-            );
-            if (outcome.identityCandidates.length > 0 || outcome.dropped.length > 0) {
-              turnFacts.push(buildOcrPrefillFact(outcome));
-              audit('INGRESS', 'ocr_prefill', {
-                filledSlots: outcome.filledSlots,
-                candidates: outcome.identityCandidates.map((c) => c.field),
-                dropped: outcome.dropped.map((d) => `${d.field}:${d.reason}`),
-                overallConfidence: ocr.overallConfidence,
-              });
-            }
-          }
-        }
+        // 2d-bis. R14 KTP OCR pre-fill: PARKED by user decision (2026-09-29).
+        // The on-prem ocr-service sidecar and ocr-ktp.ts are kept for a
+        // future dashboard "isi otomatis" assist feature. The pipeline NEVER
+        // calls OCR automatically — manual admin verification is the path.
       } catch (err) {
         logger.debug('[processMessageV2] media intake failed', {
           error: String((err as Error)?.message ?? err).slice(0, 120),
         });
+      }
+    }
+    // 2d-ter. Verified identity pre-fill (manual KTP review outcome — NOT OCR).
+    // Fills empty identity slots from the admin-approved record so the
+    // citizen is not asked for data the village already verified.
+    if (decision.stage === 'COLLECT' && ctx.identityLevel === 'L2') {
+      try {
+        const verified = await getVerifiedIdentity(tenantId, input.userId);
+        if (verified) {
+          const filled = prefillSlotsFromVerifiedIdentity(
+            ctx.slots as unknown as Record<string, unknown>, verified,
+          );
+          if (filled.length > 0) {
+            turnFacts.push(
+              '[SISTEM] Data identitas warga sudah terverifikasi petugas: ' +
+              filled.join(', ') + ' — jangan tanyakan lagi.',
+            );
+            audit('COLLECT', 'verified_identity_prefill', { filled });
+          }
+        }
+      } catch {
+        // fail-open: citizen just answers the questions
       }
     }
     if (decision.stage === 'COLLECT') {
@@ -582,6 +638,17 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       language: 'id',
       facts: turnFacts,
     });
+
+    // KTP verification trigger: the turn hit an L2 identity denial, so the
+    // citizen has been asked to verify. The next photo they send is treated
+    // as a KTP submission for manual admin review (see media intake above).
+    const identityDeniedForL2 = turn.toolTrace.some(
+      (t) => t.blocked && t.blockReason?.startsWith('identity_level_insufficient'),
+    );
+    if (identityDeniedForL2 && ctx.identityLevel !== 'L2') {
+      ctx.slots._awaitingKtpPhoto = true;
+      audit('COLLECT', 'ktp_photo_requested', {});
+    }
 
     const metadata: ProcessMessageResult['metadata'] = {
       processingTimeMs: Date.now() - started,

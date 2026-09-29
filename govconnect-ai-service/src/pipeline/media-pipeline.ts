@@ -43,6 +43,12 @@ export interface MediaSignal {
    * For admin review; never auto-rejects evidence.
    */
   fraudSignals: string[];
+  /**
+   * Raw bytes, present ONLY when the caller explicitly asked for them
+   * (retainBytes: true) — e.g. KTP verification intake. Privacy default:
+   * bytes are dropped after hashing. NEVER forwarded to any LLM.
+   */
+  retainedBytes?: Buffer;
   /** System fact injected into the agent prompt. */
   promptFact?: string;
 }
@@ -270,6 +276,12 @@ export async function processImageMedia(input: {
   mediaUrl?: string;
   mediaType?: string;
   messageId?: string;
+  /**
+   * When true, the downloaded bytes are returned in `retainedBytes` for a
+   * specific downstream need (e.g. KTP verification intake). Default false:
+   * bytes are hashed then dropped.
+   */
+  retainBytes?: boolean;
 }): Promise<MediaSignal> {
   const { tenantId, userId, channel, traceId, mediaUrl } = input;
   const empty: MediaSignal = {
@@ -347,6 +359,7 @@ export async function processImageMedia(input: {
     estimatedKind: kind, bytes: bytes.length,
     fraudSignals,
     bytesForOcr: isOcrConfigured() ? bytes : undefined,
+    retainedBytes: input.retainBytes ? bytes : undefined,
     promptFact:
       '[SINYAL MEDIA] Warga melampirkan 1 gambar ' +
       `(${kind === 'unknown' ? 'jenis tidak diketahui' : kind}, hash ${hash.slice(0, 12)}…). ` +

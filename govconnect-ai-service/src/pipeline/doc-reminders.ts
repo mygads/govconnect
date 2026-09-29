@@ -74,7 +74,8 @@ export async function scheduleDocReminder(input: ScheduleDocReminderInput): Prom
   }
 }
 
-async function sendToCitizen(villageId: string, userId: string, text: string): Promise<boolean> {
+/** Shared citizen notification via channel-service /internal/send (text). */
+export async function notifyCitizen(villageId: string, userId: string, text: string): Promise<boolean> {
   try {
     const base = (config.channelServiceUrl ?? '').replace(/\/$/, '');
     if (!base) return false;
@@ -119,7 +120,7 @@ export async function runDocReminderSweep(opts?: {
   if (!db) return dbDown('runDocReminderSweep', { due: 0, sent: 0, failed: 0 });
   const now = opts?.now ?? new Date();
   const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 1000);
-  const sender = opts?.sender ?? sendToCitizen;
+  const sender = opts?.sender ?? notifyCitizen;
   const result: SweepResult = { due: 0, sent: 0, failed: 0 };
   try {
     const due = (await db.$queryRawUnsafe(
@@ -222,7 +223,7 @@ export async function sendBroadcast(opts: {
   sender?: (villageId: string, userId: string, text: string) => Promise<boolean>;
 }): Promise<BroadcastResult> {
   const channel = opts.channel ?? 'whatsapp';
-  const sender = opts.sender ?? sendToCitizen;
+  const sender = opts.sender ?? notifyCitizen;
   const result: BroadcastResult = { requested: opts.userIds.length, optedIn: 0, sent: 0, failed: 0 };
   const traceId = randomUUID();
   await appendAudit({

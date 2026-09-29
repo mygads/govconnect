@@ -88,7 +88,8 @@ export function identityDenialCopy(tool: AgentToolName): string {
       'Silakan hubungi kami melalui WhatsApp resmi desa.';
   }
   return 'Untuk keamanan, tindakan ini memerlukan verifikasi identitas satu kali oleh perangkat desa. ' +
-    'Silakan datang ke kantor desa dengan membawa KTP — setelah terverifikasi, saya bisa membantu.';
+    'Silakan kirim foto KTP melalui chat ini — petugas desa akan memverifikasi — ' +
+    'atau datang langsung ke kantor desa dengan membawa KTP.';
 }
 
 /** Audit helper for identity decisions (called by the orchestrator layer). */
