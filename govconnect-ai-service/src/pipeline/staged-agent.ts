@@ -16,6 +16,11 @@ import { callAIGatewayPrompt, type GatewayChatMessage, type GatewayPromptResult 
 import { AGENT_TOOLS, type AgentToolName } from '../services/agent/tool-definitions';
 import type { ToolCallResult } from '../services/agent/tool-executor';
 import { gatewayExecute, type GatewayContext } from '../gateway/tool-gateway';
+import {
+  INTENT_SLOT_KEY, nextMissingSlot, isCollectComplete, renderVerifySummary,
+  isExplicitConfirmation, isCancellation, isCorrectionRequest,
+  buildPendingMutation, type SlotIntent, type Slots,
+} from './slot-fsm';
 import { STAGE_TOOL_ALLOWLIST, isParallelizable } from '../gateway/tool-policy';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { buildPrompt } from './prompt-builder';
@@ -225,6 +230,29 @@ async function runBoundedLoop(
   return { text: finalText, traces, toolsUsed, model };
 }
 
+/** Shared confirmed-mutation runner for VERIFY→EXECUTE and EXECUTE. */
+async function executeConfirmed(
+  input: StagedAgentInput,
+  gw: GatewayContext,
+  mutation: { tool: string; args: Record<string, unknown> },
+  finish: (partial: Omit<TurnResult, 'durationMs' | 'assessorCalls'>) => TurnResult,
+  failover: (reason: string, error?: string) => TurnResult,
+): Promise<TurnResult> {
+  const r = await gatewayExecute(mutation.tool as AgentToolName, mutation.args, gw);
+  if (!r.ok) return failover(`mutation_failed:${r.error}`, r.error);
+  const { text: verified } = verifyAnswer(
+    `Berhasil diproses. ${resultToText(r.result).slice(0, 500)}`, [r.trace],
+  );
+  return finish({
+    terminalState: 'SUCCEEDED', response: verified, stage: 'EXECUTE', intent: 'mutation',
+    toolsUsed: [mutation.tool], toolTrace: [r.trace], degraded: false,
+  });
+}
+
+function gwFor(input: StagedAgentInput, stage: Stage): GatewayContext {
+  return toGatewayContext(input, stage);
+}
+
 /** Main entry: run one turn of the staged agent for the routed stage. */
 export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult> {
   const started = Date.now();
@@ -273,6 +301,55 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
       });
     }
 
+    // ── VERIFY: deterministic confirmation gate, never LLM-directed ──
+    if (stage === 'VERIFY') {
+      const slots = input.ctx.slots as Record<string, unknown>;
+      const intent = slots[INTENT_SLOT_KEY] as SlotIntent | undefined;
+      const strSlots = slots as unknown as Slots;
+      if (!intent || !isCollectComplete(intent, strSlots)) {
+        const missing = intent ? nextMissingSlot(intent, strSlots) : null;
+        return finish({
+          terminalState: 'SUCCEEDED',
+          response: missing
+            ? `Sebelum verifikasi, saya masih butuh satu info: ${missing.prompt}`
+            : 'Mohon maaf, saya belum tahu jenis laporan Anda. Bisa dijelaskan Anda ingin melapor atau mengurus surat?',
+          stage: 'COLLECT', intent: 'collect_incomplete',
+          toolsUsed: [], toolTrace: [], degraded: false,
+        });
+      }
+      if (isCancellation(input.message)) {
+        return finish({
+          terminalState: 'SUCCEEDED',
+          response: 'Baik, proses dibatalkan. Tidak ada data yang disimpan. Ada lagi yang bisa saya bantu?',
+          stage: 'CLOSE', intent: 'cancelled',
+          toolsUsed: [], toolTrace: [], degraded: false,
+        });
+      }
+      if (isCorrectionRequest(input.message)) {
+        return finish({
+          terminalState: 'SUCCEEDED',
+          response: 'Baik, bagian mana yang ingin diperbaiki? Sebutkan saja, misalnya lokasinya atau deskripsinya.',
+          guidanceText: 'Menunggu koreksi warga.',
+          stage: 'COLLECT', intent: 'correction',
+          toolsUsed: [], toolTrace: [], degraded: false,
+        });
+      }
+      if (isExplicitConfirmation(input.message)) {
+        const mutation = buildPendingMutation(intent, strSlots);
+        if (!mutation) {
+          return failover('verify_missing_mutation_data', 'slots incomplete at verify');
+        }
+        input.ctx.slots.pendingTool = mutation;
+        return executeConfirmed(input, gwFor(input, 'EXECUTE'), mutation, finish, failover);
+      }
+      // Default: show the deterministic summary again.
+      const { text: verified } = verifyAnswer(renderVerifySummary(intent, strSlots), []);
+      return finish({
+        terminalState: 'SUCCEEDED', response: verified, stage, intent: 'verify',
+        toolsUsed: [], toolTrace: [], degraded: false,
+      });
+    }
+
     // ── EXECUTE: deterministic stage-runner, never LLM-directed ──
     if (stage === 'EXECUTE') {
       if (!input.confirmed) {
@@ -285,20 +362,11 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
         });
       }
       // Confirmed: run the allowlisted mutation through the gateway, serially.
-      const gw = toGatewayContext(input, 'EXECUTE');
       const mutation = (input.ctx.slots.pendingTool ?? null) as { tool: string; args: Record<string, unknown> } | null;
       if (!mutation) {
         return failover('execute_without_pending_tool', 'no pending mutation in slots');
       }
-      const r = await gatewayExecute(mutation.tool as AgentToolName, mutation.args, gw);
-      if (!r.ok) return failover(`mutation_failed:${r.error}`, r.error);
-      const { text: verified } = verifyAnswer(
-        `Berhasil diproses. ${resultToText(r.result).slice(0, 500)}`, [r.trace],
-      );
-      return finish({
-        terminalState: 'SUCCEEDED', response: verified, stage, intent: 'mutation',
-        toolsUsed: [mutation.tool], toolTrace: [r.trace], degraded: false,
-      });
+      return executeConfirmed(input, gwFor(input, 'EXECUTE'), mutation, finish, failover);
     }
 
     // ── Agent stages: bounded loop with stage allowlist ──

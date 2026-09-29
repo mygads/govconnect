@@ -12,6 +12,11 @@ import { buildFallback, mintTempTicket, assertNonEmptyResponse } from '../fallba
 import { piiInbound, piiOutbound, detokenize, redactForLog } from '../../gateway/pii-gateway';
 import { STAGE_TOOL_ALLOWLIST, TOOL_GRADES, isParallelizable } from '../../gateway/tool-policy';
 import { getPipelineMode } from '../feature-flags';
+import {
+  classifySlotIntent, extractSlotsDeterministic, mergeSlots, nextMissingSlot,
+  isCollectComplete, renderVerifySummary, isExplicitConfirmation, isCancellation,
+  isCorrectionRequest, buildPendingMutation, type Slots,
+} from '../slot-fsm';
 
 describe('stage-router (deterministic)', () => {
   it('routes emergency keywords to EMERGENCY deterministically', () => {
@@ -85,8 +90,8 @@ describe('prompt-builder', () => {
     expect(buildStaticSystemPrompt()).toBe(buildStaticSystemPrompt());
   });
 
-  it('never leaks raw NIK into dynamic context', () => {
-    const { dynamicContext } = buildPrompt({
+  it('never leaks raw NIK into dynamic context', async () => {
+    const { dynamicContext } = await buildPrompt({
       villageName: 'Desa X',
       stage: 'INFORMATION',
       facts: ['NIK warga: 3201010101010001'],
@@ -168,5 +173,60 @@ describe('feature-flags', () => {
     delete process.env.PIPELINE_MODE;
     delete process.env.PIPELINE_TENANT_OVERRIDES;
     expect(getPipelineMode('any-tenant')).toBe('off');
+  });
+});
+
+describe('slot-fsm', () => {
+  it('classifies complaint vs service intent deterministically', () => {
+    expect(classifySlotIntent('jalan rusak berlubang di RT 01')).toBe('complaint');
+    expect(classifySlotIntent('mau urus surat KTP')).toBe('service_request');
+    expect(classifySlotIntent('halo selamat pagi')).toBeNull();
+  });
+
+  it('extracts category and RT/RW deterministically', () => {
+    const slots = extractSlotsDeterministic('Jalan rusak parah di RT 02/RW 05', 'complaint');
+    expect(slots.category).toBe('jalan rusak');
+    expect(slots.location).toMatch(/RT 02\/RW 05/i);
+  });
+
+  it('detects the next missing slot and completion', () => {
+    expect(nextMissingSlot('complaint', {} as Slots)?.name).toBe('category');
+    const full: Slots = { category: 'sampah', description: 'sampah menumpuk sejak seminggu', location: 'RT 01' };
+    expect(isCollectComplete('complaint', full)).toBe(true);
+    expect(nextMissingSlot('complaint', full)).toBeNull();
+  });
+
+  it('rejects invalid slot values with a user-facing error', () => {
+    const { slots, errors } = mergeSlots('complaint', {}, { description: 'ok' });
+    expect(slots.description).toBeUndefined();
+    expect(errors[0].error).toMatch(/terlalu singkat/);
+  });
+
+  it('renders a deterministic verify summary without LLM', () => {
+    const s = renderVerifySummary('complaint', { category: 'sampah', description: 'menumpuk', location: 'RT 01' } as Slots);
+    expect(s).toContain('sampah');
+    expect(s).toContain('Ya, lanjutkan');
+  });
+
+  it('detects explicit confirmation, cancellation, correction', () => {
+    expect(isExplicitConfirmation('Ya, lanjutkan')).toBe(true);
+    expect(isExplicitConfirmation('ya')).toBe(true);
+    expect(isExplicitConfirmation('belum, tunggu')).toBe(false);
+    expect(isCancellation('batal saja')).toBe(true);
+    expect(isCorrectionRequest('salah, ubah lokasinya')).toBe(true);
+  });
+
+  it('plans a deterministic complaint mutation', () => {
+    const m = buildPendingMutation('complaint', {
+      category: 'jalan rusak', description: 'jalan berlubang dalam', location: 'RT 02/RW 05',
+    } as Slots);
+    expect(m?.tool).toBe('create_complaint');
+    expect(m?.args.deskripsi).toBe('jalan berlubang dalam');
+    expect(m?.args.rt_rw).toMatch(/RT 02\/RW 05/);
+  });
+
+  it('refuses to plan a mutation when required data is missing', () => {
+    expect(buildPendingMutation('complaint', {} as Slots)).toBeNull();
+    expect(buildPendingMutation('service_request', {} as Slots)).toBeNull();
   });
 });
