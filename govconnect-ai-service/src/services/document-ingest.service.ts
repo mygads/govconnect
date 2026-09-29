@@ -16,6 +16,7 @@ import { runDocVsDocForDocument } from './knowledge-consistency.service';
 import { runDocVsDbForDocument } from './doc-vs-db-pipeline.service';
 import { routeKnowledgeDocument, KB_REJECTED_COPY, type KbRoute } from './kb-router.service';
 import { scanForSecrets, checkIngestForForeignCanary } from '../security/canary-docs';
+import { appendAudit } from '../pipeline/pipeline-store';
 
 export interface ProcessDocumentInput {
   documentId: string;
@@ -297,6 +298,17 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
     logger.warn('[canary] document rejected: credential patterns detected', {
       documentId: input.documentId, kinds,
     });
+    // Audited so the monthly report can count secret rejections.
+    // Kinds only — never the secret values.
+    appendAudit({
+      tenantId: input.villageId ?? 'global',
+      traceId: `ingest:${input.documentId}`,
+      userId: '',
+      channel: 'system_ingest',
+      stage: 'INGEST',
+      event: 'document_secret_rejected',
+      payload: { document_id: input.documentId, kinds },
+    }).catch(() => undefined);
     await updateDashboardDocument(input.documentId, {
       status: 'rejected',
       error_message:
@@ -313,6 +325,15 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
       ownerVillageId: foreignCanary.ownerVillageId,
       label: foreignCanary.label,
     });
+    appendAudit({
+      tenantId: input.villageId ?? 'global',
+      traceId: `ingest:${input.documentId}`,
+      userId: '',
+      channel: 'system_ingest',
+      stage: 'INGEST',
+      event: 'document_foreign_canary_rejected',
+      payload: { document_id: input.documentId, label: foreignCanary.label },
+    }).catch(() => undefined);
     await updateDashboardDocument(input.documentId, {
       status: 'rejected',
       error_message:

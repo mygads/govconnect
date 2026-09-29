@@ -1,0 +1,69 @@
+/**
+ * R11 monthly report routes. Internal-only (verifyInternalKey).
+ * PDF export is future work — JSON + Markdown only.
+ */
+import { Router, type Request, type Response } from 'express';
+import { internalApiKeyMatches } from '../utils/internal-auth';
+import {
+  fetchCaseAggregates,
+  fetchAiStats,
+  buildMonthlyReportData,
+  renderMonthlyMarkdown,
+  periodBounds,
+} from '../reports/monthly-report';
+
+const router = Router();
+
+function firstHeader(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+function verifyInternalKey(req: Request, res: Response, next: Function) {
+  const apiKey = firstHeader(req.headers['x-internal-api-key']);
+  if (!internalApiKeyMatches(apiKey)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+router.use(verifyInternalKey);
+
+/**
+ * GET /api/reports/monthly?village_id=…&year=2026&month=9&format=json|markdown&village_name=…
+ */
+router.get('/monthly', async (req: Request, res: Response) => {
+  try {
+    const villageId = String(req.query.village_id ?? req.query.villageId ?? '');
+    const year = Number(req.query.year);
+    const month = Number(req.query.month);
+    const format = String(req.query.format ?? 'json').toLowerCase();
+    const villageName = String(req.query.village_name ?? req.query.villageName ?? '') || undefined;
+    if (!villageId) return res.status(400).json({ error: 'village_id required' });
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: 'year must be a valid year' });
+    }
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      return res.status(400).json({ error: 'month must be 1-12' });
+    }
+    if (format !== 'json' && format !== 'markdown') {
+      return res.status(400).json({ error: 'format must be json or markdown (pdf is future work)' });
+    }
+
+    const { start, end } = periodBounds(year, month);
+    const [cases, ai] = await Promise.all([
+      fetchCaseAggregates(villageId, year, month),
+      fetchAiStats(villageId, start.toISOString(), end.toISOString()),
+    ]);
+    const report = buildMonthlyReportData({ villageId, villageName, year, month, cases, ai });
+
+    if (format === 'markdown') {
+      res.setHeader('content-type', 'text/markdown; charset=utf-8');
+      return res.send(renderMonthlyMarkdown(report));
+    }
+    res.json({ success: true, report });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'failed to build monthly report' });
+  }
+});
+
+export default router;
