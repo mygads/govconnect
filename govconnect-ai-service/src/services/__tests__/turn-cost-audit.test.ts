@@ -35,7 +35,7 @@ vi.mock('../../pipeline/pipeline-store', () => ({
 vi.mock('../../lib/prisma', () => ({ default: testState.prismaMock }));
 
 vi.mock('../ai-wallet.service', () => ({
-  debitVillageWalletForMessageBilling: vi.fn(async () => ({
+  debitVillageWalletForResolution: vi.fn(async () => ({
     ledgerEntry: { id: 'le_1' },
   })),
   InsufficientAIWalletBalanceError: class extends Error {},
@@ -43,6 +43,7 @@ vi.mock('../ai-wallet.service', () => ({
 
 import { finalizeAiBillingTurn } from '../ai-turn-billing.service';
 import { appendAudit } from '../../pipeline/pipeline-store';
+import { debitVillageWalletForResolution } from '../ai-wallet.service';
 
 const usageRows = [
   {
@@ -78,7 +79,7 @@ beforeEach(() => {
 });
 
 describe('turn_cost_recorded audit', () => {
-  it('emits the event with correct totals on the billed path', async () => {
+  it('emits the event with correct totals on the accrue path', async () => {
     await finalizeAiBillingTurn(baseContext('desa-1'));
 
     expect(appendAudit).toHaveBeenCalledTimes(1);
@@ -96,8 +97,13 @@ describe('turn_cost_recorded audit', () => {
     expect(e.payload.actual_cost_usd).toBeCloseTo(0.001, 8);
     expect(e.payload.adjusted_cost_usd).toBeCloseTo(0.002, 8);
     expect(e.payload.margin_usd).toBeCloseTo(0.001, 8);
-    expect(e.payload.billing_status).toBe('billed');
+    expect(e.payload.billing_status).toBe('accrued');
     expect(e.payload.billing_group_id).toBe('msg:desa-1:m1');
+  });
+
+  it('§10: accruing a turn never touches the wallet (debit happens only on resolution)', async () => {
+    await finalizeAiBillingTurn(baseContext('desa-1'));
+    expect(debitVillageWalletForResolution).not.toHaveBeenCalled();
   });
 
   it('emits the event on the skipped_no_village path too', async () => {

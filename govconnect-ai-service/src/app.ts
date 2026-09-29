@@ -53,6 +53,8 @@ import { config } from './config/env';
 import prisma from './lib/prisma';
 import { clearFewShotCache } from './services/few-shot-examples.service';
 import { finalizeAiBillingTurn } from './services/ai-turn-billing.service';
+import { retryResolutionBilling } from './services/ai-resolution-billing.service';
+import { listOpenAnomalyAlerts, acknowledgeAnomalyAlert } from './services/cost-anomaly.service';
 import { getParam, getQuery } from './utils/http';
 import { runGoldenSetEvaluation, getGoldenSetSummary } from './services/golden-set-eval.service';
 import {
@@ -2082,7 +2084,17 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
     const ledgerWhere = {
       ...(villageId ? { village_id: villageId } : {}),
       entry_type: 'usage_debit',
-      reference_type: 'ai_message_billing',
+      // §10: wallet is debited per verified resolution ('ai_resolution');
+      // 'ai_message_billing' is the legacy pre-cutover reference type.
+      reference_type: { in: ['ai_message_billing', 'ai_resolution'] },
+      ...(hasDateFilter ? { created_at: dateFilter } : {}),
+    };
+    // Legacy per-message checks stay scoped to message-billing entries so
+    // resolution debits (which reference ai_resolutions ids) are not
+    // misreported as orphaned ledger rows.
+    const messageLedgerWhere = { ...ledgerWhere, reference_type: 'ai_message_billing' };
+    const resolutionWhere = {
+      ...(villageId ? { village_id: villageId } : {}),
       ...(hasDateFilter ? { created_at: dateFilter } : {}),
     };
     const usageWhere = {
@@ -2092,7 +2104,7 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
       ...(hasDateFilter ? { created_at: dateFilter } : {}),
     };
 
-    const [billings, tokenUsage, ledger, unbilledUsage, staleUnbilledUsage, missingBillingGroupUsage, failedBillings, pendingBillings, billedWithoutLedger, billingIds, duplicateBillingGroups] = await Promise.all([
+    const [billings, tokenUsage, ledger, unbilledUsage, staleUnbilledUsage, missingBillingGroupUsage, failedBillings, pendingBillings, accruedBillings, failedResolutions, resolutionsBilledWithoutLedger, billedWithoutLedger, billingIds, duplicateBillingGroups] = await Promise.all([
       prisma.ai_message_billings.aggregate({
         where: billingWhere,
         _sum: { adjusted_cost_usd: true, actual_cost_usd: true, margin_usd: true },
@@ -2121,6 +2133,12 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
       }),
       prisma.ai_message_billings.count({ where: { ...billingWhere, status: { in: ['failed', 'failed_insufficient_balance'] } } }),
       prisma.ai_message_billings.count({ where: { ...billingWhere, status: 'pending' } }),
+      // §10: 'accrued' is the normal in-flight state (turn costed, awaiting a
+      // verified resolution). Informational only — not part of `healthy`.
+      prisma.ai_message_billings.count({ where: { ...billingWhere, status: 'accrued' } }),
+      prisma.ai_resolutions.count({ where: { ...resolutionWhere, status: { in: ['failed', 'failed_insufficient_balance'] } } }),
+      // Zero-cost resolutions are legitimately 'billed' with no ledger entry.
+      prisma.ai_resolutions.count({ where: { ...resolutionWhere, status: 'billed', ledger_entry_id: null, total_adjusted_cost_usd: { gt: 0 } } }),
       prisma.ai_message_billings.count({ where: { ...billingWhere, status: 'billed', ledger_entry_id: null } }),
       prisma.ai_message_billings.findMany({ where: billingWhere, select: { id: true } }),
       prisma.ai_message_billings.groupBy({
@@ -2135,7 +2153,9 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
     const [ledgerWithoutBilling, recentBillings] = await Promise.all([
       prisma.ai_wallet_ledger_entries.count({
         where: {
-          ...ledgerWhere,
+          // Scoped to legacy message-billing entries: resolution debits
+          // reference ai_resolutions ids by design, not billing ids.
+          ...messageLedgerWhere,
           OR: [
             { reference_id: null },
             ...(billingIdList.length > 0 ? [{ reference_id: { notIn: billingIdList } }] : []),
@@ -2187,6 +2207,9 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
         missing_billing_group_usage: missingBillingGroupUsage,
         failed_billings: failedBillings,
         pending_billings: pendingBillings,
+        accrued_billings: accruedBillings,
+        failed_resolutions: failedResolutions,
+        resolutions_billed_without_ledger: resolutionsBilledWithoutLedger,
         duplicate_billing_groups: duplicateBillingGroups.length,
         billed_without_ledger: billedWithoutLedger,
         ledger_without_billing: ledgerWithoutBilling,
@@ -2212,6 +2235,8 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
         && missingBillingGroupUsage === 0
         && failedBillings === 0
         && pendingBillings === 0
+        && failedResolutions === 0
+        && resolutionsBilledWithoutLedger === 0
         && duplicateBillingGroups.length === 0
         && billedWithoutLedger === 0
         && ledgerWithoutBilling === 0
@@ -2638,6 +2663,102 @@ app.post('/admin/ai-wallet/:villageId/retry-pending', async (req: Request, res: 
   } catch (error: any) {
     logger.error('Failed to trigger AI pending retry', { error: error.message });
     res.status(400).json({ error: error.message || 'Failed to trigger AI pending retry' });
+  }
+});
+
+/**
+ * §10: list resolutions for ops review (defaults to failed ones needing retry).
+ */
+app.get('/admin/ai-billing/resolutions', async (req: Request, res: Response) => {
+  try {
+    const villageId = typeof req.query.village_id === 'string' ? req.query.village_id : undefined;
+    const status = typeof req.query.status === 'string' && req.query.status
+      ? req.query.status.split(',').map(s => s.trim()).filter(Boolean)
+      : ['failed', 'failed_insufficient_balance'];
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const rows = await prisma.ai_resolutions.findMany({
+      where: {
+        ...(villageId ? { village_id: villageId } : {}),
+        status: { in: status },
+      },
+      orderBy: { created_at: 'desc' },
+      take: limit,
+      select: {
+        id: true, village_id: true, resolution_type: true, resolution_key: true,
+        status: true, total_adjusted_cost_usd: true, total_actual_cost_usd: true,
+        ledger_entry_id: true, billed_at: true, error_message: true,
+        trace_id: true, created_at: true,
+      },
+    });
+    res.json(successResponse({ resolutions: rows }));
+  } catch (error: any) {
+    logger.error('Failed to list AI resolutions', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to list AI resolutions' });
+  }
+});
+
+/**
+ * §10: retry a resolution stuck in failed / failed_insufficient_balance
+ * (e.g. after a wallet top-up). Idempotent: reuses the original
+ * (village_id, resolution_key), never double-bills.
+ */
+app.post('/admin/ai-billing/resolutions/:resolutionId/retry', async (req: Request, res: Response) => {
+  try {
+    const resolutionId = getParam(req, 'resolutionId');
+    if (!resolutionId) {
+      res.status(400).json({ error: 'resolutionId is required' });
+      return;
+    }
+    const result = await retryResolutionBilling(resolutionId);
+    if (!result.resolution) {
+      res.status(404).json(errorResponse(result.error || 'Resolution not found'));
+      return;
+    }
+    res.json(successResponse({
+      ok: result.ok,
+      resolution_id: resolutionId,
+      status: (result.resolution as { status?: string }).status ?? null,
+      error: result.error ?? null,
+    }));
+  } catch (error: any) {
+    logger.error('Failed to retry AI resolution billing', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to retry AI resolution billing' });
+  }
+});
+
+/**
+ * R9: cost anomaly alerts (alert-only — never auto-pauses; see
+ * cost-anomaly.service.ts). Ops read path + acknowledgement.
+ */
+app.get('/admin/ai-billing/anomaly-alerts', async (req: Request, res: Response) => {
+  try {
+    const villageId = typeof req.query.village_id === 'string' ? req.query.village_id : '';
+    if (!villageId) {
+      res.status(400).json({ error: 'village_id is required' });
+      return;
+    }
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const alerts = await listOpenAnomalyAlerts(villageId, limit);
+    res.json(successResponse({ alerts }));
+  } catch (error: any) {
+    logger.error('Failed to list AI cost anomaly alerts', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to list AI cost anomaly alerts' });
+  }
+});
+
+app.post('/admin/ai-billing/anomaly-alerts/:alertId/ack', async (req: Request, res: Response) => {
+  try {
+    const alertId = getParam(req, 'alertId');
+    if (!alertId) {
+      res.status(400).json({ error: 'alertId is required' });
+      return;
+    }
+    const acknowledgedBy = typeof req.body?.acknowledged_by === 'string' ? req.body.acknowledged_by : null;
+    const alert = await acknowledgeAnomalyAlert(alertId, acknowledgedBy);
+    res.json(successResponse({ alert }));
+  } catch (error: any) {
+    logger.error('Failed to acknowledge AI cost anomaly alert', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to acknowledge AI cost anomaly alert' });
   }
 });
 

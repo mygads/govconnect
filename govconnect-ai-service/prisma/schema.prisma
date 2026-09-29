@@ -302,6 +302,58 @@ model ai_message_billings {
   @@schema("ai")
 }
 
+// R9 / §10: per-resolution billing. One row per VERIFIED resolution
+// (deterministic evidence per §12 — DB outcome, tool traces, ticket refs).
+// The village wallet is debited here, not per message/turn. Turn costs are
+// only accrued (ai_message_billings.status = 'accrued') until a resolution
+// references them; unresolved turns are never debited (vendor absorbs cost
+// — the §10 incentive alignment).
+model ai_resolutions {
+  id                        String   @id @default(cuid())
+  village_id                String
+  wa_user_id                String?
+  session_id                String?
+  channel                   String?
+  trace_id                  String
+  resolution_type           String
+  resolution_key            String
+  verified                  Boolean  @default(true)
+  verification_evidence_json Json?
+  billing_group_ids         String[]
+  total_actual_cost_usd     Float    @default(0)
+  total_adjusted_cost_usd   Float    @default(0)
+  total_margin_usd          Float    @default(0)
+  status                    String   @default("pending")
+  ledger_entry_id           String?  @unique
+  billed_at                 DateTime?
+  error_message             String?  @db.Text
+  metadata_json             Json?
+  created_at                DateTime @default(now())
+
+  @@unique([village_id, resolution_key])
+  @@index([village_id, created_at])
+  @@index([status, created_at])
+  @@index([trace_id])
+  @@schema("ai")
+}
+
+// R9: cost anomaly alerts (was the single MISSING sub-item). Alert-only by
+// design — pausing stays an explicit human action via VILLAGE_KILL_SWITCH.
+model ai_cost_anomaly_alerts {
+  id              String    @id @default(cuid())
+  village_id      String
+  alert_type      String
+  severity        String
+  details_json    Json
+  created_at      DateTime  @default(now())
+  acknowledged_at DateTime?
+  acknowledged_by String?
+
+  @@index([village_id, created_at])
+  @@index([alert_type, created_at])
+  @@schema("ai")
+}
+
 model ai_generation_logs {
   id                 String   @id @default(cuid())
   token_usage_id     String?
