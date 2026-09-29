@@ -271,6 +271,35 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       };
     }
 
+    // 0f. Voice note: transcribe → text pipeline BEFORE routing (P1-6).
+    // Previously transcription happened after routeMessage() and the COLLECT
+    // slot-FSM ran, so stage decision + intent + slots were computed from an
+    // empty/placeholder message and the transcript never entered the slots.
+    // Now the transcript replaces input.message before routing, slot
+    // extraction, and the agent loop all see it. Deterministic never-silent
+    // reply when Whisper is not configured.
+    if (isVoiceNote(input.mediaType) && input.mediaUrl) {
+      const voice = await handleVoiceNote({
+        tenantId, userId: input.userId, channel, traceId, audioUrl: input.mediaUrl,
+      });
+      if (voice.reply) {
+        return {
+          success: false,
+          response: voice.reply,
+          intent: 'voice_note_unsupported',
+          metadata: {
+            processingTimeMs: Date.now() - started,
+            hasKnowledge: false,
+            agentMode: 'single_orchestrator',
+            traceId,
+          },
+        };
+      }
+      if (voice.transcript) {
+        input.message = `[transkrip voice note] ${voice.transcript}`;
+      }
+    }
+
     // 1. Deterministic routing.
     let decision = routeMessage({ message: input.message });
     if (confirmation.kind === 'execute') {
@@ -364,29 +393,6 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     // For incomplete COLLECT, give the agent loop the deterministic slot status
     // so its question matches the FSM (the FSM remains authoritative).
     const turnFacts: string[] = [];
-    // 2c. Voice note: transcribe → text pipeline; or deterministic
-    // never-silent reply when Whisper is not configured.
-    if (isVoiceNote(input.mediaType) && input.mediaUrl) {
-      const voice = await handleVoiceNote({
-        tenantId, userId: input.userId, channel, traceId, audioUrl: input.mediaUrl,
-      });
-      if (voice.reply) {
-        return {
-          success: false,
-          response: voice.reply,
-          intent: 'voice_note_unsupported',
-          metadata: {
-            processingTimeMs: Date.now() - started,
-            hasKnowledge: false,
-            agentMode: 'single_orchestrator',
-            traceId,
-          },
-        };
-      }
-      if (voice.transcript) {
-        input.message = `[transkrip voice note] ${voice.transcript}`;
-      }
-    }
     // 2d. Media intake (image): privacy-first — hash, EXIF strip, redaction
     // check. Raw pixels never reach the LLM; only the signal fact does.
     if (input.mediaUrl && /image|photo|jpeg|jpg|png/i.test(input.mediaType ?? '')) {
