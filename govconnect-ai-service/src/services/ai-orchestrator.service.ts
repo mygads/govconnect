@@ -55,6 +55,14 @@ export {
 
 import { processUnifiedMessage, isProcessingFailure } from './unified-message-processor.service';
 
+// v2 staged-agent pipeline (strangler pattern: off/shadow/on per tenant).
+// Default 'off' → zero behavior change to the v1 path.
+import { getPipelineMode, type PipelineMode } from '../pipeline/feature-flags';
+import { processMessageV2 } from '../pipeline/process-message-v2';
+import { runShadowComparison } from '../pipeline/shadow-runner';
+import { buildFallback } from '../pipeline/fallback-policy';
+import type { ProcessMessageInput } from './ump-types';
+
 // ============================================
 // CONSTANTS
 // ============================================
@@ -132,6 +140,11 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     });
   }, READ_RECEIPT_DELAY_MS);
   
+  // v2 pipeline rollout mode for this tenant (strangler pattern).
+  // 'off' (default): v1 only. 'shadow': v1 serves, v2 compared in background.
+  // 'on': v2 serves the citizen with the never-silent guarantee.
+  const pipelineMode: PipelineMode = getPipelineMode(village_id);
+
   try {
     // Check if AI chatbot is enabled
     const aiEnabled = await isAIChatbotEnabled();
@@ -276,10 +289,10 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     }
     
     // ============================================
-    // DELEGATE TO UNIFIED MESSAGE PROCESSOR
+    // DELEGATE TO MESSAGE PROCESSOR (v1 or v2 staged-agent pipeline)
     // Pass onStageChange callback for smart typing triggers
     // ============================================
-    const result = await processUnifiedMessage({
+    const umpInput: ProcessMessageInput = {
       userId: wa_user_id,
       message: aiMessage,
       channel: 'whatsapp',
@@ -289,12 +302,28 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       messageId: message_id,
       batchedMessageIds: spamGuardInfo?.contextMessages?.map(ctx => ctx.messageId).filter(Boolean) ?? [],
       onStageChange,
-    });
+    };
+    const result = pipelineMode === 'on'
+      ? await processMessageV2(umpInput)
+      : await processUnifiedMessage(umpInput);
+
+    // Shadow mode: v1 serves the citizen; v2 runs in the background and the
+    // comparison is logged for the eval loop. Never blocks, never throws.
+    if (pipelineMode === 'shadow') {
+      try {
+        runShadowComparison(umpInput, result);
+      } catch (shadowErr: any) {
+        logger.warn('Shadow comparison failed to start', { error: shadowErr?.message });
+      }
+    }
 
     // Processing FAILURE (LLM timeout/down, empty reply, error): stay SILENT —
     // do NOT publish a hollow apology. Like a clerk whose system is down, we
     // hold the message and retry instead of replying "sorry, try again".
-    if (isProcessingFailure(result)) {
+    //
+    // v2 ('on') is exempt: the staged-agent pipeline carries the never-silent
+    // guarantee, so its degraded result is SENT, not swallowed.
+    if (isProcessingFailure(result) && pipelineMode !== 'on') {
       logger.warn('🤐 WhatsApp message processing failed — staying silent + enqueuing retry', {
         wa_user_id,
         message_id,
@@ -423,6 +452,35 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     });
 
     completeProcessing(village_id, wa_user_id, message_id);
+
+    // v2 ('on'): never-silent — the citizen gets a degraded-but-honest reply
+    // with a ticket reference instead of silence.
+    if (pipelineMode === 'on') {
+      try {
+        const fb = buildFallback({
+          stage: 'INGRESS',
+          terminalState: 'FAILED',
+          userId: wa_user_id,
+          traceId: message_id,
+          error: error.message,
+        });
+        await publishAIReply({
+          village_id,
+          wa_user_id,
+          reply_text: fb.response,
+          message_id: message_id,
+          batched_message_ids: [message_id],
+        });
+        return;
+      } catch (fallbackErr: any) {
+        logger.error('❌ Failed to send v2 fallback reply', {
+          wa_user_id,
+          message_id,
+          error: fallbackErr?.message,
+        });
+      }
+    }
+
     addToAIRetryQueue(event, error.message || 'Unknown error');
   }
 }

@@ -1,0 +1,79 @@
+/**
+ * Prompt Builder — one coherent prompt, disclosure-first.
+ *
+ * Design (arsitektur-final §6):
+ * - Static system prompt is BYTE-IDENTICAL across turns (prefix caching).
+ * - Dynamic per-turn context (datetime, stage, scoped facts) goes in a
+ *   separate user-role message.
+ * - Disclosure: the agent identifies as the AI assistant of the village.
+ * - Scoped facts only: tenant-scoped context builder, never raw profile
+ *   dumps with NIK.
+ */
+
+import type { Stage } from './stage-types';
+import { piiInbound } from '../gateway/pii-gateway';
+
+export interface PromptInput {
+  villageName: string;
+  stage: Stage;
+  /** Scoped facts: village profile, service info, RAG snippets (already tenant-scoped). */
+  facts: string[];
+  /** DB-grounded records (tickets, requests) — DB is always authoritative. */
+  records: string[];
+  /** Short conversation summary (no raw history dumps). */
+  summary?: string;
+  /** Language the user is writing in. */
+  language?: string;
+}
+
+/**
+ * The static system prompt. MUST stay byte-identical across turns so the
+ * provider can prefix-cache it. Never interpolate per-turn data here.
+ */
+export function buildStaticSystemPrompt(): string {
+  return [
+    'Kamu adalah Gana, asisten AI resmi layanan publik desa.',
+    'Kamu membantu warga lewat WhatsApp: menjawab pertanyaan informasi, membantu cek status laporan, dan memandu pengaduan atau permohonan layanan.',
+    '',
+    'ATURAN KERAS:',
+    '1. Jangan pernah mengarang: fakta hanya dari data resmi desa yang diberikan (profil desa, layanan, status tiket). Jika tidak ada datanya, katakan terus terang dan tawarkan menghubungkan ke perangkat desa.',
+    '2. Jangan pernah meminta atau menyimpan NIK, nomor KK, atau data sensitif lain kecuali alur resmi membutuhkannya — dan bila diminta, hanya lewat formulir resmi.',
+    '3. Status tiket dari database selalu lebih benar daripada dokumen atau ingatanmu.',
+    '4. Jangan menjawab di luar kewenangan: topik politik, hukum pidana, atau sengketa tanah → arahkan ke perangkat desa.',
+    '5. Bahasa: ikuti bahasa warga (Indonesia santai atau bahasa daerah bila wajar), singkat, to-the-point, tanpa basa-basi berlebihan.',
+    '6. Satu pesan per jawaban; jangan spam beberapa pesan.',
+    '7. Jika ragu dan tidak ada data, lebih baik jujur "belum tahu" daripada menebak.',
+  ].join('\n');
+}
+
+/** Dynamic per-turn context — delivered as a user-role message. */
+export function buildDynamicContext(input: PromptInput): string {
+  const lines: string[] = [];
+  const now = new Date();
+  lines.push(`[Konteks] Desa: ${input.villageName} | Tahap: ${input.stage} | Waktu: ${now.toLocaleString('id-ID')}`);
+  if (input.language) lines.push(`[Bahasa warga] ${input.language}`);
+  if (input.summary) {
+    const { text } = piiInbound(input.summary);
+    lines.push(`[Ringkasan percakapan]\n${text}`);
+  }
+  if (input.facts.length > 0) {
+    lines.push('[Fakta resmi desa]\n' + input.facts.map((f) => piiInbound(f).text).join('\n---\n'));
+  }
+  if (input.records.length > 0) {
+    lines.push('[Data database — PALING OTORITATIF]\n' + input.records.map((r) => piiInbound(r).text).join('\n---\n'));
+  }
+  lines.push('[Instruksi tahap] Jawab sesuai tahap di atas. Jangan melompat tahap.');
+  return lines.join('\n\n');
+}
+
+export interface BuiltPrompt {
+  system: string;
+  dynamicContext: string;
+}
+
+export function buildPrompt(input: PromptInput): BuiltPrompt {
+  return {
+    system: buildStaticSystemPrompt(),
+    dynamicContext: buildDynamicContext(input),
+  };
+}
