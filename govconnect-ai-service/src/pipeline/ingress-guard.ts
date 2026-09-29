@@ -14,6 +14,7 @@
  */
 
 import { quarantineAdd, appendAudit } from './pipeline-store';
+import { redactForLog } from '../gateway/pii-gateway';
 import logger from '../utils/logger';
 
 // ── Rate limiting (sliding window, per tenant+user) ─────────────────────────
@@ -139,9 +140,14 @@ export async function ingressCheck(input: {
 
   const anomaly = detectAnomaly(message, tenantId, userId);
   if (anomaly.anomalous) {
+    // P1-5: quarantine excerpts are persisted — redact PII (NIK/phone)
+    // before storing. Quarantined messages may contain NIK/no HP (e.g.
+    // injection disguised as a report); plaintext PII in the quarantine
+    // table would be a PDP-law exposure.
+    const safeExcerpt = redactForLog(`len=${message.length} sev=${anomaly.severity}: ${message.slice(0, 200)}`);
     await quarantineAdd({
       tenantId, userId, channel, reason: anomaly.reason ?? 'anomaly',
-      excerpt: `len=${message.length} sev=${anomaly.severity}: ${message.slice(0, 200)}`,
+      excerpt: safeExcerpt,
     }).catch(() => undefined);
     await appendAudit({
       tenantId, traceId, userId, channel, stage: 'INGRESS', event: 'message_quarantined',

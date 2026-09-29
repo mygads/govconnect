@@ -628,6 +628,9 @@ export async function identityRevoke(tenantId: string, userId: string): Promise<
 export async function quarantineAdd(input: {
   tenantId: string; userId: string; channel: string; reason: string; excerpt: string;
 }): Promise<void> {
+  // Contract: callers MUST pass a PII-redacted excerpt (see P1-5 in
+  // ingress-guard.ts). This function cannot redact itself: importing the
+  // redactor here would create an import cycle via pii-vault.
   const db = await getDb();
   if (!db) return;
   try {
