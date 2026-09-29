@@ -40,6 +40,8 @@ const VILLAGE_ONLY_ROUTES: string[] = [
   '/dashboard/ai-usage',
   '/dashboard/ai-balance',
   '/dashboard/settings/rate-limit',
+  '/dashboard/verifikasi-identitas',
+  '/dashboard/sinyal-bukti',
 ]
 
 const matchPath = (pathname: string, path: string) =>

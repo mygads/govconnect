@@ -575,9 +575,13 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
           };
         }
         if (media.promptFact) turnFacts.push(media.promptFact);
+        // A4: persist fraud signals WITH the evidence audit event so admins
+        // can review them later. Never auto-rejects; heuristic only.
         audit('INGRESS', 'media_signal', {
           hasImage: media.hasImage, duplicate: media.duplicate,
           redaction: media.redaction, exifStripped: media.exifStripped,
+          fraud_signals: media.fraudSignals,
+          sha256: media.sha256 ?? null,
         });
         // 2d-bis. R14 KTP OCR pre-fill: PARKED by user decision (2026-09-29).
         // The on-prem ocr-service sidecar and ocr-ktp.ts are kept for a

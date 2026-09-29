@@ -14,6 +14,8 @@ import {
   MessageCircle,
   TrendingUp,
   Shield,
+  ShieldCheck,
+  FileWarning,
   Brain,
   Activity,
   Settings2,
@@ -49,6 +51,8 @@ interface MenuItem {
   roles?: string[]
   excludeRoles?: string[]
   exact?: boolean
+  /** When set, a pending-count badge is fetched and shown (village admin only). */
+  badgeKey?: "ktp-pending"
 }
 
 interface MenuGroup {
@@ -61,6 +65,28 @@ export function GovConnectSidebar() {
   const { theme, resolvedTheme } = useTheme()
   const { state } = useSidebar()
   const { user } = useAuth()
+  const [ktpPending, setKtpPending] = React.useState<number | null>(null)
+
+  // Pending KTP verification count for the sidebar badge (village admins).
+  React.useEffect(() => {
+    if (user?.role === "superadmin") return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch("/api/ktp-verifications?status=pending&limit=1")
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled && typeof data?.pendingCount === "number") {
+          setKtpPending(data.pendingCount)
+        }
+      } catch {
+        // badge stays hidden on error — never blocks navigation
+      }
+    }
+    load()
+    const t = setInterval(load, 60000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [user?.role])
 
   const isActivePath = (item: MenuItem) => {
     if (item.exact || item.url === "/dashboard" || item.url === "/dashboard/statistik") {
@@ -101,6 +127,19 @@ export function GovConnectSidebar() {
           title: "Permohonan Layanan",
           url: "/dashboard/pelayanan",
           icon: FileText,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Verifikasi Identitas",
+          url: "/dashboard/verifikasi-identitas",
+          icon: ShieldCheck,
+          excludeRoles: ["superadmin"],
+          badgeKey: "ktp-pending",
+        },
+        {
+          title: "Sinyal Bukti",
+          url: "/dashboard/sinyal-bukti",
+          icon: FileWarning,
           excludeRoles: ["superadmin"],
         },
       ],
@@ -388,6 +427,11 @@ export function GovConnectSidebar() {
                           isActivePath(item) ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
                         }`} />
                         <span className="flex-1">{item.title}</span>
+                        {item.badgeKey === "ktp-pending" && ktpPending !== null && ktpPending > 0 && (
+                          <span className="ml-auto rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-semibold text-white">
+                            {ktpPending > 99 ? "99+" : ktpPending}
+                          </span>
+                        )}
                         {isActivePath(item) && state === "expanded" && (
                           <ChevronRight className="h-4 w-4 text-primary" />
                         )}
