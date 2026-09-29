@@ -8,7 +8,3 @@ ALTER TABLE "ai"."ai_message_billings"
   DROP CONSTRAINT IF EXISTS "ai_message_billings_status_check",
   ADD CONSTRAINT "ai_message_billings_status_check"
     CHECK ("status" IN ('pending', 'billed', 'accrued', 'skipped_zero_cost', 'skipped_no_village', 'failed', 'failed_insufficient_balance'));
-ALTER TABLE "ai"."ai_token_usage"
-  DROP CONSTRAINT IF EXISTS "ai_token_usage_billing_status_check",
-  ADD CONSTRAINT "ai_token_usage_billing_status_check"
-    CHECK ("billing_status" IN ('unbilled', 'not_billable', 'legacy_billed', 'billed', 'accrued', 'skipped_zero_cost', 'skipped_no_village'));
