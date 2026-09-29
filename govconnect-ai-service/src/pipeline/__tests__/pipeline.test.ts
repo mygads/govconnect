@@ -38,6 +38,9 @@ import {
 import {
   mapComplaintToLapor, laporStatusForEnqueue, drainLaporOutbox,
 } from '../lapor-bridge';
+import {
+  meetsIdentityRequirement, resolveIdentityLevel, identityDenialCopy,
+} from '../identity-ladder';
 
 describe('stage-router (deterministic)', () => {
   it('routes emergency keywords to EMERGENCY deterministically', () => {
@@ -568,5 +571,42 @@ describe('lapor-bridge', () => {
     const r = await drainLaporOutbox(5);
     expect(r.sent).toBe(0);
     expect(r.failed).toBe(0);
+  });
+});
+
+describe('identity-ladder', () => {
+  it('allows public tools at L0', () => {
+    expect(meetsIdentityRequirement('get_village_profile', 'L0')).toBe(true);
+    expect(meetsIdentityRequirement('search_knowledge', 'L0')).toBe(true);
+  });
+
+  it('blocks own-data tools at L0, allows at L1', () => {
+    expect(meetsIdentityRequirement('check_status', 'L0')).toBe(false);
+    expect(meetsIdentityRequirement('check_status', 'L1')).toBe(true);
+    expect(meetsIdentityRequirement('get_my_history', 'L1')).toBe(true);
+  });
+
+  it('blocks mutations below L2', () => {
+    for (const t of ['create_complaint', 'create_service_request', 'update_complaint', 'cancel_request'] as const) {
+      expect(meetsIdentityRequirement(t, 'L0')).toBe(false);
+      expect(meetsIdentityRequirement(t, 'L1')).toBe(false);
+      expect(meetsIdentityRequirement(t, 'L2')).toBe(true);
+    }
+  });
+
+  it('denies unknown tools (fail-closed)', () => {
+    expect(meetsIdentityRequirement('nonexistent_tool' as never, 'L2')).toBe(false);
+  });
+
+  it('resolves L1 for whatsapp, L0 for webchat when store is down', async () => {
+    // DB is down in this environment → falls back deterministically.
+    expect(await resolveIdentityLevel({ tenantId: 't', userId: 'u', channel: 'whatsapp' })).toBe('L1');
+    expect(await resolveIdentityLevel({ tenantId: 't', userId: 'u', channel: 'webchat' })).toBe('L0');
+  });
+
+  it('denial copy mentions verification, not internals', () => {
+    const copy = identityDenialCopy('create_complaint');
+    expect(copy).toContain('verifikasi');
+    expect(copy).not.toContain('L2');
   });
 });

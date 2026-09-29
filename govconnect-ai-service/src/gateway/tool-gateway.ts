@@ -19,6 +19,8 @@
 import type { AgentToolName } from '../services/agent/tool-definitions';
 import { executeToolCall, type ToolCallResult } from '../services/agent/tool-executor';
 import { TOOL_GRADES, STAGE_TOOL_ALLOWLIST, isParallelizable } from './tool-policy';
+import { meetsIdentityRequirement, TOOL_IDENTITY_MIN } from '../pipeline/identity-ladder';
+import type { IdentityLevel } from '../pipeline/identity-ladder';
 import { piiInbound, redactForLog } from './pii-gateway';
 import type { Stage, ToolErrorKind, ToolTraceEntry } from '../pipeline/stage-types';
 import logger from '../utils/logger';
@@ -40,6 +42,8 @@ export interface GatewayContext {
   idempotencyKeys: string[];
   /** Sliding window of recent tool signatures for loop detection. */
   recentSignatures: string[];
+  /** Identity ladder level (L0/L1/L2) resolved at ingress. */
+  identityLevel?: IdentityLevel;
 }
 
 export interface GatewayResult {
@@ -109,6 +113,14 @@ export async function gatewayExecute(
   }
   if (ctx.sideEffectMode && ctx.sideEffectMode !== 'production' && (grade === 'G2' || grade === 'G3')) {
     return fail(`mutation_blocked_in_mode:${ctx.sideEffectMode}`, 'POLICY');
+  }
+
+  // 3b. Identity ladder (deterministic, fail-closed): the tool requires a
+  // minimum identity level; unknown level or unknown tool → deny.
+  const identityLevel = ctx.identityLevel ?? 'L0';
+  if (!meetsIdentityRequirement(tool, identityLevel)) {
+    const need = TOOL_IDENTITY_MIN[tool] ?? 'L2';
+    return fail(`identity_level_insufficient:${tool}:need_${need}:have_${identityLevel}`, 'POLICY');
   }
 
   // 4. Loop detection: same signature 3× in sliding window of 6.

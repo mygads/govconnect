@@ -22,6 +22,7 @@ import { resolveServiceSlug } from './micro-assessor';
 import { processImageMedia } from './media-pipeline';
 import { isVoiceNote, handleVoiceNote } from './voice-pipeline';
 import { enqueueComplaintToLapor } from './lapor-bridge';
+import { resolveIdentityLevel, auditIdentityLevel } from './identity-ladder';
 import { checkBudget } from './cost-guard';
 import { ingressCheck } from './ingress-guard';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
@@ -139,7 +140,15 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       };
     }
 
-    // 0d. Budget guard: no LLM spend when the tenant's daily budget is out.
+    // 0d. Identity ladder (deterministic, never LLM): L0/L1/L2.
+    ctx.identityLevel = await resolveIdentityLevel({
+      tenantId, userId: input.userId, channel,
+    });
+    await auditIdentityLevel({
+      tenantId, userId: input.userId, channel, traceId, level: ctx.identityLevel,
+    });
+
+    // 0e. Budget guard: no LLM spend when the tenant's daily budget is out.
     const budget = await checkBudget(tenantId);
     if (!budget.allowed) {
       audit('INGRESS', 'budget_exceeded', { spentUsd: budget.spentUsd });

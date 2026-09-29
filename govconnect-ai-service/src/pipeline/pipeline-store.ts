@@ -571,6 +571,59 @@ export async function memoryInvalidateEntry(
   }
 }
 
+// ── Identity ladder ─────────────────────────────────────────────────────
+
+export async function identityIsVerified(tenantId: string, userId: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return dbDown('identityIsVerified', false);
+  try {
+    const rows = (await db.$queryRawUnsafe(
+      `SELECT 1 FROM pipeline_identity_verifications
+        WHERE tenant_id=$1 AND user_id=$2 AND revoked_at IS NULL LIMIT 1`,
+      tenantId, userId,
+    )) as Array<unknown>;
+    return rows.length > 0;
+  } catch {
+    return dbDown('identityIsVerified', false);
+  }
+}
+
+/** Record an admin-performed identity verification (L2). */
+export async function identitySetVerified(
+  tenantId: string, userId: string, verifiedBy: string, note = '',
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return dbDown('identitySetVerified', false);
+  try {
+    await db.$executeRawUnsafe(
+      `INSERT INTO pipeline_identity_verifications
+         (tenant_id, user_id, level, verified_by, note)
+       VALUES ($1,$2,'L2',$3,$4)
+       ON CONFLICT DO NOTHING`,
+      tenantId, userId, verifiedBy.slice(0, 200), note.slice(0, 500),
+    );
+    return true;
+  } catch {
+    return dbDown('identitySetVerified', false);
+  }
+}
+
+/** Revoke an identity verification. */
+export async function identityRevoke(tenantId: string, userId: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return dbDown('identityRevoke', false);
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE pipeline_identity_verifications SET revoked_at=now()
+        WHERE tenant_id=$1 AND user_id=$2 AND revoked_at IS NULL`,
+      tenantId, userId,
+    );
+    return true;
+  } catch {
+    return dbDown('identityRevoke', false);
+  }
+}
+
 export async function quarantineAdd(input: {
   tenantId: string; userId: string; channel: string; reason: string; excerpt: string;
 }): Promise<void> {

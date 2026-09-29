@@ -8,6 +8,8 @@
  *   output (never-silent policy).
  */
 
+import type { IdentityLevel } from './identity-ladder';
+
 /** All stages in the executable SOP graph. */
 export type Stage =
   | 'INGRESS'
@@ -69,6 +71,8 @@ export interface PipelineContext {
   assessorConfidences: number[];
   isEvaluation?: boolean;
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
+  /** Identity ladder level resolved at ingress (L0/L1/L2). */
+  identityLevel?: IdentityLevel;
 }
 
 /** Structured outcome of one pipeline turn. */

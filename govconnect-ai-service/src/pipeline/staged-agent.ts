@@ -28,6 +28,7 @@ import {
 } from './kb-precedence';
 import { STAGE_TOOL_ALLOWLIST, isParallelizable } from '../gateway/tool-policy';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
+import { identityDenialCopy } from './identity-ladder';
 import { buildPrompt } from './prompt-builder';
 import { buildFallback, persistFallbackTicket, assertNonEmptyResponse } from './fallback-policy';
 import {
@@ -92,6 +93,7 @@ function toGatewayContext(input: StagedAgentInput, stage: Stage): GatewayContext
     sideEffectMode: input.ctx.sideEffectMode,
     idempotencyKeys: input.ctx.idempotencyKeys,
     recentSignatures: [],
+    identityLevel: input.ctx.identityLevel,
   };
 }
 
@@ -174,6 +176,8 @@ async function runBoundedLoop(
     { role: 'user', content: dynamicContext },
     { role: 'user', content: safeMessage },
   ];
+  // Injected once per turn when a tool is denied for identity reasons.
+  let identityNoteInjected = false;
 
   let model = 'unknown';
   let finalText = '';
@@ -228,6 +232,19 @@ async function runBoundedLoop(
       let content = r.ok
         ? resultToText(r.result)
         : JSON.stringify({ success: false, error: r.error, errorKind: r.errorKind });
+      // Identity denial: surface a clear, user-facing explanation once so the
+      // model relays it instead of silently dropping the action.
+      if (r.blocked && r.blockReason?.startsWith('identity_level_insufficient')) {
+        const copy = identityDenialCopy(c.name as AgentToolName);
+        content = JSON.stringify({
+          success: false, error: 'identity_verification_required',
+          errorKind: 'POLICY', detail: copy,
+        });
+        if (!identityNoteInjected) {
+          identityNoteInjected = true;
+          messages.push({ role: 'user', content: `[SISTEM] ${copy}` });
+        }
+      }
       if (r.ok) {
         // Tenant assertion (fail-closed) + precedence labeling on retrieval.
         const check = assertTenant(r.result, input.ctx.tenantId ?? '');
