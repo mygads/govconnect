@@ -26,6 +26,7 @@ import { resolveIdentityLevel, auditIdentityLevel } from './identity-ladder';
 import { checkBudget } from './cost-guard';
 import { isCostSaverMode, collapseTurnMessages } from './cost-saver';
 import { ingressCheck } from './ingress-guard';
+import { isVillageKilled, KILL_SWITCH_REPLY } from './kill-switch';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
 import { applyMemoryPolicy } from './memory-policy';
 import { buildFallback, persistFallbackTicket } from './fallback-policy';
@@ -141,6 +142,26 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     // system notes use those markers with role:'system'; a user typing the
     // same literal must not borrow that authority.
     input.message = stripSystemMarkers(input.message);
+
+    // R9: VILLAGE_KILL_SWITCH — operator kill switch per village. When
+    // active, short-circuit with a static never-silent reply: no LLM, no
+    // tools, no cost. Checked BEFORE idempotency so a lifted switch never
+    // serves a stale cached maintenance reply, and this path never writes
+    // the idempotency cache.
+    if (isVillageKilled(tenantId)) {
+      audit('INGRESS', 'village_kill_switch_active', {});
+      return {
+        success: true,
+        response: KILL_SWITCH_REPLY,
+        intent: 'maintenance',
+        metadata: {
+          processingTimeMs: Date.now() - started,
+          hasKnowledge: false,
+          agentMode: 'single_orchestrator',
+          traceId,
+        },
+      };
+    }
 
     // 0b. Idempotency: duplicate delivery → replay stored response.
     // Skipped in shadow/evaluation (P1-1): shadow must compute fresh, and

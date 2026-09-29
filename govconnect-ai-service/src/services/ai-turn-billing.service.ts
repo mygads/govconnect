@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { debitVillageWalletForMessageBilling, InsufficientAIWalletBalanceError } from './ai-wallet.service';
+import { appendAudit } from '../pipeline/pipeline-store';
 
 export interface AiBillingTurnContext {
   village_id?: string | null;
@@ -105,6 +106,58 @@ export async function withAiBillingTurn<T>(context: AiBillingTurnContext, handle
   });
 }
 
+interface TurnCostTotals {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  actual_cost_usd: number;
+  adjusted_cost_usd: number;
+  margin_usd: number;
+}
+
+/**
+ * R9: cost per turn, visible in the pipeline audit trail.
+ *
+ * The billing tables own the money; this event mirrors the finalized turn
+ * cost into pipeline_audit_events (joinable via trace_id / billing_group_id)
+ * so the quality dashboard and cost monitoring can read cost-per-turn
+ * without joining billing internals. Never throws: audit must not break
+ * billing.
+ */
+async function emitTurnCostAudit(
+  context: AiBillingTurnContext,
+  totals: TurnCostTotals,
+  callCount: number,
+  billingStatus: string,
+): Promise<void> {
+  try {
+    await appendAudit({
+      tenantId: context.village_id ?? '',
+      traceId: context.trace_id,
+      userId: context.wa_user_id ?? context.session_id ?? '',
+      channel: context.channel ?? 'whatsapp',
+      stage: 'SEND',
+      event: 'turn_cost_recorded',
+      payload: {
+        billing_group_id: context.billing_group_id,
+        input_tokens: totals.input_tokens,
+        output_tokens: totals.output_tokens,
+        total_tokens: totals.total_tokens,
+        call_count: callCount,
+        actual_cost_usd: Number(totals.actual_cost_usd.toFixed(8)),
+        adjusted_cost_usd: Number(totals.adjusted_cost_usd.toFixed(8)),
+        margin_usd: Number(totals.margin_usd.toFixed(8)),
+        billing_status: billingStatus,
+      },
+    });
+  } catch (err) {
+    logger.warn('[ai-turn-billing] turn_cost_recorded audit failed', {
+      billingGroupId: context.billing_group_id,
+      error: (err as Error)?.message ?? String(err),
+    });
+  }
+}
+
 export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
   const existingBilling = await prisma.ai_message_billings.findUnique({
     where: { billing_group_id: context.billing_group_id },
@@ -197,6 +250,7 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
 
   if (status !== 'pending') {
     await markUsageRowsFinalized(context.billing_group_id, status, usageRows.map(row => row.id));
+    await emitTurnCostAudit(context, totals, usageRows.length, status);
     return billing;
   }
 
@@ -230,6 +284,7 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
     });
 
     await markUsageRowsFinalized(context.billing_group_id, 'billed', usageRows.map(row => row.id), billedAt);
+    await emitTurnCostAudit(context, totals, usageRows.length, 'billed');
     return updatedBilling;
   } catch (error: any) {
     const status = error instanceof InsufficientAIWalletBalanceError
