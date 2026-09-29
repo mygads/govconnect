@@ -102,7 +102,12 @@ def _get_ocr():
                         "or set OCR_MODE=stub for tests"
                     ) from e
                 logger.info("loading PaddleOCR (lang=id), this may download models...")
-                _ocr = PaddleOCR(use_angle_cls=True, lang="id")
+                # NOTE (2026-09-29): verified against paddleocr 3.7. `predict`
+                # is the current API; `ocr(..., cls=True)` and `use_angle_cls`
+                # are deprecated. Real-model inference was NOT verifiable on
+                # the dev VM (paddlepaddle 3.3.1 OneDNN/PIR kernel bug on this
+                # CPU) — see README status.
+                _ocr = PaddleOCR(lang="id", use_textline_orientation=True)
                 logger.info("PaddleOCR loaded")
     return _ocr
 
@@ -122,12 +127,30 @@ def _ocr_lines(image_bytes: bytes) -> list[tuple[str, float]]:
         raise ValueError("could not decode image bytes")
 
     ocr = _get_ocr()
-    raw = ocr.ocr(img, cls=True)
+    raw = ocr.predict(img)
     lines: list[tuple[str, float, float]] = []  # (text, conf, y_center)
     for page in raw or []:
-        for box, (text, conf) in page:
-            ys = [p[1] for p in box]
-            lines.append((text.strip(), float(conf), sum(ys) / len(ys)))
+        if isinstance(page, dict):
+            # PaddleX 3.x format: rec_texts / rec_scores / rec_boxes.
+            texts = page.get("rec_texts") or []
+            scores = page.get("rec_scores") or []
+            boxes = page.get("rec_boxes") or []
+            for idx, text in enumerate(texts):
+                text = str(text).strip()
+                if not text:
+                    continue
+                conf = float(scores[idx]) if idx < len(scores) else 0.0
+                box = boxes[idx] if idx < len(boxes) else None
+                y = float(sum(p[1] for p in box) / len(box)) if box else 0.0
+                lines.append((text, conf, y))
+        else:
+            # Legacy 2.x format: [box, (text, conf)].
+            for box, (text, conf) in page:
+                text = str(text).strip()
+                if not text:
+                    continue
+                ys = [p[1] for p in box]
+                lines.append((text, float(conf), sum(ys) / len(ys)))
     lines.sort(key=lambda t: t[2])
     return [(text, conf) for text, conf, _ in lines if text]
 

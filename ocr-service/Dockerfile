@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download PaddleOCR models at build time so the first request is fast.
 # (Skipped gracefully if the build has no network to the model hub.)
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='id')" || true
+RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='id')" || true
 
 COPY app.py engine.py ./
 

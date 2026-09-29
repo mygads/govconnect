@@ -67,6 +67,23 @@ python -m pytest -m slow           # real PaddleOCR model (~100 MB)
 
 ## Status (2026-09-29)
 
-Scaffold + field-mapping tested with stubbed OCR output. Real-model
-verification (PaddleOCR install + KTP sample) is still pending — tracked as
-an open item until a KTP sample OCR run passes.
+Scaffold + field-mapping tested with stubbed OCR output; TS wiring tested.
+Real-engine verification on the dev VM:
+
+- ✅ `paddleocr 3.7` + `paddlepaddle 3.3.1` install cleanly on CPU.
+- ✅ Model download works (177 MB PP-OCRv6 det/rec/orientation models,
+  via Baidu BOS fallback — the vendored `httpx2` cannot parse this
+  network's proxy URL for huggingface.co).
+- ✅ `PaddleOCR(lang='id')` loads; API corrected to 3.x
+  (`predict()` + `use_textline_orientation`; `ocr(..., cls=True)` and
+  `use_angle_cls` are deprecated/removed).
+- ❌ Real inference NOT verified here: paddlepaddle 3.3.1 fails at
+  model-run time on this VM's CPU —
+  `NotImplementedError: ConvertPirAttribute2RuntimeAttribute not support`
+  (OneDNN/PIR kernel gap in this paddle build; env flags did not help).
+  This is an environment/model-build incompatibility, not a bug in
+  `engine.py`.
+
+Before go-live: build the docker image on the deployment target and run
+`POST /ocr/ktp` against a real KTP sample; confirm field accuracy and
+latency, then update this section.

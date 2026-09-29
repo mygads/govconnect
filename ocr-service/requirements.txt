@@ -4,7 +4,7 @@ python-multipart==0.0.20
 pydantic==2.10.4
 # OCR engine (CPU). Pinned loosely; the docker build pre-downloads models.
 paddleocr==3.7.0
-paddlepaddle==3.0.0
+paddlepaddle>=3.0.0
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
 # Tests
