@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../pipeline-store', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('./pipeline-store')>();
+  const orig = await importOriginal<typeof import('../pipeline-store')>();
   return {
     ...orig,
     getDb: vi.fn(),
@@ -30,8 +30,8 @@ const mockNotify = vi.mocked(notifyCitizen);
 
 function fakeDb(overrides: Record<string, any> = {}) {
   return {
-    $queryRawUnsafe: vi.fn(async () => []),
-    $executeRawUnsafe: vi.fn(async () => 1),
+    $queryRawUnsafe: vi.fn(async (..._args: any[]): Promise<any[]> => []),
+    $executeRawUnsafe: vi.fn(async (..._args: any[]): Promise<number> => 1),
     ...overrides,
   };
 }

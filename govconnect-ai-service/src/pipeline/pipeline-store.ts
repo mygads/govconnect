@@ -34,7 +34,7 @@ let dbNullSince = 0;
  */
 const DB_REPROBE_MS = Number(process.env.PIPELINE_DB_REPROBE_MS ?? 45_000);
 
-async function getDb(): Promise<RawDb | null> {
+export async function getDb(): Promise<RawDb | null> {
   if (cachedDb !== undefined) {
     if (cachedDb !== null || Date.now() - dbNullSince < DB_REPROBE_MS) {
       return cachedDb;
@@ -75,7 +75,7 @@ export function resetDbCache(): void {
   dbNullSince = 0;
 }
 
-function dbDown<T>(op: string, fallback: T): T {
+export function dbDown<T>(op: string, fallback: T): T {
   logger.debug(`[pipeline-store] ${op} skipped (no DB)`);
   return fallback;
 }

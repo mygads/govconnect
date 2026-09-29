@@ -133,3 +133,36 @@ Contoh payload health:
 - Pantau `stats/models` dan `stats/token-usage/*`.
 - Isi `AI_MODEL_PRICING_OVERRIDES` jika model provider tidak punya pricing bawaan di service.
 - Gunakan `OPENROUTER_PROVIDER_ORDER`, `OPENROUTER_ALLOW_FALLBACKS`, dan `OPENROUTER_ZDR_ONLY` bila perlu mengontrol routing/retensi.
+
+## Verifikasi KTP Manual (OCR otomatis diparkir)
+
+Keputusan produk 29 Sep 2026: **OCR otomatis diparkir** — verifikasi KTP dilakukan
+manual oleh petugas desa lewat dashboard. Modul `src/ocr-service/` dan
+`src/pipeline/ocr-ktp.ts` disimpan hanya sebagai calon tombol dashboard
+**"isi otomatis"** di masa depan; pipeline tidak pernah memanggilnya otomatis.
+
+Alur:
+1. Pipeline meminta L2 (identity ladder) → warga diminta kirim foto KTP via chat
+   atau datang ke kantor desa.
+2. Foto yang masuk saat `_awaitingKtpPhoto` disimpan sebagai request
+   `pipeline_ktp_verifications` (status `pending`) — warga menerima balasan:
+   *"Foto KTP sudah kami terima dan petugas desa akan memverifikasi. Mohon tunggu
+   kabar selanjutnya."*
+3. Petugas meninjau di dashboard **Verifikasi Identitas** (menu sidebar, badge
+   jumlah pending): split-view foto + form, zoom, validasi live (NIK 16 digit,
+   tanggal lahir), tombol Setujui / Tolak (alasan wajib).
+4. Setujui: validasi ketat → transisi atomik pending→approved → foto dihapus
+   (retensi UU PDP) → L2 diberikan via `identitySetVerified` → data terverifikasi
+   dipakai pre-fill slot (BUKAN hasil OCR) → warga diberi tahu.
+5. Tolak: alasan wajib → foto dihapus → warga diminta kirim ulang.
+
+Keamanan:
+- Foto hanya bisa diakses endpoint internal admin; tidak pernah dikirim ke AI.
+- Transisi status conditional satu arah — keputusan ganda/konkuren ditolak.
+- Semua keputusan tercatat di audit dengan reviewer dan waktu.
+
+Endpoint internal (header `x-api-key`):
+`GET /api/ktp-verifications`, `GET /api/ktp-verifications/:id`,
+`GET /api/ktp-verifications/:id/photo`,
+`POST /api/ktp-verifications/:id/approve`, `POST /api/ktp-verifications/:id/reject`.
+Dashboard mem-proxy semuanya dengan session admin + village scoping.
