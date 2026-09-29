@@ -24,6 +24,7 @@ import { isVoiceNote, handleVoiceNote } from './voice-pipeline';
 import { enqueueComplaintToLapor } from './lapor-bridge';
 import { resolveIdentityLevel, auditIdentityLevel } from './identity-ladder';
 import { checkBudget } from './cost-guard';
+import { isCostSaverMode, collapseTurnMessages } from './cost-saver';
 import { ingressCheck } from './ingress-guard';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
 import { applyMemoryPolicy } from './memory-policy';
@@ -353,12 +354,25 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       },
     };
 
-    const interactive = interactiveForTurn(turn);
+    // W14: cost saver — enforce exactly 1 message per turn. Merge guidance
+    // into the reply BEFORE building the interactive payload, so buttons/list
+    // bodies carry the merged text and WA length limits are still validated.
+    // Content is never dropped silently, only merged (audited below).
+    let responseText = turn.response;
+    let guidanceText = turn.guidanceText;
+    if (isCostSaverMode() && (guidanceText ?? '').trim()) {
+      const collapsed = collapseTurnMessages(responseText, guidanceText);
+      responseText = collapsed.text;
+      guidanceText = undefined;
+      audit('SEND', 'cost_saver_collapsed', { mergedGuidance: collapsed.mergedGuidance });
+    }
+
+    const interactive = interactiveForTurn({ ...turn, response: responseText });
 
     const result: ProcessMessageResult = {
       success: turn.terminalState === 'SUCCEEDED',
-      response: turn.response,
-      guidanceText: turn.guidanceText,
+      response: responseText,
+      guidanceText,
       intent: turn.intent,
       fields: { ...turn.fields, ...(interactive ? { interactive } : {}) },
       metadata,

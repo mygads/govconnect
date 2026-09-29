@@ -610,3 +610,46 @@ describe('identity-ladder', () => {
     expect(copy).not.toContain('L2');
   });
 });
+
+describe('cost-saver (W14)', () => {
+  it('is off by default', async () => {
+    const { isCostSaverMode } = await import('../cost-saver');
+    const prev = process.env.WA_COST_SAVER_MODE;
+    delete process.env.WA_COST_SAVER_MODE;
+    expect(isCostSaverMode()).toBe(false);
+    if (prev !== undefined) process.env.WA_COST_SAVER_MODE = prev;
+  });
+
+  it('is on only when explicitly true', async () => {
+    const { isCostSaverMode } = await import('../cost-saver');
+    const prev = process.env.WA_COST_SAVER_MODE;
+    process.env.WA_COST_SAVER_MODE = 'true';
+    expect(isCostSaverMode()).toBe(true);
+    process.env.WA_COST_SAVER_MODE = '1';
+    expect(isCostSaverMode()).toBe(false);
+    if (prev !== undefined) process.env.WA_COST_SAVER_MODE = prev;
+    else delete process.env.WA_COST_SAVER_MODE;
+  });
+
+  it('merges reply + guidance into exactly one message', async () => {
+    const { collapseTurnMessages } = await import('../cost-saver');
+    const r = collapseTurnMessages('Laporan diterima.', 'Menunggu koreksi warga.');
+    expect(r.text).toBe('Laporan diterima.\n\nMenunggu koreksi warga.');
+    expect(r.mergedGuidance).toBe(true);
+    // single message: no second bubble needed
+    expect(r.text.split('\n\n').length).toBe(2);
+  });
+
+  it('leaves reply untouched when guidance is empty', async () => {
+    const { collapseTurnMessages } = await import('../cost-saver');
+    expect(collapseTurnMessages('Halo', '')).toEqual({ text: 'Halo', mergedGuidance: false });
+    expect(collapseTurnMessages('Halo', null)).toEqual({ text: 'Halo', mergedGuidance: false });
+  });
+
+  it('never drops content: empty reply keeps guidance', async () => {
+    const { collapseTurnMessages } = await import('../cost-saver');
+    const r = collapseTurnMessages('', 'Menunggu koreksi warga.');
+    expect(r.text).toBe('Menunggu koreksi warga.');
+    expect(r.mergedGuidance).toBe(true);
+  });
+});
