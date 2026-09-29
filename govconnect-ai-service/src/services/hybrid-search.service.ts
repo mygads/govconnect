@@ -179,6 +179,8 @@ export async function searchKeywords(
              @@ plainto_tsquery('simple', ${query})
           OR similarity(LOWER(COALESCE(section_title, '') || ' ' || content), ${query.toLowerCase()}) > 0.1)
           AND ${documentScopeFilter}
+          -- §5.2 publish review gate: only published documents are retrievable.
+          AND publish_status = 'published'
         ORDER BY relevance_score DESC
         LIMIT ${topK}
       `;

@@ -262,6 +262,14 @@ model knowledge_documents {
   // Processing status
   status          String   @default("pending") // pending, processing, ocr_pending, retrying, completed, failed, parse_fail, ocr_fail, embed_fail
   error_message   String?  @db.Text
+
+  // KB versioning + publish review gate (§5.2). `status` above is the
+  // *processing* state; `publish_status` is the *review* state. New uploads
+  // enter as draft and are invisible to retrieval until an admin publishes.
+  version           Int       @default(1) // immutable version number of this row
+  supersedes_version Int?     // version number this row supersedes (informational)
+  publish_status    String    @default("draft") // draft | published | withdrawn | superseded
+  review_due_at     DateTime? @db.Timestamptz // when this document should be re-reviewed
   
   // Metadata
   title           String?  // Document title (extracted or provided)
@@ -282,6 +290,8 @@ model knowledge_documents {
   updated_at      DateTime @updatedAt
   
   @@index([status])
+  @@index([publish_status])
+  @@index([village_id, publish_status])
   @@index([category])
   @@index([category_id])
   @@index([village_id])

@@ -66,6 +66,11 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
   try {
     // Convert embedding array to pgvector format
     const embeddingStr = `[${embedding.join(',')}]`;
+    // BUGFIX(TEST): keywords is text[] — a JS array passed to $executeRaw is
+    // sent as text. Format as a Postgres array literal and cast explicitly.
+    // Also normalize: callers sometimes pass a single string.
+    const kwArray: string[] = Array.isArray(keywords) ? keywords : (keywords ? [String(keywords)] : []);
+    const keywordsLiteral = `{${kwArray.map((k) => `"${k.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')}}`;
 
     await prisma.$executeRaw`
       INSERT INTO ai.knowledge_vectors (
@@ -73,7 +78,7 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
         embedding, embedding_model, quality_score,
         created_at, updated_at
       ) VALUES (
-        ${id}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${title}, ${content}, ${category}, ${keywords},
+        ${id}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${title}, ${content}, ${category}, ${keywordsLiteral}::text[],
         ${embeddingStr}::ai.vector, ${embeddingModel}, ${qualityScore},
         NOW(), NOW()
       )
@@ -176,6 +181,12 @@ export interface DocumentChunkInput {
   embeddingModel?: string;
   scope?: VectorScope;
   isGlobal?: boolean;
+  /**
+   * §5.2 publish review gate. New ingests enter as 'draft' (set by the
+   * caller); re-ingests may preserve the document's current status.
+   * Retrieval only serves 'published'.
+   */
+  publishStatus?: 'draft' | 'published' | 'withdrawn' | 'superseded';
 }
 
 /**
@@ -196,14 +207,14 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
           INSERT INTO ai.document_vectors (
             id, document_id, village_id, scope, is_global, chunk_index, content,
             document_title, category, page_number, section_title, provenance_json,
-            embedding, embedding_model, created_at
+            embedding, embedding_model, publish_status, created_at
           ) VALUES (
             ${`${chunk.documentId}_${chunk.chunkIndex}`},
             ${chunk.documentId}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${chunk.chunkIndex}, ${chunk.content},
             ${chunk.documentTitle || null}, ${chunk.category || null},
             ${chunk.pageNumber || null}, ${chunk.sectionTitle || null}, ${chunk.provenance || null},
             ${embeddingStr}::ai.vector, ${chunk.embeddingModel || config.embeddingGateway.model},
-            NOW()
+            ${chunk.publishStatus || 'published'}, NOW()
           )
           ON CONFLICT (document_id, chunk_index) DO UPDATE SET
             village_id = EXCLUDED.village_id,
@@ -216,7 +227,8 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
             section_title = EXCLUDED.section_title,
             provenance_json = EXCLUDED.provenance_json,
             embedding = EXCLUDED.embedding,
-            embedding_model = EXCLUDED.embedding_model
+            embedding_model = EXCLUDED.embedding_model,
+            publish_status = EXCLUDED.publish_status
         `;
       }
     });
@@ -247,6 +259,45 @@ export async function deleteDocumentVectors(documentId: string): Promise<boolean
     logger.error('Failed to delete document vectors', { documentId, error: error.message });
     return false;
   }
+}
+
+export type DocumentPublishStatus = 'draft' | 'published' | 'withdrawn' | 'superseded';
+
+const PUBLISH_STATUSES: DocumentPublishStatus[] = ['draft', 'published', 'withdrawn', 'superseded'];
+
+export function isValidPublishStatus(s: unknown): s is DocumentPublishStatus {
+  return typeof s === 'string' && (PUBLISH_STATUSES as string[]).includes(s);
+}
+
+/**
+ * §5.2 publish review gate: flip the review state of all vectors of a document.
+ * Used by the admin publish/withdraw flow. Only 'published' vectors are
+ * served by retrieval.
+ */
+export async function setDocumentPublishStatus(
+  documentId: string,
+  status: DocumentPublishStatus,
+): Promise<number> {
+  const result = await prisma.$executeRaw`
+    UPDATE ai.document_vectors
+    SET publish_status = ${status}
+    WHERE document_id = ${documentId}
+  `;
+  logger.info('Document publish status updated', { documentId, status, chunksUpdated: Number(result) });
+  return Number(result);
+}
+
+/**
+ * Read the current publish status of a document's vectors (null = no vectors).
+ * Used by ingest to preserve the review state across re-ingests.
+ */
+export async function getDocumentPublishStatus(documentId: string): Promise<DocumentPublishStatus | null> {
+  const rows = await prisma.$queryRaw<Array<{ publish_status: string }>>`
+    SELECT DISTINCT publish_status FROM ai.document_vectors WHERE document_id = ${documentId} LIMIT 2
+  `;
+  if (rows.length === 0) return null;
+  const s = rows[0].publish_status;
+  return isValidPublishStatus(s) ? s : null;
 }
 
 
@@ -365,6 +416,8 @@ export async function searchVectors(
             FROM ai.document_vectors
             WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
+              -- §5.2 publish review gate: only published documents are retrievable.
+              AND publish_status = 'published'
           `
         : Prisma.sql`
             SELECT 
@@ -375,6 +428,8 @@ export async function searchVectors(
             FROM ai.document_vectors
             WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
+              -- §5.2 publish review gate: only published documents are retrievable.
+              AND publish_status = 'published'
           `;
 
       const documentResults = await prisma.$queryRaw<VectorSearchRow[]>`

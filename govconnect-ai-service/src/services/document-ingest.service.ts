@@ -9,7 +9,7 @@ import { registerInterval } from '../utils/timer-registry';
 import { processDocumentSemanticChunking } from './document-processor.service';
 import { smartChunkDocument } from './ai-chunking.service';
 import { generateBatchEmbeddings } from './embedding.service';
-import { addDocumentChunks, deleteDocumentVectors } from './vector-db.service';
+import { addDocumentChunks, deleteDocumentVectors, getDocumentPublishStatus } from './vector-db.service';
 import { withAiBillingTurn } from './ai-turn-billing.service';
 import { callAIGatewayPrompt, NoCapableGatewayModelError } from './ai-gateway.service';
 import { runDocVsDocForDocument } from './knowledge-consistency.service';
@@ -273,7 +273,7 @@ async function parseFileContent(filePath: string, mimeType: string, originalName
   throw new Error(`Unsupported file type: ${normalizedMime}`);
 }
 
-async function updateDashboardDocument(documentId: string, data: Record<string, unknown>): Promise<void> {
+export async function updateDashboardDocument(documentId: string, data: Record<string, unknown>): Promise<void> {
   await fetch(`${config.dashboardServiceUrl}/api/internal/documents/${documentId}`, {
     method: 'PUT',
     headers: {
@@ -428,6 +428,12 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
     }));
   }
 
+  // §5.2 publish review gate: brand-new documents enter as 'draft' (invisible
+  // to retrieval) until an admin approves. Re-ingests (re-embed of an existing
+  // document) preserve the current review state instead of silently
+  // re-gating — content changes arrive as new document versions.
+  const existingPublishStatus = await getDocumentPublishStatus(input.documentId).catch(() => null);
+  const ingestPublishStatus = existingPublishStatus ?? 'draft';
   await deleteDocumentVectors(input.documentId);
   await addDocumentChunks(finalChunks.map((chunk, idx) => {
     const unit = findUnitForContent(input.extracted.units, chunk.content) || input.extracted.units[0];
@@ -457,6 +463,7 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
       pageNumber: unit?.pageNumber,
       sectionTitle: chunk.title,
       provenance,
+      publishStatus: ingestPublishStatus,
     };
   }));
 

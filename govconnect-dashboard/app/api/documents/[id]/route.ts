@@ -66,7 +66,19 @@ export async function GET(
 
 /**
  * PUT /api/documents/[id]
- * Update document metadata
+ * Update document metadata + KB review-gate lifecycle (§5.2).
+ *
+ * Lifecycle fields:
+ * - publish_status: 'draft' | 'published' | 'withdrawn'
+ *   (never 'superseded' directly — that state is set via supersede_document_ids)
+ * - review_due_at: ISO date for re-review scheduling
+ * - supersede_document_ids: document ids whose vectors become 'superseded'
+ *   when this one is published
+ * - version: immutable once set (rejected with 400 on change)
+ *
+ * publish/withdraw propagates to the AI service so retrieval sees the new
+ * state immediately. The vector flip is authoritative: if the AI-service sync
+ * fails, the request fails (no silent divergence between UI and retrieval).
  */
 export async function PUT(
   request: NextRequest,
@@ -80,7 +92,10 @@ export async function PUT(
 
     const { id } = await params
     const body = await request.json()
-    const { title, description, category, category_id } = body
+    const {
+      title, description, category, category_id,
+      publish_status, review_due_at, supersede_document_ids, version,
+    } = body
 
     const existing = await prisma.knowledge_documents.findUnique({
       where: { id },
@@ -97,6 +112,44 @@ export async function PUT(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    // version is immutable once set
+    if (version !== undefined && version !== existing.version) {
+      return NextResponse.json(
+        { error: 'version is immutable; create a new document version instead' },
+        { status: 400 }
+      )
+    }
+
+    const allowedPublishStatus = ['draft', 'published', 'withdrawn']
+    if (publish_status !== undefined && !allowedPublishStatus.includes(publish_status)) {
+      return NextResponse.json(
+        { error: `publish_status must be one of: ${allowedPublishStatus.join(', ')}` },
+        { status: 400 }
+      )
+    }
+
+    // Validate supersede targets belong to the same village (tenant safety)
+    const supersedeIds: string[] = Array.isArray(supersede_document_ids)
+      ? [...new Set(supersede_document_ids.map(String))].filter((s) => s && s !== id)
+      : []
+    if (publish_status === 'published' && supersedeIds.length > 0) {
+      const targets = await prisma.knowledge_documents.findMany({
+        where: { id: { in: supersedeIds } },
+        select: { id: true, village_id: true },
+      })
+      const foreign = targets.filter((t) => t.village_id !== existing.village_id)
+      if (foreign.length > 0 || targets.length !== supersedeIds.length) {
+        return NextResponse.json(
+          { error: 'supersede_document_ids must reference existing documents in the same village' },
+          { status: 400 }
+        )
+      }
+      // Mirror superseded state on the replaced rows too — done by the AI
+      // service via /internal/documents (it flips both vectors and dashboard
+      // rows), so no separate dashboard write here: if the AI sync below
+      // fails we fail closed with zero dashboard writes.
+    }
+
     const resolvedCategory = await resolveVillageKnowledgeCategory({
       villageId: existing.village_id || session.admin.village_id,
       categoryId: category_id,
@@ -106,15 +159,39 @@ export async function PUT(
     const resolvedCategoryId = resolvedCategory.categoryId
     const resolvedCategoryName = resolvedCategory.categoryName
 
+    const data: Record<string, unknown> = {
+      updated_at: new Date(),
+    }
+    if (title !== undefined) data.title = title
+    if (description !== undefined) data.description = description
+    if (resolvedCategoryName || category) data.category = resolvedCategoryName || category
+    if (resolvedCategoryId) data.category_id = resolvedCategoryId
+    if (publish_status !== undefined) data.publish_status = publish_status
+    if (review_due_at !== undefined) {
+      data.review_due_at = review_due_at ? new Date(review_due_at) : null
+    }
+
+    // Propagate review-state changes to the AI service FIRST so that the
+    // vector state (what retrieval actually serves) never diverges from the
+    // dashboard row. Fail closed on propagation errors.
+    if (publish_status !== undefined && publish_status !== existing.publish_status) {
+      const resp = await ai.setDocumentPublishStatus(
+        id,
+        publish_status as 'draft' | 'published' | 'withdrawn',
+        publish_status === 'published' ? supersedeIds : [],
+      )
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => ({}))
+        return NextResponse.json(
+          { error: 'Failed to sync document publish status with AI service', details: detail },
+          { status: 502 }
+        )
+      }
+    }
+
     const document = await prisma.knowledge_documents.update({
       where: { id },
-      data: {
-        title,
-        description,
-        category: resolvedCategoryName || category,
-        category_id: resolvedCategoryId,
-        updated_at: new Date(),
-      },
+      data,
     })
 
     return NextResponse.json({

@@ -71,6 +71,12 @@ model document_vectors {
   section_title   String?
   provenance_json Json?
 
+  // KB publish review gate (§5.2): denormalized mirror of
+  // dashboard.knowledge_documents.publish_status so retrieval can exclude
+  // non-published documents without cross-database joins. New ingests enter
+  // as 'draft'; admin publish flips to 'published'.
+  publish_status String @default("published") // draft | published | withdrawn | superseded
+
   // Vector embedding
   embedding       Unsupported("vector(768)")
   embedding_model String                     @default("openai/text-embedding-3-small")
@@ -81,6 +87,7 @@ model document_vectors {
   @@unique([document_id, chunk_index])
   @@index([document_id])
   @@index([village_id])
+  @@index([village_id, publish_status])
   @@index([scope, is_global])
   @@index([village_id, scope, is_global])
   @@index([category])
