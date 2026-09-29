@@ -107,9 +107,8 @@ async function emergencyReply(input: StagedAgentInput): Promise<{ text: string; 
   const r = await gatewayExecute('get_emergency_contacts', {}, gw);
   const contacts = r.ok ? resultToText(r.result) : '';
   const text = [
-    'Ini kontak darurat yang tercatat di desa. Jika situasi mengancam jiwa, hubungi segera:',
+    'Ini kontak darurat yang tercatat di desa. Jika situasi mengancam jiwa, hubungi nomor di atas segera dan utamakan keselamatan.',
     contacts || 'Kontak darurat belum terdaftar — hubungi perangkat desa langsung.',
-    'Tetap tenang dan utamakan keselamatan. Perangkat desa telah kami beri tahu lewat jalur prioritas.',
   ].join('\n\n');
   return { text, trace: [r.trace] };
 }
