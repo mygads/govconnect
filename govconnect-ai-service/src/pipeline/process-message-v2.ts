@@ -18,6 +18,7 @@ import { assessStage, shouldSuggestHandoff } from './stage-assessor';
 import { runStagedTurn, createPipelineContext, stripSystemMarkers } from './staged-agent';
 import { normalizeWithGlossary, loadGlossary } from './glossary';
 import { detectLanguage, shouldUseRegionalFallback, REGIONAL_FALLBACK_COPY, languageLabel } from './language-fallback';
+import { scheduleDocReminder } from './doc-reminders';
 import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
@@ -681,6 +682,14 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
         reporterContact: input.userId,
         hasImage: Boolean(input.mediaUrl),
       }).catch(() => undefined);
+      // R16: no supporting document attached → schedule the H+3 reminder
+      // (idempotent; one row per ticket).
+      if (!input.mediaUrl) {
+        void scheduleDocReminder({
+          villageId: tenantId, userId: input.userId, channel,
+          ticketRef: String(mutationRefs[0]),
+        }).catch(() => undefined);
+      }
     }
     audit(turn.stage, 'turn_completed', {
       terminalState: turn.terminalState,
