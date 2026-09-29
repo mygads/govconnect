@@ -21,6 +21,7 @@ import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
 import { processImageMedia } from './media-pipeline';
 import { isVoiceNote, handleVoiceNote } from './voice-pipeline';
+import { enqueueComplaintToLapor } from './lapor-bridge';
 import { checkBudget } from './cost-guard';
 import { ingressCheck } from './ingress-guard';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
@@ -373,10 +374,11 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
         .catch(() => undefined);
     }
 
-    // 6. Durable memory policy (ADD/UPDATE/INVALIDATE/SKIP, never throws).
     const mutationRefs = Array.from(
       turn.response.matchAll(/\b(?:LAP|TMP|SRV|REQ)-\d{4}\d{2}\d{2}-\d{2,6}\b/g),
     ).map((m) => m[0]);
+
+    // 6. Durable memory policy (ADD/UPDATE/INVALIDATE/SKIP, never throws).
     void applyMemoryPolicy({
       tenantId, userId: input.userId, channel, traceId,
       terminalState: turn.terminalState,
@@ -384,6 +386,20 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       mutationRefs,
       summary: `[${turn.intent}] ${redactForLog(turn.response).slice(0, 400)}`,
     }).catch(() => undefined);
+
+    // 7. LAPOR! outbox: forward filed complaints (config-gated sender).
+    if (turn.toolsUsed.includes('create_complaint') && mutationRefs.length > 0) {
+      const s = ctx.slots as unknown as Record<string, unknown>;
+      void enqueueComplaintToLapor({
+        villageId: tenantId,
+        complaintRef: mutationRefs[0],
+        category: typeof s.category === 'string' ? s.category : undefined,
+        description: typeof s.description === 'string' ? s.description : turn.response.slice(0, 500),
+        location: typeof s.location === 'string' ? s.location : undefined,
+        reporterContact: input.userId,
+        hasImage: Boolean(input.mediaUrl),
+      }).catch(() => undefined);
+    }
     audit(turn.stage, 'turn_completed', {
       terminalState: turn.terminalState,
       degraded: turn.degraded,

@@ -450,14 +450,15 @@ export async function decideProposal(
 
 export async function laporEnqueue(
   tenantId: string, complaintRef: string, payload: Record<string, unknown>,
+  status: 'pending' | 'pending_config' = 'pending',
 ): Promise<number | null> {
   const db = await getDb();
   if (!db) return dbDown('laporEnqueue', null);
   try {
     const rows = (await db.$queryRawUnsafe(
       `INSERT INTO pipeline_lapor_outbox (tenant_id, complaint_ref, payload, status)
-       VALUES ($1,$2,$3::jsonb,'pending') RETURNING id`,
-      tenantId, complaintRef, JSON.stringify(payload),
+       VALUES ($1,$2,$3::jsonb,$4) RETURNING id`,
+      tenantId, complaintRef, JSON.stringify(payload), status,
     )) as Array<{ id: number | string }>;
     return Number(rows[0]?.id ?? NaN) || null;
   } catch {

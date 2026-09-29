@@ -35,6 +35,9 @@ import {
   isVoiceNote, isWhisperConfigured, handleVoiceNote,
   deterministicCleanupTranscript, cleanupTranscript, VOICE_UNAVAILABLE_COPY,
 } from '../voice-pipeline';
+import {
+  mapComplaintToLapor, laporStatusForEnqueue, drainLaporOutbox,
+} from '../lapor-bridge';
 
 describe('stage-router (deterministic)', () => {
   it('routes emergency keywords to EMERGENCY deterministically', () => {
@@ -541,5 +544,29 @@ describe('voice-pipeline', () => {
   it('cleanupTranscript falls back deterministically without gateway', async () => {
     const out = await cleanupTranscript('  halo   [hening]  ');
     expect(out).toBe('halo');
+  });
+});
+
+describe('lapor-bridge', () => {
+  it('maps a complaint without leaking NIK', () => {
+    const p = mapComplaintToLapor({
+      villageId: 'v1', villageName: 'Desa Contoh', complaintRef: 'LAP-20260101-001',
+      category: 'jalan rusak', description: 'Jalan berlubang di RT 02',
+      location: 'RT 02/RW 05', reporterContact: '6281234567890', hasImage: true,
+    });
+    expect(p['referensi_desa']).toBe('LAP-20260101-001');
+    expect(p['kategori']).toBe('jalan rusak');
+    expect(JSON.stringify(p)).not.toMatch(/\b\d{16}\b/);
+    expect(JSON.stringify(p)).not.toContain('3273010101900001');
+  });
+
+  it('enqueues as pending_config when LAPOR is disabled (default)', () => {
+    expect(laporStatusForEnqueue()).toBe('pending_config');
+  });
+
+  it('drainLaporOutbox skips when sender is not configured', async () => {
+    const r = await drainLaporOutbox(5);
+    expect(r.sent).toBe(0);
+    expect(r.failed).toBe(0);
   });
 });
