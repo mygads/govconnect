@@ -2550,6 +2550,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
 export const __test_only__ = {
   isExplicitHumanHandoffRequest,
   classifyHelpfulnessForStuck,
+  maybeBillV1Resolution,
 };
 
 /**

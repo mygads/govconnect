@@ -1099,3 +1099,6 @@ async function maybeBillV2Resolution(params: {
     });
   }
 }
+
+// Test-only exports (do not use in production code).
+export const __test_only__v2 = { maybeBillV2Resolution };
