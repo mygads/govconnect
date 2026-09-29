@@ -25,9 +25,22 @@ interface RawDb {
 
 let cachedDb: RawDb | null | undefined;
 let dbWarned = false;
+let dbNullSince = 0;
+/**
+ * P1-7: how often to re-probe after a failed probe. A cached null is not
+ * forever — without this, a transient DB outage at startup degraded ALL
+ * persistence (audit, idempotency, turn state, vault, outbox) permanently
+ * until process restart.
+ */
+const DB_REPROBE_MS = Number(process.env.PIPELINE_DB_REPROBE_MS ?? 45_000);
 
 async function getDb(): Promise<RawDb | null> {
-  if (cachedDb !== undefined) return cachedDb;
+  if (cachedDb !== undefined) {
+    if (cachedDb !== null || Date.now() - dbNullSince < DB_REPROBE_MS) {
+      return cachedDb;
+    }
+    cachedDb = undefined; // re-probe window elapsed — try again below
+  }
   try {
     // Dynamic import: keeps the prisma singleton out of the static import
     // graph (unit tests never touch the DB) and tolerates a missing
@@ -38,6 +51,9 @@ async function getDb(): Promise<RawDb | null> {
       throw new Error('prisma client unavailable');
     }
     await client.$queryRawUnsafe('SELECT 1');
+    if (dbWarned) {
+      logger.info('[pipeline-store] database reconnected — persistence restored');
+    }
     cachedDb = client;
   } catch (err) {
     if (!dbWarned) {
@@ -47,6 +63,7 @@ async function getDb(): Promise<RawDb | null> {
       dbWarned = true;
     }
     cachedDb = null;
+    dbNullSince = Date.now();
   }
   return cachedDb;
 }
@@ -55,6 +72,7 @@ async function getDb(): Promise<RawDb | null> {
 export function resetDbCache(): void {
   cachedDb = undefined;
   dbWarned = false;
+  dbNullSince = 0;
 }
 
 function dbDown<T>(op: string, fallback: T): T {
