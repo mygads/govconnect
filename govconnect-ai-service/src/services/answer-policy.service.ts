@@ -174,7 +174,12 @@ function isExplicitUncertaintyReply(text: string): boolean {
 }
 
 function mentionsServiceFactClaim(text: string): boolean {
-  return /\b(syarat|persyaratan|berkas|dokumen|biaya(?:nya)?|tarif(?:nya)?|harga(?:nya)?|gratis|rp\s*\d|prosedur|cara|proses|alur|langkah|hari kerja|online|offline|formulir|link formulir|tersedia|belum tersedia|tidak tersedia|bisa diajukan|tidak bisa diajukan|harus ke kantor|datang ke kantor)\b/i.test(text);
+  // BUG-007: also catch generic "no service" claims ("belum ada layanan aktif",
+  // "tidak ada pelayanan", "layanan belum tersedia"). The agent emits these
+  // WITHOUT calling get_service_info when it skips its tools; they are
+  // unverified claims about the official service catalog and must trigger the
+  // verifier → buildServiceDetailFallback (which tries the KB before canned).
+  return /\b(syarat|persyaratan|berkas|dokumen|biaya(?:nya)?|tarif(?:nya)?|harga(?:nya)?|gratis|rp\s*\d|prosedur|cara|proses|alur|langkah|hari kerja|online|offline|formulir|link formulir|tersedia|belum tersedia|tidak tersedia|bisa diajukan|tidak bisa diajukan|harus ke kantor|datang ke kantor|belum ada (?:layanan|pelayanan)|tidak ada (?:layanan|pelayanan)|(?:layanan|pelayanan) (?:belum|tidak) (?:aktif|ada|tersedia))\b/i.test(text);
 }
 
 function mentionsVillageProfileFactClaim(text: string): boolean {
