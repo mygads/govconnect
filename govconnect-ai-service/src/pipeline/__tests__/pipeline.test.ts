@@ -10,7 +10,7 @@ import { transitionsFrom, isAllowedTransition, DETERMINISTIC_ONLY_STAGES } from 
 import { buildStaticSystemPrompt, buildPrompt } from '../prompt-builder';
 import { buildFallback, mintTempTicket, assertNonEmptyResponse } from '../fallback-policy';
 import { piiInbound, piiOutbound, detokenize, redactForLog } from '../../gateway/pii-gateway';
-import { STAGE_TOOL_ALLOWLIST, TOOL_GRADES, isParallelizable } from '../../gateway/tool-gateway';
+import { STAGE_TOOL_ALLOWLIST, TOOL_GRADES, isParallelizable } from '../../gateway/tool-policy';
 import { getPipelineMode } from '../feature-flags';
 
 describe('stage-router (deterministic)', () => {

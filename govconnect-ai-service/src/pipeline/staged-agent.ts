@@ -15,7 +15,8 @@
 import { callAIGatewayPrompt, type GatewayChatMessage, type GatewayPromptResult } from '../services/ai-gateway.service';
 import { AGENT_TOOLS, type AgentToolName } from '../services/agent/tool-definitions';
 import type { ToolCallResult } from '../services/agent/tool-executor';
-import { gatewayExecute, STAGE_TOOL_ALLOWLIST, isParallelizable, type GatewayContext } from '../gateway/tool-gateway';
+import { gatewayExecute, type GatewayContext } from '../gateway/tool-gateway';
+import { STAGE_TOOL_ALLOWLIST, isParallelizable } from '../gateway/tool-policy';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { buildPrompt } from './prompt-builder';
 import { buildFallback, assertNonEmptyResponse } from './fallback-policy';
