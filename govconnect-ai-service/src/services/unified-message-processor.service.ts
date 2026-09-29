@@ -69,6 +69,7 @@ import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village
 import { canProcessVillageAI } from './ai-wallet.service';
 import { holdMessageForWallet } from './held-message-client.service';
 import { finishAiBillingTurn, startAiBillingTurn, type AiBillingTurnHandle } from './ai-turn-billing.service';
+import { recordResolution, type ResolutionType } from './ai-resolution-billing.service';
 import { analyzeIncomingMedia } from './media-analysis.service';
 
 // ── Decomposed module imports ──
@@ -2526,6 +2527,16 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         error: billingError?.message || String(billingError),
       });
     }
+    // §10 (integrator wiring): debit the village wallet exactly once per
+    // VERIFIED resolution — never per message. Accrual was finalized above,
+    // so recordResolution can sum this turn's accrued cost. Fire-and-forget;
+    // never throws into the message path.
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test' && analyticsResult && analyticsResult.success) {
+      void maybeBillV1Resolution({
+        userId, villageId, channel, traceId, billingGroupId,
+        result: analyticsResult, resolvedMessageId,
+      }).catch(() => undefined);
+    }
     decrementActiveProcessing();
   }
 }
@@ -2534,6 +2545,66 @@ export const __test_only__ = {
   isExplicitHumanHandoffRequest,
   classifyHelpfulnessForStuck,
 };
+
+/**
+ * §10 integrator (v1): map a finished turn to a verified resolution and debit
+ * per resolution. Conservative: only turns with deterministic evidence
+ * (successful mutation tools + ticket refs, or DB-backed lookups) count.
+ * Greetings, clarifications, fallbacks and failed turns are NOT resolutions —
+ * the vendor absorbs those turns (the §10 incentive).
+ */
+async function maybeBillV1Resolution(params: {
+  userId: string;
+  villageId?: string | null;
+  channel: string;
+  traceId: string;
+  billingGroupId: string;
+  result: ProcessMessageResult;
+  resolvedMessageId: string;
+}): Promise<void> {
+  try {
+    const { userId, villageId, channel, traceId, billingGroupId, result, resolvedMessageId } = params;
+    const meta = (result.metadata ?? {}) as Record<string, any>;
+    const toolsUsed: string[] = Array.isArray(meta.toolsUsed) ? meta.toolsUsed : [];
+    const intent: string = result.intent ?? '';
+    const response: string = result.response ?? '';
+    const ticketRefs = Array.from(
+      response.matchAll(/\b(?:LAP|TMP|SRV|REQ|LAY)-\d{4}\d{2}\d{2}-\d{2,6}\b/g),
+    ).map((m) => m[0]);
+
+    let type: ResolutionType | null = null;
+    let evidenceRef: string | null = null;
+    if (toolsUsed.includes('create_complaint') && ticketRefs.length > 0) {
+      type = 'complaint_created'; evidenceRef = ticketRefs[0];
+    } else if (toolsUsed.includes('create_service_request') && ticketRefs.length > 0) {
+      type = 'service_request_created'; evidenceRef = ticketRefs[0];
+    } else if (toolsUsed.includes('check_status')) {
+      type = 'status_delivered';
+    } else if ((intent === 'KNOWLEDGE_QUERY' || intent === 'QUESTION')
+      && toolsUsed.some((t) => ['search_documents', 'search_knowledge', 'get_service_info', 'get_village_profile'].includes(t))) {
+      type = 'info_answered';
+    }
+    if (!type) return;
+
+    await recordResolution({
+      villageId: villageId ?? null,
+      waUserId: channel === 'whatsapp' ? userId : null,
+      sessionId: channel === 'webchat' ? userId : null,
+      channel,
+      traceId,
+      resolutionType: type,
+      evidenceRef,
+      evidence: { pipeline: 'v1', intent, toolsUsed, ticketRefs },
+      billingGroupIds: [billingGroupId],
+      resolutionKey: `msg:${villageId ?? 'novillage'}:${resolvedMessageId}:${type}:${evidenceRef ?? 'noref'}`,
+      metadata: { pipeline: 'v1' },
+    });
+  } catch (err) {
+    logger.warn('[unified-message-processor] resolution billing failed (non-blocking)', {
+      error: (err as Error)?.message ?? String(err),
+    });
+  }
+}
 
 export default {
   processUnifiedMessage,

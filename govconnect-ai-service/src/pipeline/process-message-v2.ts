@@ -77,6 +77,14 @@ import { extractTopicKey } from '../services/kb-suggester-core';
 import { checkOutboundForCanary, CANARY_SAFE_REPLY } from '../security/canary-docs';
 import { answerCsatSurvey, CSAT_THANKS } from '../services/csat.service';
 import logger from '../utils/logger';
+// §10: per-resolution billing — v2 accrues per turn (v1 parity) and debits
+// per verified resolution via recordResolution (see maybeBillV2Resolution below).
+import {
+  startAiBillingTurn, finishAiBillingTurn, type AiBillingTurnHandle,
+} from '../services/ai-turn-billing.service';
+import {
+  recordResolution, type ResolutionType,
+} from '../services/ai-resolution-billing.service';
 
 /**
  * Idempotency key (P1-2): scoped per tenant+user+channel, then message
@@ -941,36 +949,146 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
  * `canary_token_leaked`. Never silent, never throws.
  */
 export async function processMessageV2(input: ProcessMessageInput): Promise<ProcessMessageResult> {
-  let result = await processMessageV2Inner(input);
+  // §10 billing (integrator wiring): v2 accrues this turn's token cost
+  // (v1 parity — unified-message-processor does the same) so the
+  // per-resolution debit has accrued costs to sum. Skipped outside
+  // production: shadow/eval/knowledge_test must not write production
+  // billing state (P1-1).
+  const billable = (input.sideEffectMode ?? 'production') === 'production' && !input.isEvaluation;
+  const villageId = input.villageId ?? null;
+  const messageId = input.messageId ?? `${input.channel}:${input.userId}:${Date.now().toString(36)}`;
+  const billingGroupId = villageId
+    ? `msg:${villageId}:${messageId}`
+    : `${input.channel}:${input.userId}:${messageId}`;
+  const billingTurn: AiBillingTurnHandle | null = billable
+    ? startAiBillingTurn({
+        village_id: villageId,
+        message_id: messageId,
+        trace_id: '',
+        billing_group_id: billingGroupId,
+        batched_message_ids: input.batchedMessageIds ?? [],
+        wa_user_id: input.channel === 'whatsapp' ? input.userId : null,
+        session_id: input.channel === 'webchat' ? input.userId : null,
+        channel: input.channel,
+      })
+    : null;
 
-  // Track A2: DB-first reconciliation — v2's equivalent of the v1
-  // orchestrator's reconcile() call. Runs on every response leaving the
-  // pipeline, before the canary safety net.
-  result = await applyDbRagReconcile({
-    villageId: input.villageId ?? '',
-    userId: input.userId,
-    channel: input.channel === 'webchat' ? 'webchat' : 'whatsapp',
-    userMessage: input.message,
-    result,
-    sideEffectsAllowed: (input.sideEffectMode ?? 'production') === 'production',
-  });
-
+  let result: ProcessMessageResult;
   try {
-    // traceId lives on the result metadata, not the input.
-    const traceId = result.metadata?.traceId ?? '';
-    const check = await checkOutboundForCanary(result.response ?? '', input.villageId ?? '', traceId);
-    if (check.leaked) {
-      return {
-        ...result,
-        success: true,
-        response: CANARY_SAFE_REPLY,
-        metadata: { ...(result.metadata ?? {}), canaryLeakBlocked: true },
-      };
-    }
-  } catch (err) {
-    logger.warn('[processMessageV2] canary outbound check failed (fail-open on the check, response untouched)', {
-      traceId: result.metadata?.traceId, error: (err as Error)?.message ?? String(err),
+    result = await processMessageV2Inner(input);
+
+    // Track A2: DB-first reconciliation — v2's equivalent of the v1
+    // orchestrator's reconcile() call. Runs on every response leaving the
+    // pipeline, before the canary safety net.
+    result = await applyDbRagReconcile({
+      villageId: input.villageId ?? '',
+      userId: input.userId,
+      channel: input.channel === 'webchat' ? 'webchat' : 'whatsapp',
+      userMessage: input.message,
+      result,
+      sideEffectsAllowed: (input.sideEffectMode ?? 'production') === 'production',
     });
+
+    try {
+      // traceId lives on the result metadata, not the input.
+      const traceId = result.metadata?.traceId ?? '';
+      const check = await checkOutboundForCanary(result.response ?? '', input.villageId ?? '', traceId);
+      if (check.leaked) {
+        result = {
+          ...result,
+          success: true,
+          response: CANARY_SAFE_REPLY,
+          metadata: { ...(result.metadata ?? {}), canaryLeakBlocked: true },
+        };
+      }
+    } catch (err) {
+      logger.warn('[processMessageV2] canary outbound check failed (fail-open on the check, response untouched)', {
+        traceId: result.metadata?.traceId, error: (err as Error)?.message ?? String(err),
+      });
+    }
+  } finally {
+    // Finalize accrual BEFORE resolution accounting: recordResolution sums
+    // rows with billing_status='accrued' for this billing group.
+    if (billingTurn) {
+      await finishAiBillingTurn(billingTurn).catch(() => undefined);
+    }
+  }
+
+  // §10: debit the village wallet exactly once per VERIFIED resolution.
+  // Fire-and-forget; never throws into the message path.
+  if (billable) {
+    void maybeBillV2Resolution({ input, result, billingGroupId, villageId }).catch(() => undefined);
   }
   return result;
+}
+
+/**
+ * §10 integrator: map a finished v2 turn to a verified resolution and debit
+ * per resolution (never per message). Conservative by design: only turns with
+ * deterministic evidence (tool traces, ticket refs, DB lookups) count.
+ * Greetings, cancellations, confirmations-pending and failed turns are NOT
+ * resolutions — the vendor absorbs those turns (the §10 incentive).
+ */
+async function maybeBillV2Resolution(params: {
+  input: ProcessMessageInput;
+  result: ProcessMessageResult;
+  billingGroupId: string;
+  villageId: string | null;
+}): Promise<void> {
+  try {
+    const { input, result, billingGroupId, villageId } = params;
+    if (!result.success) return;
+    const meta = (result.metadata ?? {}) as Record<string, any>;
+    const toolsUsed: string[] = Array.isArray(meta.toolsUsed) ? meta.toolsUsed : [];
+    const stage: string = meta.routing?.action ?? '';
+    const intent: string = result.intent ?? '';
+    const response = result.response ?? '';
+    const ticketRefs = Array.from(
+      response.matchAll(/\b(?:LAP|TMP|SRV|REQ|LAY)-\d{4}\d{2}\d{2}-\d{2,6}\b/g),
+    ).map((m) => m[0]);
+
+    let type: ResolutionType | null = null;
+    let evidenceRef: string | null = null;
+    if (toolsUsed.includes('create_complaint') && ticketRefs.length > 0) {
+      type = 'complaint_created'; evidenceRef = ticketRefs[0];
+    } else if (toolsUsed.includes('create_service_request') && ticketRefs.length > 0) {
+      type = 'service_request_created'; evidenceRef = ticketRefs[0];
+    } else if (intent === 'information_cached') {
+      // Served from the semantic cache: the cached answer was verified when stored.
+      type = 'info_answered'; evidenceRef = 'semantic_cache';
+    } else if (stage === 'INFORMATION'
+      && toolsUsed.some((t) => t.startsWith('search_') || t.startsWith('get_'))) {
+      type = 'info_answered';
+    } else if (stage === 'STATUS_CHECK') {
+      type = 'status_delivered';
+    } else if (stage === 'EMERGENCY') {
+      type = 'info_answered'; evidenceRef = 'emergency';
+    }
+    if (!type) return;
+
+    const traceId: string = meta.traceId ?? '';
+    await recordResolution({
+      villageId,
+      waUserId: input.channel === 'whatsapp' ? input.userId : null,
+      sessionId: input.channel === 'webchat' ? input.userId : null,
+      channel: input.channel,
+      traceId,
+      resolutionType: type,
+      evidenceRef,
+      evidence: {
+        pipeline: 'v2', stage, intent,
+        toolsUsed, ticketRefs,
+        // PII-safety: refs are ticket IDs, never raw citizen data.
+      },
+      billingGroupIds: [billingGroupId],
+      // Stable across turn retries (messageId-based), so a retried turn
+      // cannot double-bill the same resolution.
+      resolutionKey: `msg:${villageId ?? 'novillage'}:${input.messageId ?? traceId}:${type}:${evidenceRef ?? 'noref'}`,
+      metadata: { pipeline: 'v2' },
+    });
+  } catch (err) {
+    logger.warn('[processMessageV2] resolution billing failed (non-blocking)', {
+      error: (err as Error)?.message ?? String(err),
+    });
+  }
 }
