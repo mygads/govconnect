@@ -16,7 +16,7 @@ import { runDocVsDocForDocument } from './knowledge-consistency.service';
 import { runDocVsDbForDocument } from './doc-vs-db-pipeline.service';
 import { routeKnowledgeDocument, KB_REJECTED_COPY, type KbRoute } from './kb-router.service';
 import { scanForSecrets, checkIngestForForeignCanary } from '../security/canary-docs';
-import { appendAudit } from '../pipeline/pipeline-store';
+import { appendAudit, semanticCacheInvalidate } from '../pipeline/pipeline-store';
 
 export interface ProcessDocumentInput {
   documentId: string;
@@ -459,6 +459,13 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
       provenance,
     };
   }));
+
+  // R7: the KB changed → drop this tenant's semantic cache so citizens never
+  // get stale answers served from pre-ingest content. Tenant-wide (not
+  // per-doc_version): doc_version is a manual env today, so scoping the
+  // invalidation to a version string would silently miss. Cache is fail-soft;
+  // worst case is a recompute, never a wrong answer.
+  void semanticCacheInvalidate(input.villageId ?? 'global').catch(() => undefined);
 
   return { chunksCount: finalChunks.length, usedAiChunking, kbRoute };
 }

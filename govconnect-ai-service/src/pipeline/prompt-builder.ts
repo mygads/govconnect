@@ -14,6 +14,15 @@ import type { Stage } from './stage-types';
 import { piiInbound } from '../gateway/pii-gateway';
 
 /**
+ * Version of the static system prompt below. MUST be bumped whenever the
+ * static prompt text changes (it must stay byte-identical across turns for
+ * provider prefix caching — a version bump marks exactly the moments it
+ * legitimately changed). Recorded on every turn_completed audit event so
+ * bad answers can be traced to the prompt that produced them.
+ */
+export const PROMPT_VERSION = '2026-09-29.1';
+
+/**
  * R4 L1: fetch the village skill index for prompt injection. Lazy import so
  * prompt-builder's static import graph stays free of the prisma chain
  * (unit tests run without a generated Prisma client). Fail-soft: null on

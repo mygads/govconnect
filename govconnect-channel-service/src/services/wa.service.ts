@@ -1591,6 +1591,12 @@ export type WaSendResult = {
   endpoint?: string;
   gateway?: 'wa-support' | 'direct' | 'dry-run';
   provider_response?: unknown;
+  /**
+   * Set when the requested message kind could not be delivered natively and
+   * a degraded rendering was sent instead (e.g. Flow → plain text).
+   * Callers MUST NOT treat this as a native delivery.
+   */
+  fallback?: 'text';
 };
 
 export interface WaQuoteContext {
@@ -2062,6 +2068,133 @@ export async function sendListMessage(params: SendListMessageParams): Promise<Wa
   } catch (error: any) {
     logger.error('Failed to send WhatsApp list', { to: params.to, error: error.message, response: error.response?.data });
     return { success: false, error: error.response?.data?.message || error.response?.data?.Message || error.message };
+  }
+}
+
+// ── WhatsApp Flows ────────────────────────────────────────────────────────
+// R1c: native Flow sender with AUTOMATIC text fallback.
+//
+// Honest status (2026-09-29): the genfity-wa gateway exposes /chat/send/text,
+// /chat/send/buttons, /chat/send/list (+ media). A /chat/send/flow endpoint
+// is NOT confirmed to exist. Therefore:
+//   - Flows are gated by WA_FLOWS_ENABLED (default 'false').
+//   - When enabled, we attempt POST /chat/send/flow with a Cloud-API-style
+//     interactive flow payload. If the gateway rejects it (non-success),
+//     we AUTOMATICALLY fall back to a plain-text rendering of the flow so
+//     the citizen still gets a usable message.
+//   - The result carries `fallback: 'text'` whenever the text rendering was
+//     sent instead of a native Flow. Never claim a Flow was delivered when
+//     it was not.
+
+function isFlowsEnabled(): boolean {
+  return (process.env.WA_FLOWS_ENABLED || '').toLowerCase() === 'true';
+}
+
+export interface FlowField {
+  /** Short label shown to the citizen, e.g. "Nama lengkap". */
+  label: string;
+  /** Optional hint, e.g. "sesuai KTP". */
+  hint?: string;
+}
+
+export interface SendFlowMessageParams extends WaQuoteContext {
+  to: string;
+  /** Flow title, e.g. "Formulir Pengaduan". */
+  title: string;
+  /** Introductory body text. */
+  body: string;
+  /** Call-to-action button label, e.g. "Isi formulir". */
+  cta: string;
+  /** Fields the flow would collect — rendered as a numbered list in fallback. */
+  fields: FlowField[];
+  footer?: string;
+  /** Opaque token to correlate the flow response (echoed back by the client). */
+  flowToken?: string;
+  villageId?: string;
+}
+
+/**
+ * Render a Flow as plain text for the automatic fallback path.
+ * Pure function — unit-testable, no I/O.
+ */
+export function renderFlowAsText(params: Pick<SendFlowMessageParams, 'title' | 'body' | 'cta' | 'fields' | 'footer'>): string {
+  const lines: string[] = [];
+  lines.push(`*${params.title}*`);
+  if (params.body) lines.push(params.body);
+  if (params.fields.length > 0) {
+    lines.push('Silakan balas dengan data berikut:');
+    params.fields.forEach((f, i) => {
+      lines.push(`${i + 1}. ${f.label}${f.hint ? ` (${f.hint})` : ''}`);
+    });
+  } else {
+    lines.push(`Balas "${params.cta}" untuk melanjutkan.`);
+  }
+  if (params.footer) lines.push(`_${params.footer}_`);
+  return lines.join('\n');
+}
+
+export async function sendFlowMessage(params: SendFlowMessageParams): Promise<WaSendResult> {
+  const fallbackText = renderFlowAsText(params);
+  const sendTextFallback = async (reason: string): Promise<WaSendResult> => {
+    logger.warn('WhatsApp Flow not delivered natively — using text fallback', {
+      to: params.to, reason, village_id: params.villageId,
+    });
+    const textResult = await sendTextMessage(params.to, fallbackText, params.villageId, {
+      ContextInfo: params.ContextInfo,
+      QuotedText: params.QuotedText,
+      QuotedMessage: params.QuotedMessage,
+    });
+    return { ...textResult, fallback: 'text' as const };
+  };
+
+  if (!isFlowsEnabled()) {
+    return sendTextFallback('WA_FLOWS_ENABLED is not true');
+  }
+
+  try {
+    // Cloud-API-style interactive flow payload, adapted to the gateway's
+    // PascalCase body conventions used by /chat/send/buttons and /chat/send/list.
+    const body: Record<string, unknown> = {
+      Interactive: {
+        type: 'flow',
+        header: { type: 'text', text: params.title },
+        body: { text: params.body },
+        footer: params.footer ? { text: params.footer } : undefined,
+        action: {
+          name: 'flow',
+          parameters: {
+            flow_message_version: '3',
+            flow_token: params.flowToken ?? `flow_${Date.now()}`,
+            flow_id: undefined,
+            flow_cta: params.cta,
+            flow_action: 'navigate',
+            flow_action_payload: {
+              screen: 'FORM',
+              data: { fields: params.fields.map((f) => f.label) },
+            },
+          },
+        },
+      },
+    };
+    if (params.ContextInfo) body.ContextInfo = params.ContextInfo;
+    if (params.QuotedText) body.QuotedText = params.QuotedText;
+    if (params.QuotedMessage) body.QuotedMessage = params.QuotedMessage;
+
+    const result = await postWaSend({
+      villageId: params.villageId,
+      to: params.to,
+      kind: 'flow',
+      endpoint: '/chat/send/flow',
+      body,
+      timeout: 30000,
+    });
+    if (!result.success) {
+      return sendTextFallback(`gateway rejected /chat/send/flow: ${result.error ?? 'unknown'}`);
+    }
+    return result;
+  } catch (error: any) {
+    logger.error('Failed to send WhatsApp flow', { to: params.to, error: error.message });
+    return sendTextFallback(`exception: ${error.message}`);
   }
 }
 
