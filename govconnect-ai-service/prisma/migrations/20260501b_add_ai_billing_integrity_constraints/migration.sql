@@ -1,4 +1,4 @@
-SET search_path TO ai;
+SET LOCAL search_path TO ai;
 
 ALTER TABLE "ai_token_usage"
   DROP CONSTRAINT IF EXISTS "ai_token_usage_billing_status_check",

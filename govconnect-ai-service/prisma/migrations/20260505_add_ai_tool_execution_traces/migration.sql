@@ -1,4 +1,4 @@
-SET search_path TO ai;
+SET LOCAL search_path TO ai;
 
 CREATE TABLE IF NOT EXISTS "ai_tool_execution_traces" (
   "id" TEXT NOT NULL,

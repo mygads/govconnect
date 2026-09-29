@@ -12,6 +12,7 @@ datasource db {
   url        = env("DATABASE_URL")
   directUrl  = env("DIRECT_URL")
   extensions = [pgvector(map: "vector")]
+  schemas = ["ai", "public"]
 }
 
 // ==================== KNOWLEDGE VECTORS ====================
@@ -47,6 +48,7 @@ model knowledge_vectors {
   @@index([scope, is_global])
   @@index([village_id, scope, is_global])
   @@index([quality_score])
+  @@schema("ai")
 }
 
 // ==================== DOCUMENT VECTORS ====================
@@ -82,6 +84,7 @@ model document_vectors {
   @@index([scope, is_global])
   @@index([village_id, scope, is_global])
   @@index([category])
+  @@schema("ai")
 }
 
 // ==================== EMBEDDING JOBS ====================
@@ -108,6 +111,7 @@ model embedding_jobs {
   @@index([priority])
   @@index([stage])
   @@index([next_retry_at])
+  @@schema("ai")
 }
 
 // ==================== QUESTION VARIANTS ====================
@@ -133,6 +137,7 @@ model question_variants {
   @@index([village_id])
   @@index([scope, is_global])
   @@index([village_id, scope, is_global])
+  @@schema("ai")
 }
 
 // ==================== AI TOKEN USAGE ====================
@@ -216,6 +221,7 @@ model ai_token_usage {
   @@index([billing_status, created_at])
   @@index([village_id, billing_status, created_at])
   @@index([village_id, created_at, call_type])
+  @@schema("ai")
 }
 
 model ai_village_wallets {
@@ -233,6 +239,7 @@ model ai_village_wallets {
 
   @@index([status])
   @@index([updated_at])
+  @@schema("ai")
 }
 
 model ai_wallet_ledger_entries {
@@ -259,6 +266,7 @@ model ai_wallet_ledger_entries {
   @@index([wallet_id, created_at])
   @@index([entry_type, created_at])
   @@index([reference_type, reference_id])
+  @@schema("ai")
 }
 
 model ai_message_billings {
@@ -291,6 +299,7 @@ model ai_message_billings {
   @@index([trace_id])
   @@index([status, created_at])
   @@index([ledger_entry_id])
+  @@schema("ai")
 }
 
 model ai_generation_logs {
@@ -338,6 +347,7 @@ model ai_generation_logs {
   @@index([layer_type])
   @@index([call_type])
   @@index([status, created_at])
+  @@schema("ai")
 }
 
 model ai_topup_vouchers {
@@ -357,6 +367,7 @@ model ai_topup_vouchers {
   @@index([status])
   @@index([redeemed_by_village_id])
   @@index([created_at])
+  @@schema("ai")
 }
 
 model ai_providers {
@@ -375,6 +386,7 @@ model ai_providers {
   models ai_models[]
 
   @@index([is_active])
+  @@schema("ai")
 }
 
 model ai_models {
@@ -409,6 +421,7 @@ model ai_models {
   @@index([provider_id])
   @@index([lane_type])
   @@index([is_active])
+  @@schema("ai")
 }
 
 model ai_lane_assignments {
@@ -430,6 +443,7 @@ model ai_lane_assignments {
   @@index([village_id])
   @@index([is_global_default])
   @@index([is_active])
+  @@schema("public")
 }
 
 // Smart routing health: 3 consecutive failures → demote provider for 1 hour.
@@ -447,6 +461,7 @@ model ai_provider_health {
   @@id([provider_id, lane_type])
   @@index([demoted_until])
   @@index([probe_in_flight_until])
+  @@schema("ai")
 }
 
 // ==================== CONVERSATION SESSIONS (Temuan 7) ====================
@@ -465,6 +480,7 @@ model conversation_sessions {
   @@unique([wa_user_id, session_key])
   @@index([wa_user_id])
   @@index([expires_at])
+  @@schema("public")
 }
 
 // ==================== RATE LIMIT BLACKLIST (Temuan 8) ====================
@@ -485,6 +501,7 @@ model rate_limit_blacklist {
   @@index([wa_user_id])
   @@index([village_id])
   @@index([expires_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE USER PROFILE MEMORY ====================
@@ -521,6 +538,7 @@ model durable_user_profiles {
   @@id([village_id, wa_user_id])
   @@index([last_interaction])
   @@index([updated_at])
+  @@schema("public")
 }
 
 // ==================== EPISODIC USER MEMORY ====================
@@ -545,6 +563,7 @@ model user_memory_entries {
   @@index([wa_user_id, created_at])
   @@index([wa_user_id, memory_type])
   @@index([village_id])
+  @@schema("public")
 }
 
 // ==================== EPISODIC MEMORY VECTORS ====================
@@ -568,6 +587,7 @@ model user_memory_vectors {
   @@index([wa_user_id])
   @@index([wa_user_id, memory_type])
   @@index([village_id])
+  @@schema("ai")
 }
 
 // ==================== DURABLE AI INTERACTION ANALYTICS ====================
@@ -597,6 +617,7 @@ model ai_interaction_events {
   @@index([village_id, created_at])
   @@index([intent, created_at])
   @@index([channel, created_at])
+  @@schema("ai")
 }
 
 model ai_tool_execution_traces {
@@ -623,6 +644,7 @@ model ai_tool_execution_traces {
   @@index([village_id, created_at])
   @@index([tool_name])
   @@index([success, created_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE RETRIEVAL OBSERVABILITY ====================
@@ -650,6 +672,7 @@ model ai_retrieval_traces {
   @@index([retrieval_mode, created_at])
   @@index([confidence, created_at])
   @@index([channel, created_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE MEMORY OBSERVABILITY ====================
@@ -674,6 +697,7 @@ model ai_memory_traces {
   @@index([village_id, created_at])
   @@index([source, created_at])
   @@index([channel, created_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE GUARDRAIL EVENTS ====================
@@ -697,6 +721,7 @@ model ai_guardrail_events {
   @@index([guard_stage, created_at])
   @@index([village_id, created_at])
   @@index([channel, created_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE TOOL POLICY TUNING ====================
@@ -717,6 +742,7 @@ model ai_tool_allowlist_policies {
 
   @@index([source, updated_at])
   @@index([confidence, updated_at])
+  @@schema("ai")
 }
 
 model ai_tool_policy_events {
@@ -749,6 +775,7 @@ model ai_tool_policy_events {
   @@index([first_turn_tool_choice, created_at])
   @@index([final_intent_source, created_at])
   @@index([state_resume_result, created_at])
+  @@schema("ai")
 }
 
 // ==================== KNOWLEDGE INCONSISTENCIES ====================
@@ -784,6 +811,7 @@ model ai_knowledge_inconsistencies {
   @@index([village_id, status, detected_at])
   @@index([kind, detected_at])
   @@index([severity, status])
+  @@schema("ai")
 }
 
 model ai_runtime_grounding_mismatches {
@@ -808,6 +836,7 @@ model ai_runtime_grounding_mismatches {
   @@index([mismatch_kind, detected_at])
   @@index([entity_type, detected_at])
   @@index([trace_id])
+  @@schema("ai")
 }
 
 model failed_messages {
@@ -828,6 +857,7 @@ model failed_messages {
 
   @@index([village_id, status])
   @@index([status])
+  @@schema("public")
 }
 
 // Admin-curated few-shot examples for the micro-NLU classifier. When an admin
@@ -846,6 +876,7 @@ model ai_nlu_few_shot_examples {
   created_at        DateTime @default(now())
 
   @@index([village_id, enabled])
+  @@schema("public")
 }
 
 // ── Pipeline v2 persistence (staged agent). Tables are created by
@@ -865,6 +896,7 @@ model pipeline_audit_events {
 
   @@index([tenant_id, trace_id])
   @@index([occurred_at])
+  @@schema("ai")
 }
 
 model pipeline_idempotency_keys {
@@ -876,6 +908,7 @@ model pipeline_idempotency_keys {
 
   @@id([tenant_id, idem_key])
   @@index([expires_at])
+  @@schema("ai")
 }
 
 model pipeline_turn_states {
@@ -889,6 +922,7 @@ model pipeline_turn_states {
   expires_at           DateTime @db.Timestamptz(6)
 
   @@id([tenant_id, user_id, channel])
+  @@schema("ai")
 }
 
 model pipeline_takeovers {
@@ -902,6 +936,7 @@ model pipeline_takeovers {
   released_at DateTime? @db.Timestamptz(6)
 
   @@id([tenant_id, user_id, channel])
+  @@schema("ai")
 }
 
 model pipeline_nik_vault {
@@ -912,6 +947,7 @@ model pipeline_nik_vault {
   expires_at DateTime @db.Timestamptz(6)
 
   @@index([expires_at])
+  @@schema("ai")
 }
 
 model pipeline_fallback_tickets {
@@ -926,6 +962,7 @@ model pipeline_fallback_tickets {
   created_at DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([tenant_id, status])
+  @@schema("ai")
 }
 
 model pipeline_semantic_cache {
@@ -939,6 +976,7 @@ model pipeline_semantic_cache {
   expires_at  DateTime @db.Timestamptz(6)
 
   @@index([tenant_id, doc_version])
+  @@schema("ai")
 }
 
 model pipeline_improvement_proposals {
@@ -953,6 +991,7 @@ model pipeline_improvement_proposals {
   created_at DateTime  @default(now()) @db.Timestamptz(6)
 
   @@index([tenant_id, status])
+  @@schema("ai")
 }
 
 model pipeline_lapor_outbox {
@@ -968,6 +1007,7 @@ model pipeline_lapor_outbox {
   updated_at    DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([status])
+  @@schema("ai")
 }
 
 model pipeline_ingress_quarantine {
@@ -979,4 +1019,5 @@ model pipeline_ingress_quarantine {
   excerpt    String   @default("")
   reviewed   Boolean  @default(false)
   created_at DateTime @default(now()) @db.Timestamptz(6)
+  @@schema("ai")
 }

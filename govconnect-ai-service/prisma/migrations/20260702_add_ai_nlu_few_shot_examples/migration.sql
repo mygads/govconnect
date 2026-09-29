@@ -7,7 +7,7 @@
 --
 -- Sourced from the "Pesan Gagal" dashboard flow or POST /admin/nlu-examples.
 
-CREATE TABLE IF NOT EXISTS ai."ai_nlu_few_shot_examples" (
+CREATE TABLE IF NOT EXISTS public."ai_nlu_few_shot_examples" (
   "id"                TEXT         NOT NULL,
   "village_id"        TEXT,
   "utterance"         TEXT         NOT NULL,
@@ -22,4 +22,4 @@ CREATE TABLE IF NOT EXISTS ai."ai_nlu_few_shot_examples" (
 );
 
 CREATE INDEX IF NOT EXISTS "ai_nlu_few_shot_examples_village_enabled_idx"
-  ON ai."ai_nlu_few_shot_examples" (village_id, enabled);
+  ON public."ai_nlu_few_shot_examples" (village_id, enabled);
