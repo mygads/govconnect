@@ -61,6 +61,8 @@ import { getPipelineMode, type PipelineMode } from '../pipeline/feature-flags';
 import { processMessageV2 } from '../pipeline/process-message-v2';
 import { runShadowComparison } from '../pipeline/shadow-runner';
 import { buildFallback } from '../pipeline/fallback-policy';
+import { loadTurnState } from '../pipeline/pipeline-store';
+import { bindConfirmation } from '../pipeline/confirmation';
 import type { ProcessMessageInput } from './ump-types';
 
 // ============================================
@@ -292,6 +294,23 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     // DELEGATE TO MESSAGE PROCESSOR (v1 or v2 staged-agent pipeline)
     // Pass onStageChange callback for smart typing triggers
     // ============================================
+    // P0-1: G2/G3 confirmation binding. `confirmed` is set ONLY here, and
+    // ONLY when a `confirm_send` button.id matches the pending mutation in
+    // turn state (binds the confirmation to that specific mutation, rejects
+    // stale clicks). Typed text ("Ya") never sets it. The pipeline
+    // re-validates before EXECUTE, so this flag cannot be forged upstream.
+    const buttonId = typeof (event as any).button_id === 'string'
+      ? (event as any).button_id as string
+      : undefined;
+    let confirmed: boolean | undefined;
+    if (buttonId === 'confirm_send') {
+      try {
+        const ts = await loadTurnState(village_id ?? '', wa_user_id, 'whatsapp');
+        if (bindConfirmation(buttonId, ts?.slots ?? null)) confirmed = true;
+      } catch {
+        // Fail-closed: any error leaves `confirmed` unset.
+      }
+    }
     const umpInput: ProcessMessageInput = {
       userId: wa_user_id,
       message: aiMessage,
@@ -301,6 +320,8 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       villageId: village_id,
       messageId: message_id,
       batchedMessageIds: spamGuardInfo?.contextMessages?.map(ctx => ctx.messageId).filter(Boolean) ?? [],
+      buttonId,
+      confirmed,
       onStageChange,
     };
     const result = pipelineMode === 'on'

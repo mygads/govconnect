@@ -54,6 +54,10 @@ import {
   INTENT_SLOT_KEY, COLLECT_ATTEMPTS_KEY, type SlotIntent, type Slots,
 } from './slot-fsm';
 import {
+  resolveConfirmation, isPendingMutation, type PendingMutation,
+  STALE_CONFIRMATION_COPY, CONFIRM_EDIT_COPY, CONFIRM_CANCEL_COPY,
+} from './confirmation';
+import {
   appendAudit, idempotencyCheck, idempotencyStore,
   loadTurnState, saveTurnState, clearTurnState,
 } from './pipeline-store';
@@ -141,6 +145,66 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       };
     }
 
+    // 0c2. Deterministic confirmation handling (P0-1: G2/G3 chain).
+    // button.id is authoritative; typed text ("Ya") never executes a
+    // mutation — it re-enters VERIFY so the citizen sees the buttons again.
+    // The router is bypassed here because VERIFY is a conversational state,
+    // not a fresh-routing decision.
+    const pendingForConfirm: PendingMutation | null = isPendingMutation(prior?.slots?.pendingTool)
+      ? (prior!.slots!.pendingTool as PendingMutation)
+      : null;
+    const confirmation = resolveConfirmation({
+      buttonId: input.buttonId ?? null,
+      confirmed: input.confirmed,
+      message: input.message,
+      pending: pendingForConfirm,
+    });
+    const confirmationMeta = {
+      processingTimeMs: Date.now() - started,
+      hasKnowledge: false,
+      agentMode: 'single_orchestrator' as const,
+      traceId,
+    };
+    if (confirmation.kind === 'stale') {
+      // Stale/replayed confirm click: reject deterministically, never route
+      // fresh (a fresh route would misread the button title as a new intent).
+      audit('VERIFY', 'stale_confirmation_rejected', { buttonId: input.buttonId ?? null });
+      return {
+        success: true,
+        response: STALE_CONFIRMATION_COPY,
+        intent: 'stale_confirmation',
+        metadata: { ...confirmationMeta },
+      };
+    }
+    if (confirmation.kind === 'edit') {
+      // Citizen wants to fix the data: drop the pending mutation, keep the
+      // slots, ask which part to correct (mirrors the VERIFY correction copy).
+      delete ctx.slots.pendingTool;
+      audit('VERIFY', 'confirmation_edit_requested', {});
+      void saveTurnState(tenantId, input.userId, {
+        stage: 'COLLECT',
+        slots: ctx.slots,
+        assessorConfidences: ctx.assessorConfidences,
+      }, channel).catch(() => undefined);
+      return {
+        success: true,
+        response: CONFIRM_EDIT_COPY,
+        guidanceText: 'Menunggu koreksi warga.',
+        intent: 'correction',
+        metadata: { ...confirmationMeta },
+      };
+    }
+    if (confirmation.kind === 'cancel') {
+      audit('VERIFY', 'confirmation_cancelled', { buttonId: input.buttonId ?? null });
+      void clearTurnState(tenantId, input.userId, channel).catch(() => undefined);
+      return {
+        success: true,
+        response: CONFIRM_CANCEL_COPY,
+        intent: 'cancelled',
+        metadata: { ...confirmationMeta },
+      };
+    }
+
     // 0d. Identity ladder (deterministic, never LLM): L0/L1/L2.
     ctx.identityLevel = await resolveIdentityLevel({
       tenantId, userId: input.userId, channel,
@@ -175,6 +239,25 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
 
     // 1. Deterministic routing.
     let decision = routeMessage({ message: input.message });
+    if (confirmation.kind === 'execute') {
+      // Bound confirm_send → skip fresh routing, go straight to EXECUTE.
+      audit('VERIFY', 'confirmation_bound', { tool: pendingForConfirm?.tool ?? null });
+      decision = {
+        stage: 'EXECUTE',
+        source: 'deterministic',
+        confidence: 1,
+        reasons: ['confirmed_button_bound_to_pending_mutation'],
+      };
+    } else if (confirmation.kind === 'reverify') {
+      // Affirmative text → re-enter VERIFY to re-show summary + buttons.
+      audit('VERIFY', 'affirmative_text_reconfirm', {});
+      decision = {
+        stage: 'VERIFY',
+        source: 'deterministic',
+        confidence: 1,
+        reasons: ['affirmative_text_reconfirm'],
+      };
+    }
 
     // 2. Fuzzy transition → assessor (micro-LLM or deterministic fallback).
     if (decision.hints?.needsAssessor) {
@@ -326,6 +409,7 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       decision,
       ctx,
       villageName: 'Desa', // TODO: resolve from tenant service (DB-first)
+      confirmed: input.confirmed,
       summary: undefined,
       language: 'id',
       facts: turnFacts,

@@ -18,9 +18,10 @@ import type { ToolCallResult } from '../services/agent/tool-executor';
 import { gatewayExecute, type GatewayContext } from '../gateway/tool-gateway';
 import {
   INTENT_SLOT_KEY, nextMissingSlot, isCollectComplete, renderVerifySummary,
-  isExplicitConfirmation, isCancellation, isCorrectionRequest,
+  isCancellation, isCorrectionRequest,
   buildPendingMutation, type SlotIntent, type Slots,
 } from './slot-fsm';
+import { isPendingMutation, type PendingMutation } from './confirmation';
 import { verifyAnswerClaims } from './claim-verifier';
 import {
   precedenceOf, assertTenant, detectPrecedenceConflict,
@@ -385,15 +386,30 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
           toolsUsed: [], toolTrace: [], degraded: false,
         });
       }
-      if (isExplicitConfirmation(input.message)) {
-        const mutation = buildPendingMutation(intent, strSlots);
-        if (!mutation) {
+      // Execution happens ONLY on input.confirmed — bound by the orchestrator
+      // to a confirm_send button.id matching the pending mutation (see
+      // pipeline/confirmation.ts). Affirmative TEXT ("Ya", "✅ Benar, kirim")
+      // falls through to the default path: the summary (and buttons) are
+      // shown again. Text never executes a mutation.
+      if (input.confirmed) {
+        const raw = input.ctx.slots.pendingTool;
+        const bound = (isPendingMutation(raw) ? raw : buildPendingMutation(intent, strSlots)) as PendingMutation | null;
+        if (!bound) {
           return failover('verify_missing_mutation_data', 'slots incomplete at verify');
         }
-        input.ctx.slots.pendingTool = mutation;
-        return executeConfirmed(input, gwFor(input, 'EXECUTE'), mutation, finish, failover);
+        input.ctx.slots.pendingTool = bound;
+        const res = await executeConfirmed(input, gwFor(input, 'EXECUTE'), bound, finish, failover);
+        // Replay protection: the pending mutation is single-use.
+        delete input.ctx.slots.pendingTool;
+        return res;
       }
-      // Default: show the deterministic summary again.
+      // Default: mint the pending mutation (so the next turn's confirm_send
+      // click can bind to it) and show the deterministic summary again.
+      const mutation = buildPendingMutation(intent, strSlots);
+      if (!mutation) {
+        return failover('verify_missing_mutation_data', 'slots incomplete at verify');
+      }
+      input.ctx.slots.pendingTool = mutation;
       const { text: verified } = verifyAnswer(renderVerifySummary(intent, strSlots), []);
       return finish({
         terminalState: 'SUCCEEDED', response: verified, stage, intent: 'verify',
@@ -413,11 +429,16 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
         });
       }
       // Confirmed: run the allowlisted mutation through the gateway, serially.
-      const mutation = (input.ctx.slots.pendingTool ?? null) as { tool: string; args: Record<string, unknown> } | null;
+      const rawMutation = input.ctx.slots.pendingTool;
+      const mutation = (isPendingMutation(rawMutation) ? rawMutation : null) as PendingMutation | null;
       if (!mutation) {
         return failover('execute_without_pending_tool', 'no pending mutation in slots');
       }
-      return executeConfirmed(input, gwFor(input, 'EXECUTE'), mutation, finish, failover);
+      const execRes = await executeConfirmed(input, gwFor(input, 'EXECUTE'), mutation, finish, failover);
+      // Replay protection: the pending mutation is single-use. A replayed
+      // confirm_send click finds no pendingTool and is rejected as stale.
+      delete input.ctx.slots.pendingTool;
+      return execRes;
     }
 
     // ── Agent stages: bounded loop with stage allowlist ──

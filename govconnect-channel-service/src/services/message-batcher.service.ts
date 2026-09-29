@@ -60,6 +60,9 @@ export function addMessageToBatch(
   },
   spamResult?: SpamCheckResult,
   replyDelaySeconds?: number,
+  // P0-1: interactive button/row id (authoritative for the G2/G3
+  // confirmation chain). Forwarded to ai-service as `button_id`.
+  extra?: { buttonId?: string | null },
 ): { spamResult?: SpamCheckResult } {
   const resolvedVillageId = requireVillageId(village_id);
 
@@ -94,7 +97,7 @@ export function addMessageToBatch(
 
   if (delaySeconds <= 0) {
     // Forward to AI immediately (legacy behavior)
-    publishToAI(resolvedVillageId, wa_user_id, message_id, message_text, received_at, mediaInfo, result);
+    publishToAI(resolvedVillageId, wa_user_id, message_id, message_text, received_at, mediaInfo, result, extra);
     logger.info('📨 Message forwarded to AI immediately', {
       wa_user_id,
       message_id,
@@ -116,7 +119,7 @@ export function addMessageToBatch(
 
   const timer = setTimeout(() => {
     pendingDelayedPublishes.delete(delayKey);
-    publishToAI(resolvedVillageId, wa_user_id, message_id, message_text, received_at, mediaInfo, result);
+    publishToAI(resolvedVillageId, wa_user_id, message_id, message_text, received_at, mediaInfo, result, extra);
     logger.info('📨 Message forwarded to AI after reply delay', {
       wa_user_id,
       message_id,
@@ -154,6 +157,7 @@ async function publishToAI(
     media_public_url?: string;
   },
   spamResult?: SpamCheckResult,
+  extra?: { buttonId?: string | null },
 ): Promise<void> {
   // Mark as processing
   try {
@@ -168,6 +172,9 @@ async function publishToAI(
     message: message_text,
     message_id,
     received_at,
+    // P0-1: interactive button/row id (authoritative for the G2/G3
+    // confirmation chain in ai-service). Null when not a button/list click.
+    button_id: extra?.buttonId ?? null,
     // Single message
     batched_message_ids: [message_id],
     // Media
@@ -200,14 +207,14 @@ async function publishToAI(
       });
 
       // Retry later
-      scheduleRetry(village_id, wa_user_id, message_id, message_text, received_at, mediaInfo, spamResult);
+      scheduleRetry(village_id, wa_user_id, message_id, message_text, received_at, mediaInfo, spamResult, extra);
     }
   } else {
     logger.warn('RabbitMQ not connected, scheduling retry', {
       wa_user_id,
       message_id,
     });
-    scheduleRetry(village_id, wa_user_id, message_id, message_text, received_at, mediaInfo, spamResult);
+    scheduleRetry(village_id, wa_user_id, message_id, message_text, received_at, mediaInfo, spamResult, extra);
   }
 }
 
@@ -222,6 +229,7 @@ function scheduleRetry(
   received_at: string,
   mediaInfo?: any,
   spamResult?: SpamCheckResult,
+  extra?: { buttonId?: string | null },
 ): void {
   const retryKey = `${village_id}:${wa_user_id}:${message_id}`;
 

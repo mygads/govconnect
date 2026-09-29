@@ -154,9 +154,21 @@ export function classifySlotIntent(text: string): SlotIntent | null {
   return null; // ambiguous → stays in TRIAGE, never guessed
 }
 
-/** Explicit confirmation detectors (button payloads or typed text). */
+/**
+ * Explicit confirmation detectors (button payloads or typed text).
+ *
+ * P0-1: also matches the confirm-button TITLES sent by wa-interactive
+ * (e.g. "✅ Benar, kirim") — emoji/punctuation are stripped before matching.
+ * NOTE: matching here only means "affirmative intent". It NEVER authorizes a
+ * mutation by itself; execution requires `confirmed` bound to a button.id via
+ * bindConfirmation (pipeline/confirmation.ts).
+ */
 export function isExplicitConfirmation(text: string): boolean {
-  return /^(ya|ya[,.]?\s*lanjutkan|setuju|benar|betul|ok|oke|lanjut|proses)(\s*[.!]*)?$/i.test(text.trim());
+  const t = text.trim().toLowerCase()
+    .replace(/[^\p{L}\p{N}\s,]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return /^(ya|ya,? lanjutkan|setuju|benar(, kirim)?|betul|ok|oke|lanjut|lanjutkan|proses)[.!]*$/.test(t);
 }
 
 export function isCancellation(text: string): boolean {
