@@ -42,6 +42,7 @@ import csatRoutes from './routes/csat.routes';
 import webchatRoutes from './routes/webchat.routes';
 import statusRoutes from './routes/status.routes';
 import testingRoutes from './routes/testing.routes';
+import handoffsRoutes from './routes/handoffs.routes';
 import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
 import { z } from 'zod';
@@ -1865,6 +1866,7 @@ app.use('/internal/csat', internalAuthMiddleware, csatRoutes);
 app.use('/api/webchat', webchatRoutes);
 app.use('/api/status', internalAuthMiddleware, statusRoutes);
 app.use('/api/testing', testingRoutes);
+app.use('/api/handoffs', handoffsRoutes);
 
 /**
  * Internal NLU endpoint for other services that must reuse gateway-only

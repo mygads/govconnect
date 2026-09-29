@@ -11,8 +11,11 @@
  */
 
 import {
-  getTakeover, setTakeover, releaseTakeover,
+  getTakeover, setTakeover, releaseTakeover, loadTurnState,
 } from './pipeline-store';
+import {
+  buildHandoffSummary, loadRecentUserEvents, saveHandoffSummary,
+} from './handoff-summary';
 import { isUserInTakeover as legacyTakeoverCheck } from '../services/channel-client.service';
 import logger from '../utils/logger';
 
@@ -44,6 +47,22 @@ export async function takeOver(
 ): Promise<boolean> {
   const ok = await setTakeover(tenantId, userId, takenBy, reason, ttlMs, channel);
   logger.info('[takeover] taken over', { tenantId, userId, takenBy, ttlMs });
+  // A1: build + save a handoff summary (best-effort, never blocks takeover).
+  try {
+    const [turn, events] = await Promise.all([
+      loadTurnState(tenantId, userId, channel).catch(() => null),
+      loadRecentUserEvents(tenantId, userId, channel).catch(() => []),
+    ]);
+    const summary = buildHandoffSummary({
+      stage: turn?.stage ?? 'UNKNOWN',
+      slots: (turn?.slots ?? {}) as Record<string, unknown>,
+      recentEvents: events,
+      takenBy, reason,
+    });
+    await saveHandoffSummary({ tenantId, userId, channel, takenBy, reason, summary });
+  } catch {
+    // summary is a nicety — takeover itself already succeeded
+  }
   return ok;
 }
 
