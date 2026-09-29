@@ -31,6 +31,10 @@ import {
 import {
   stripJpegAppSegments, sha256Hex, processImageMedia,
 } from '../media-pipeline';
+import {
+  isVoiceNote, isWhisperConfigured, handleVoiceNote,
+  deterministicCleanupTranscript, cleanupTranscript, VOICE_UNAVAILABLE_COPY,
+} from '../voice-pipeline';
 
 describe('stage-router (deterministic)', () => {
   it('routes emergency keywords to EMERGENCY deterministically', () => {
@@ -503,5 +507,39 @@ describe('media-pipeline', () => {
     });
     expect(s.forwardToLlm).toBe(false);
     expect(s.promptFact).toBeTruthy();
+  });
+});
+
+describe('voice-pipeline', () => {
+  it('detects voice notes by media type', () => {
+    expect(isVoiceNote('audio')).toBe(true);
+    expect(isVoiceNote('audio/ogg')).toBe(true);
+    expect(isVoiceNote('ptt')).toBe(true);
+    expect(isVoiceNote('image')).toBe(false);
+    expect(isVoiceNote(undefined)).toBe(false);
+  });
+
+  it('reports whisper as unconfigured by default', () => {
+    expect(isWhisperConfigured()).toBe(false);
+  });
+
+  it('returns the deterministic reply when whisper is not configured', async () => {
+    const r = await handleVoiceNote({
+      tenantId: 't', userId: 'u', channel: 'whatsapp', traceId: 'x',
+      audioUrl: 'http://127.0.0.1:9/unreachable.ogg',
+    });
+    expect(r.transcript).toBeUndefined();
+    expect(r.reply).toBe(VOICE_UNAVAILABLE_COPY);
+  });
+
+  it('deterministic cleanup strips bracket markers and normalizes space', () => {
+    const out = deterministicCleanupTranscript('eh [musik] jalan  rusak   banget  ');
+    expect(out).not.toContain('[musik]');
+    expect(out).toBe('eh jalan rusak banget');
+  });
+
+  it('cleanupTranscript falls back deterministically without gateway', async () => {
+    const out = await cleanupTranscript('  halo   [hening]  ');
+    expect(out).toBe('halo');
   });
 });

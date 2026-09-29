@@ -20,6 +20,7 @@ import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
 import { processImageMedia } from './media-pipeline';
+import { isVoiceNote, handleVoiceNote } from './voice-pipeline';
 import { checkBudget } from './cost-guard';
 import { ingressCheck } from './ingress-guard';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
@@ -235,7 +236,30 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     // For incomplete COLLECT, give the agent loop the deterministic slot status
     // so its question matches the FSM (the FSM remains authoritative).
     const turnFacts: string[] = [];
-    // 2c. Media intake (image): privacy-first — hash, EXIF strip, redaction
+    // 2c. Voice note: transcribe → text pipeline; or deterministic
+    // never-silent reply when Whisper is not configured.
+    if (isVoiceNote(input.mediaType) && input.mediaUrl) {
+      const voice = await handleVoiceNote({
+        tenantId, userId: input.userId, channel, traceId, audioUrl: input.mediaUrl,
+      });
+      if (voice.reply) {
+        return {
+          success: false,
+          response: voice.reply,
+          intent: 'voice_note_unsupported',
+          metadata: {
+            processingTimeMs: Date.now() - started,
+            hasKnowledge: false,
+            agentMode: 'single_orchestrator',
+            traceId,
+          },
+        };
+      }
+      if (voice.transcript) {
+        input.message = `[transkrip voice note] ${voice.transcript}`;
+      }
+    }
+    // 2d. Media intake (image): privacy-first — hash, EXIF strip, redaction
     // check. Raw pixels never reach the LLM; only the signal fact does.
     if (input.mediaUrl && /image|photo|jpeg|jpg|png/i.test(input.mediaType ?? '')) {
       try {

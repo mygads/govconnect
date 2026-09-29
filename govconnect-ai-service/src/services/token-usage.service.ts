@@ -117,6 +117,7 @@ export type CallType =
   | 'agent_orchestrator'
   | 'staged_agent'
   | 'stage_assess'
+  | 'voice_transcript_cleanup'
   | 'media_analysis'
   | 'smart_chunking'
   | 'consistency_entity_extract';
