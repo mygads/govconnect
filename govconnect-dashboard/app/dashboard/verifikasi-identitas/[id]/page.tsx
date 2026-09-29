@@ -70,6 +70,9 @@ export default function VerifikasiIdentitasDetailPage() {
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState("")
   const [submitting, setSubmitting] = useState<"approve" | "reject" | null>(null)
+  // Revoke L2 (R10): cabut verifikasi identitas warga yang sudah disetujui.
+  const [revokeOpen, setRevokeOpen] = useState(false)
+  const [revoking, setRevoking] = useState(false)
 
   useEffect(() => {
     const load = async () => {
@@ -148,8 +151,7 @@ export default function VerifikasiIdentitasDetailPage() {
     }
   }
 
-  const doReject = async () => {
-    if (!rejectReason.trim()) {
+  const doReject = async () => {    if (!rejectReason.trim()) {
       toast({ title: "Alasan wajib diisi", description: "Tulis alasan penolakan untuk warga.", variant: "destructive" })
       return
     }
@@ -169,6 +171,27 @@ export default function VerifikasiIdentitasDetailPage() {
     } finally {
       setSubmitting(null)
       setRejectOpen(false)
+    }
+  }
+
+  const doRevoke = async () => {
+    if (!item) return
+    setRevoking(true)
+    try {
+      const res = await fetch("/api/identity/revoke", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ user_id: item.user_id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.message ?? data?.error ?? "gagal mencabut")
+      toast({ title: "Verifikasi dicabut", description: "Identitas warga kembali ke L1." })
+      setRevokeOpen(false)
+      router.push("/dashboard/verifikasi-identitas")
+    } catch (err: any) {
+      toast({ title: "Belum bisa mencabut", description: String(err?.message ?? err), variant: "destructive" })
+    } finally {
+      setRevoking(false)
     }
   }
 
@@ -316,6 +339,16 @@ export default function VerifikasiIdentitasDetailPage() {
                 {item.status === "rejected" && item.reject_reason && (
                   <p><span className="text-muted-foreground">Alasan:</span> {item.reject_reason}</p>
                 )}
+                {item.status === "approved" && (
+                  <div className="pt-2">
+                    <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setRevokeOpen(true)}>
+                      <X className="h-3.5 w-3.5 mr-1" /> Cabut verifikasi (Revoke L2)
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Identitas warga kembali ke L1 — tidak bisa lagi memakai layanan yang butuh verifikasi.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -341,6 +374,27 @@ export default function VerifikasiIdentitasDetailPage() {
             <Button variant="destructive" onClick={doReject} disabled={submitting !== null || !rejectReason.trim()}>
               {submitting === "reject" && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
               Tolak & beri tahu warga
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Revoke L2 (R10) — cabut verifikasi warga yang sudah disetujui */}
+      <Dialog open={revokeOpen} onOpenChange={setRevokeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cabut verifikasi identitas?</DialogTitle>
+            <DialogDescription>
+              Warga <span className="font-mono text-xs">{item?.user_id}</span> akan kembali ke level identitas L1
+              dan tidak bisa memakai layanan yang membutuhkan verifikasi sampai diverifikasi ulang.
+              Tindakan ini dicatat di log audit. Lanjutkan?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokeOpen(false)}>Batal</Button>
+            <Button variant="destructive" onClick={doRevoke} disabled={revoking}>
+              {revoking && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              Ya, cabut verifikasi
             </Button>
           </DialogFooter>
         </DialogContent>

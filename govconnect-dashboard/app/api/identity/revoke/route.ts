@@ -16,12 +16,15 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const villageId = resolveVillageId(session, request)
   if (!villageId) return NextResponse.json({ error: 'village_id required' }, { status: 400 })
+  const body = await request.json().catch(() => ({}))
+  const userId = String(body?.user_id ?? '')
   return NextResponse.json(
     {
       error: 'not_available',
       message:
         'Endpoint backend belum tersedia: identityRevoke() belum diekspos via HTTP di ai-service.',
       backend_needed: 'POST /api/identity/revoke { village_id, user_id } (ai-service)',
+      echo: { village_id: villageId, user_id: userId || undefined },
     },
     { status: 501 },
   )
