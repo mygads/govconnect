@@ -95,6 +95,21 @@ describe('fallback-policy atomic issuance (P2-9)', () => {
     expect(fb.response).toContain(fb.ticketRef);
   });
 
+  it('honest copy: only claims "sudah tercatat" when actually persisted', async () => {
+    mockCreate.mockResolvedValue('inserted');
+    const ok = await issueFallback(baseInput);
+    expect(ok.persisted).toBe(true);
+    expect(ok.response).toContain('sudah tercatat');
+    expect(ok.response).toContain('petugas desa akan menindaklanjuti');
+
+    mockCreate.mockResolvedValue('unavailable');
+    const down = await issueFallback(baseInput);
+    expect(down.persisted).toBe(false);
+    expect(down.response).not.toContain('sudah tercatat');
+    expect(down.response).toContain('BELUM tersimpan');
+    expect(down.response).toContain('kirim ulang');
+  });
+
   it('mintTempTicket format is stable', () => {
     expect(mintTempTicket()).toMatch(/^TMP-\d{8}-[0-9A-F]{6}$/);
   });

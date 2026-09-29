@@ -485,7 +485,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
           userId: wa_user_id,
           traceId: message_id,
           error: error.message,
-        });
+        }, undefined, { persisted: false }); // v1 path: no DB persistence here
         await publishAIReply({
           village_id,
           wa_user_id,

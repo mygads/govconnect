@@ -46,6 +46,7 @@ const INTENT_LINE: Record<string, string> = {
 export function buildFallback(
   input: FallbackInput,
   ticketRef?: string,
+  opts: { persisted?: boolean } = {},
 ): { response: string; ticketRef: string } {
   const ticket = ticketRef ?? mintTempTicket();
   const intentLine = INTENT_LINE[input.intentHint ?? ''] ?? 'pesan Anda';
@@ -55,9 +56,17 @@ export function buildFallback(
       ? 'Mohon maaf, permintaan Anda membutuhkan waktu lebih lama dari biasanya dan belum selesai saya proses.'
       : 'Mohon maaf, sistem kami sedang mengalami gangguan sehingga saya belum bisa memproses ' + intentLine + ' saat ini.';
 
+  // Honesty rule: only claim the report "sudah tercatat" when the ticket
+  // row is actually in the DB. When unpersisted (DB down / no tenant),
+  // say so plainly and tell the citizen what to do instead.
+  const persisted = opts.persisted ?? true;
+  const second = persisted
+    ? `Nomor referensi sementara Anda: *${ticket}*. Simpan nomor ini — laporan Anda sudah tercatat dan petugas desa akan menindaklanjuti.`
+    : `Nomor referensi sementara Anda: *${ticket}*. Karena gangguan ini, laporan Anda BELUM tersimpan — mohon kirim ulang beberapa saat lagi. Jika mendesak, hubungi langsung kantor desa; petugas desa akan menindaklanjuti setelah laporan Anda diterima.`;
+
   const response = [
     first,
-    `Nomor referensi sementara Anda: *${ticket}*. Simpan nomor ini — laporan Anda sudah tercatat dan petugas desa akan menindaklanjuti.`,
+    second,
     'Anda juga bisa langsung menghubungi kantor desa pada jam operasional.',
   ].join('\n\n');
 
@@ -137,7 +146,7 @@ export async function issueFallback(
       });
     }
   }
-  const { response } = buildFallback(input, ticketRef);
+  const { response } = buildFallback(input, ticketRef, { persisted });
   assertNonEmptyResponse(response, 'issueFallback');
   return { response, ticketRef, persisted };
 }
