@@ -501,7 +501,74 @@ export async function laporMarkResult(
   } catch { /* best effort */ }
 }
 
-// ── Ingress quarantine ────────────────────────────────────────────────────
+// ── Cost accounting ─────────────────────────────────────────────────────
+
+export async function getDailyCostUsd(tenantId: string): Promise<number | null> {
+  const db = await getDb();
+  if (!db) return dbDown('getDailyCostUsd', null);
+  try {
+    const rows = (await db.$queryRawUnsafe(
+      `SELECT COALESCE(SUM(cost_usd),0) AS total FROM ai_token_usage
+        WHERE village_id=$1 AND created_at > now() - interval '1 day'`,
+      tenantId,
+    )) as Array<{ total: string | number }>;
+    return Number(rows[0]?.total ?? 0);
+  } catch {
+    return dbDown('getDailyCostUsd', null);
+  }
+}
+
+// ── Durable memory policy helpers (raw SQL over user_memory_entries) ──────
+
+export interface MemoryRow {
+  id: string;
+  memory_type: string;
+  memory_key: string | null;
+  content: string;
+}
+
+export async function memoryFindByKey(
+  waUserId: string, tenantId: string, key: string,
+): Promise<MemoryRow | null> {
+  const db = await getDb();
+  if (!db) return dbDown('memoryFindByKey', null);
+  try {
+    const rows = (await db.$queryRawUnsafe(
+      `SELECT id, memory_type, memory_key, content FROM user_memory_entries
+        WHERE wa_user_id=$1 AND village_id=$2 AND memory_key=$3
+        ORDER BY created_at DESC LIMIT 1`,
+      waUserId, tenantId, key,
+    )) as MemoryRow[];
+    return rows[0] ?? null;
+  } catch {
+    return dbDown('memoryFindByKey', null);
+  }
+}
+
+/**
+ * Soft-invalidate a memory entry (INVALIDATE): marks it superseded in
+ * metadata_json instead of deleting — the audit trail survives.
+ */
+export async function memoryInvalidateEntry(
+  entryId: string, tenantId: string, reason: string,
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return dbDown('memoryInvalidateEntry', false);
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE user_memory_entries
+          SET metadata_json = COALESCE(metadata_json,'{}'::jsonb) ||
+                jsonb_build_object('invalidated', true, 'invalidated_reason', $2,
+                                   'invalidated_at', now()::text),
+              updated_at = now()
+        WHERE id=$1 AND village_id=$3`,
+      entryId, reason.slice(0, 200), tenantId,
+    );
+    return true;
+  } catch {
+    return dbDown('memoryInvalidateEntry', false);
+  }
+}
 
 export async function quarantineAdd(input: {
   tenantId: string; userId: string; channel: string; reason: string; excerpt: string;

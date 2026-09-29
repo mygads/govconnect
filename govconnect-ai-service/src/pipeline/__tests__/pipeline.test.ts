@@ -21,6 +21,9 @@ import { extractClaims, verifyClaims } from '../claim-verifier';
 import {
   precedenceOf, assertTenant, detectPrecedenceConflict,
 } from '../kb-precedence';
+import { decideMemoryAction } from '../memory-policy';
+import { isCacheable, cacheKeyFor } from '../semantic-cache';
+import { checkBudget } from '../cost-guard';
 
 describe('stage-router (deterministic)', () => {
   it('routes emergency keywords to EMERGENCY deterministically', () => {
@@ -299,5 +302,74 @@ describe('kb-precedence', () => {
       { tool: 'check_status', precedence: 'P0', text: 'status: diproses', tenantCheck: { ok: true, detail: 'match' } },
     ]);
     expect(note).toBeNull();
+  });
+});
+
+describe('memory-policy', () => {
+  it('ADDs a complaint memory on successful create_complaint', () => {
+    const d = decideMemoryAction({
+      tenantId: 't', userId: 'u', channel: 'whatsapp', traceId: 'x',
+      terminalState: 'SUCCEEDED', toolsUsed: ['create_complaint'],
+      mutationRefs: ['LAP-20260101-001'], summary: 'laporan jalan rusak',
+    });
+    expect(d.decision).toBe('ADD');
+    expect(d.memoryType).toBe('complaint');
+  });
+
+  it('INVALIDATEs on user cancellation', () => {
+    const d = decideMemoryAction({
+      tenantId: 't', userId: 'u', channel: 'whatsapp', traceId: 'x',
+      terminalState: 'SUCCEEDED', toolsUsed: ['cancel_request'],
+      mutationRefs: ['LAP-20260101-001'], summary: 'dibatalkan user',
+    });
+    expect(d.decision).toBe('INVALIDATE');
+  });
+
+  it('SKIPs ephemeral turns and failed turns', () => {
+    const d1 = decideMemoryAction({
+      tenantId: 't', userId: 'u', channel: 'whatsapp', traceId: 'x',
+      terminalState: 'SUCCEEDED', toolsUsed: ['check_status'],
+      mutationRefs: [], summary: 'cek status',
+    });
+    expect(d1.decision).toBe('SKIP');
+    const d2 = decideMemoryAction({
+      tenantId: 't', userId: 'u', channel: 'whatsapp', traceId: 'x',
+      terminalState: 'FALLBACK_DELIVERED', toolsUsed: ['create_complaint'],
+      mutationRefs: ['LAP-1'], summary: 'gagal',
+    });
+    expect(d2.decision).toBe('SKIP');
+  });
+});
+
+describe('semantic-cache', () => {
+  it('rejects non-INFORMATION stages', () => {
+    expect(isCacheable('COLLECT', 'jam buka kantor?', 'jam 08.00')).toBe(false);
+  });
+
+  it('rejects answers with ticket refs or NIK', () => {
+    expect(isCacheable('INFORMATION', 'status laporan saya?',
+      'LAP-20260101-001 statusnya diproses.')).toBe(false);
+    expect(isCacheable('INFORMATION', 'syarat KTP?',
+      'bawa NIK 3273010101900001 ya.')).toBe(false);
+  });
+
+  it('accepts plain factual informational answers', () => {
+    expect(isCacheable('INFORMATION', 'jam buka kantor desa berapa?',
+      'Kantor desa buka Senin sampai Jumat pukul 08.00 sampai 14.00.')).toBe(true);
+  });
+
+  it('produces tenant-scoped cache keys', () => {
+    const a = cacheKeyFor('t1', 'jam buka kantor?');
+    const b = cacheKeyFor('t2', 'jam buka kantor?');
+    expect(a).not.toBe(b);
+    expect(a).toHaveLength(64);
+  });
+});
+
+describe('cost-guard', () => {
+  it('fails open when cost data is unavailable', async () => {
+    // getDailyCostUsd returns null without DB; checkBudget must allow.
+    const r = await checkBudget('tenant-x');
+    expect(r.allowed).toBe(true);
   });
 });

@@ -19,6 +19,10 @@ import { runStagedTurn, createPipelineContext } from './staged-agent';
 import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
+import { checkBudget } from './cost-guard';
+import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
+import { applyMemoryPolicy } from './memory-policy';
+import { buildFallback, persistFallbackTicket } from './fallback-policy';
 import {
   extractSlotsDeterministic, mergeSlots, classifySlotIntent,
   nextMissingSlot, isCollectComplete, renderVerifySummary,
@@ -92,6 +96,30 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       ctx.slots = { ...(prior.slots as Record<string, unknown>) };
       ctx.assessorConfidences = [...(prior.assessorConfidences ?? [])];
       audit('INGRESS', 'turn_state_restored', { stage: prior.stage });
+    }
+
+    // 0d. Budget guard: no LLM spend when the tenant's daily budget is out.
+    const budget = await checkBudget(tenantId);
+    if (!budget.allowed) {
+      audit('INGRESS', 'budget_exceeded', { spentUsd: budget.spentUsd });
+      const fbInput = {
+        stage: 'TRIAGE' as const, terminalState: 'BUDGET_EXHAUSTED' as const,
+        userId: input.userId, traceId, tenantId, channel,
+      };
+      const fb = buildFallback(fbInput);
+      persistFallbackTicket(fbInput, fb.ticketRef);
+      return {
+        success: false,
+        response: fb.response,
+        intent: 'budget_exhausted',
+        metadata: {
+          processingTimeMs: Date.now() - started,
+          hasKnowledge: false,
+          agentMode: 'single_orchestrator',
+          traceId,
+        },
+        error: 'daily_budget_exceeded',
+      };
     }
 
     // 1. Deterministic routing.
@@ -181,6 +209,25 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
         );
       }
     }
+    // 2b. Semantic cache: informational answers only, lookup before the agent.
+    if (decision.stage === 'INFORMATION') {
+      const cached = await semanticCacheLookup(tenantId, input.message);
+      if (cached) {
+        audit('INFORMATION', 'semantic_cache_hit', {});
+        return {
+          success: true,
+          response: cached,
+          intent: 'information_cached',
+          metadata: {
+            processingTimeMs: Date.now() - started,
+            hasKnowledge: true,
+            agentMode: 'single_orchestrator',
+            traceId,
+          },
+        };
+      }
+    }
+
     const turn = await runStagedTurn({
       message: input.message,
       decision,
@@ -235,6 +282,24 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     } else if (turn.stage === 'CLOSE') {
       void clearTurnState(tenantId, input.userId, channel).catch(() => undefined);
     }
+
+    // 5. Semantic cache store (informational, non-personal answers only).
+    if (turn.terminalState === 'SUCCEEDED') {
+      void semanticCacheStore(tenantId, input.message, turn.response, decision.stage)
+        .catch(() => undefined);
+    }
+
+    // 6. Durable memory policy (ADD/UPDATE/INVALIDATE/SKIP, never throws).
+    const mutationRefs = Array.from(
+      turn.response.matchAll(/\b(?:LAP|TMP|SRV|REQ)-\d{4}\d{2}\d{2}-\d{2,6}\b/g),
+    ).map((m) => m[0]);
+    void applyMemoryPolicy({
+      tenantId, userId: input.userId, channel, traceId,
+      terminalState: turn.terminalState,
+      toolsUsed: turn.toolsUsed,
+      mutationRefs,
+      summary: `[${turn.intent}] ${redactForLog(turn.response).slice(0, 400)}`,
+    }).catch(() => undefined);
     audit(turn.stage, 'turn_completed', {
       terminalState: turn.terminalState,
       degraded: turn.degraded,
