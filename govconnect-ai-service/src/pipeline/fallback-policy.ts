@@ -54,7 +54,7 @@ export function buildFallback(input: FallbackInput): { response: string; ticketR
 
   const response = [
     first,
-    `Nomor referensi sementara Anda: *${ticket}*. Simpan nomor ini — perangkat desa akan menindaklanjuti.`,
+    `Nomor referensi sementara Anda: *${ticket}*. Simpan nomor ini — laporan Anda sudah tercatat dan petugas desa akan menindaklanjuti.`,
     'Anda juga bisa langsung menghubungi kantor desa pada jam operasional.',
   ].join('\n\n');
 

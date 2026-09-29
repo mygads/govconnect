@@ -120,7 +120,7 @@ const RATE_LIMIT_COPY =
   'Bentar ya, pesannya terlalu cepat beruntun. Tunggu sekitar satu menit lalu kirim lagi.';
 
 const QUARANTINE_COPY =
-  'Pesan Bapak/Ibu kami terima dan sedang diperiksa lebih lanjut oleh perangkat desa. Mohon tidak mengirim pesan yang sama berulang kali.';
+  'Pesan Bapak/Ibu sudah kami terima dan petugas desa akan menindaklanjuti. Mohon tidak mengirim pesan yang sama berulang kali.';
 
 export async function ingressCheck(input: {
   tenantId: string; userId: string; channel: string; traceId: string; message: string;

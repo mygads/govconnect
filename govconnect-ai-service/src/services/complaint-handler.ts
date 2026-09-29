@@ -373,7 +373,7 @@ export async function handleComplaintCreation(
       ? '\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.'
       : '';
     const multiComplaintHint = '\n\nJika ada laporan lain, silakan langsung sampaikan.';
-    const replyText = `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${statusLine}${withPhotoNote}${photoReminder}${importantContactsMessage}${multiComplaintHint}`;
+    const replyText = `Terima kasih.\nLaporan Anda sudah tercatat dengan nomor ${complaintId} dan petugas desa akan menindaklanjuti.${statusLine}${withPhotoNote}${photoReminder}${importantContactsMessage}${multiComplaintHint}`;
     
     return replyText;
   }
@@ -573,7 +573,7 @@ export async function handlePendingAddressConfirmation(
 
     const photoCount = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
     const withPhotoNote = photoCount > 0 ? `\n${photoCount > 1 ? photoCount + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
-    return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${withPhotoNote}`;
+    return `Terima kasih.\nLaporan Anda sudah tercatat dengan nomor ${complaintId} dan petugas desa akan menindaklanjuti.${withPhotoNote}`;
   }
 
   if (addrDecision === 'no') {
@@ -645,7 +645,7 @@ export async function handlePendingAddressConfirmation(
 
     const photoCount2 = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
     const withPhotoNote = photoCount2 > 0 ? `\n${photoCount2 > 1 ? photoCount2 + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
-    return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${withPhotoNote}`;
+    return `Terima kasih.\nLaporan Anda sudah tercatat dengan nomor ${complaintId} dan petugas desa akan menindaklanjuti.${withPhotoNote}`;
   }
 
   // User said something else, clear pending and continue normal flow

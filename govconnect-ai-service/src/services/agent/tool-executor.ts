@@ -1343,8 +1343,8 @@ async function toolCreateComplaint(
   }
 
   const suggestedResponse = categoryConfig?.is_urgent === true
-    ? `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`
-    : `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`;
+    ? `Terima kasih.\nLaporan Anda sudah tercatat dengan nomor ${complaintId} dan petugas desa akan menindaklanjuti.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`
+    : `Terima kasih.\nLaporan Anda sudah tercatat dengan nomor ${complaintId} dan petugas desa akan menindaklanjuti.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`;
 
   return {
     success: true,

@@ -141,7 +141,7 @@ function verifyAnswer(text: string, traces: ToolTraceEntry[]): { text: string; l
   if (mutationFailed && /berhasil (dibuat|disimpan|dikirim)/i.test(clean)) {
     logger.warn('[staged-agent] success-claim with failed mutation — downgrading');
     return {
-      text: clean + '\n\nCatatan: ada kendala saat menyimpan ke sistem. Perangkat desa akan menindaklanjuti manual.',
+      text: clean + '\n\nCatatan: ada kendala saat menyimpan ke sistem. Petugas desa akan menindaklanjuti manual.',
       leaked,
     };
   }
