@@ -59,7 +59,7 @@ describe('fallback-policy atomic issuance (P2-9)', () => {
     expect(fb.response).toContain(sentId);
     expect(fb.persisted).toBe(true);
     expect(mockAudit).toHaveBeenCalledTimes(1);
-    const auditPayload = mockAudit.mock.calls[0]![0] as { payload: { ticketRef: string; persisted: boolean } };
+    const auditPayload = mockAudit.mock.calls[0]![0] as unknown as { payload: { ticketRef: string; persisted: boolean } };
     expect(auditPayload.payload.ticketRef).toBe(sentId);
     expect(auditPayload.payload.persisted).toBe(true);
   });

@@ -42,6 +42,8 @@ vi.mock('../pipeline-store', () => ({
   clearTurnState: vi.fn(async () => undefined),
   // cost-guard imports getDailyCostUsd from here; null → budget fail-open.
   getDailyCostUsd: vi.fn(async () => null),
+  // fallback-policy (P2-9) persists fallback tickets atomically.
+  createFallbackTicket: vi.fn(async () => 'inserted'),
 }));
 vi.mock('../takeover', () => ({
   isTakeoverActive: vi.fn(async () => ({ active: false })),
