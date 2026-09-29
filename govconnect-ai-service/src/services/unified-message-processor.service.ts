@@ -66,6 +66,7 @@ import {
 import { startTakeoverForUser } from './channel-client.service';
 import { getEnhancedContext } from './conversation-context.service';
 import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village-behavior.service';
+import { getVillageIdentity } from './village-identity.service';
 import { canProcessVillageAI } from './ai-wallet.service';
 import { holdMessageForWallet } from './held-message-client.service';
 import { finishAiBillingTurn, startAiBillingTurn, type AiBillingTurnHandle } from './ai-turn-billing.service';
@@ -1001,6 +1002,10 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     const villageBehavior = await getVillageBehaviorConfig(villageId);
     const villageBehaviorSummary = formatVillageBehaviorConfig(villageBehavior);
 
+    // Identitas AI per desa (pengaturan admin desa): nama, disclosure, persona.
+    // Fail-open ke default (transparan, "Gana") bila dashboard tak terjangkau.
+    const aiIdentity = await getVillageIdentity(villageId);
+
     const result = await runAgent(
       message,
       {
@@ -1013,6 +1018,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         routingDecision,
         pendingStateSummary,
         sideEffectMode,
+        identity: aiIdentity,
       },
       {
         userId,

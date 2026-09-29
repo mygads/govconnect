@@ -32,6 +32,7 @@ import { DETERMINISTIC_ONLY_STAGES } from './stage-graph';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { identityDenialCopy } from './identity-ladder';
 import { buildPrompt } from './prompt-builder';
+import { DEFAULT_IDENTITY, type VillageIdentity } from '../services/village-identity.service';
 import { resolveExperimentVariant } from '../services/experiment-framework.service';
 import { issueFallback, assertNonEmptyResponse } from './fallback-policy';
 import {
@@ -82,6 +83,11 @@ export interface StagedAgentInput {
   /** Explicit citizen confirmation captured by the deterministic UI layer. */
   confirmed?: boolean;
   language?: string;
+  /**
+   * Per-village AI identity dari pengaturan admin desa (nama, disclosure,
+   * persona). Default: transparan, nama "Gana".
+   */
+  identity?: VillageIdentity;
 }
 
 function toGatewayContext(input: StagedAgentInput, stage: Stage, signal?: AbortSignal): GatewayContext {
@@ -110,9 +116,13 @@ function resultToText(result: ToolCallResult | undefined): string {
   }
   return JSON.stringify({ success: result.success, error: result.error });
 }
-function greetingReply(villageName: string): string {
+function greetingReply(villageName: string, identity: VillageIdentity = DEFAULT_IDENTITY): string {
+  const name = identity.personaName;
+  const intro = identity.disclosure
+    ? `Halo! Saya ${name}, asisten AI layanan ${villageName}.`
+    : `Halo! Saya ${name}, asisten yang akan membantu Anda.`;
   return (
-    `Halo! Saya Gana, asisten AI layanan ${villageName}. ` +
+    intro + ' ' +
     'Saya bisa membantu menjawab pertanyaan tentang layanan desa, cek status laporan, atau memandu membuat pengaduan dan permohonan surat. Ada yang bisa saya bantu?'
   );
 }
@@ -187,6 +197,7 @@ async function runBoundedLoop(
     records: input.records ?? [],
     summary: input.summary,
     language: input.language,
+    identity: input.identity ?? DEFAULT_IDENTITY,
     // R13: deterministic experiment bucketing. Resolved once per turn;
     // fail-soft (null → control experience). Cached 60s per village.
     experimentVariant: await resolveExperimentVariant(
@@ -395,7 +406,7 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
   try {
     // ── Deterministic fast lanes (no LLM) ──
     if (input.decision.hints?.greeting) {
-      const response = greetingReply(input.villageName);
+      const response = greetingReply(input.villageName, input.identity ?? DEFAULT_IDENTITY);
       return finish({
         terminalState: 'SUCCEEDED', response, stage, intent: 'greeting',
         toolsUsed: [], toolTrace: [], degraded: false,

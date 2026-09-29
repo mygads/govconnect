@@ -43,7 +43,8 @@ LLM_MODEL=openai/gpt-4o-mini
 EMBED_PROVIDER=openrouter
 EMBED_API_KEY=your_openrouter_api_key_here
 EMBED_BASE_URL=https://openrouter.ai/api/v1
-EMBED_MODEL=openai/text-embedding-3-small
+EMBED_MODEL=nvidia/nemotron-3-embed-1b:free
+# Fallback bila free tier kena rate limit: openai/text-embedding-3-small
 
 RAG_PROVIDER=openrouter
 RAG_API_KEY=your_openrouter_api_key_here

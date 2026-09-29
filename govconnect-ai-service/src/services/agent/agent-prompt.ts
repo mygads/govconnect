@@ -31,6 +31,11 @@ export interface AgentPromptContext {
   userName?: string | null;
   sentimentContext?: string;
   pendingStateSummary?: string;
+  /**
+   * Per-village AI identity dari pengaturan admin desa (nama, disclosure,
+   * persona). Default: transparan, nama "Gana".
+   */
+  identity?: import('../village-identity.service').VillageIdentity;
   routingDecision?: {
     action: string;
     confidence: string;
@@ -44,22 +49,37 @@ export interface AgentPromptContext {
 }
 
 /**
- * Build the STATIC system prompt. Only depends on `villageName` and
- * `sideEffectMode` — keep these stable per conversation for best caching.
- * All per-turn dynamics are delivered via `buildAgentDynamicContext`.
+ * Build the STATIC system prompt. Only depends on `villageName`,
+ * `sideEffectMode`, and the per-village AI identity — keep these stable per
+ * conversation for best caching. All per-turn dynamics are delivered via
+ * `buildAgentDynamicContext`.
  */
 export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
   const villageSuffix = ctx.villageName ? ` ${ctx.villageName}` : '';
+  const identity = ctx.identity;
+  const personaName = identity?.personaName || 'Gana';
+  const disclosure = identity?.disclosure !== false;
+  const identityLine = disclosure
+    ? `Anda adalah ${personaName}, asisten AI resmi layanan desa${villageSuffix}. Selalu jujur bahwa Anda adalah AI bila ditanya; Anda bukan petugas manusia.`
+    : `Anda adalah ${personaName}, asisten layanan desa${villageSuffix} yang membantu warga via WhatsApp. Jangan menyebut bahwa Anda adalah AI kecuali warga bertanya langsung; bila ditanya langsung, jawab jujur bahwa Anda adalah asisten AI. Jangan pernah mengaku sebagai manusia atau petugas desa.`;
+  const personaLine = identity?.personaDescription
+    ? `\n[Persona dari admin desa] ${identity.personaDescription}\n`
+    : '';
+  // Disclosure=true: larangan menyebut "AI" dicabut — warga berhak tahu.
+  // Disclosure=false: istilah teknis internal tetap dilarang disebut.
+  const techTermsLine = disclosure
+    ? '- Tidak menyebut istilah teknis internal (LLM/tool/prompt/retrieval).'
+    : '- Tidak menyebut istilah teknis (AI/bot/LLM/tool/prompt/retrieval/basis pengetahuan/data resmi desa).';
   const knowledgeTest = ctx.sideEffectMode === 'knowledge_test'
     ? `\nMODE UJI: halaman ini hanya untuk menguji jawaban knowledge/RAG/orchestrator. Jangan jalankan tool mutasi (create/update/cancel/status/history); kalau user minta, arahkan ke kanal produksi.\n`
     : '';
 
-  return `Anda GovConnect Assistant layanan desa${villageSuffix}. Bicara seperti petugas desa sungguhan: sopan, hangat, cekatan, manusiawi. Bukan bot narator.
+  return `${identityLine}${personaLine}
 ${knowledgeTest}
 PRINSIP
 - Jawab inti dulu, lalu satu langkah lanjut. Tanpa meta-talk ("Berdasarkan...", "Menurut data...").
 - Bahasa Indonesia penuh. Jangan sisipkan kata/istilah bahasa Inggris (kecuali nama diri/singkatan resmi seperti KTP, SKCK).
-- Tidak menyebut istilah teknis (AI/bot/LLM/tool/prompt/retrieval/basis pengetahuan/data resmi desa).
+${techTermsLine}
 - Format WhatsApp: ringkas, rapi, satu ajakan lanjut per respons.
 - Empati: kalau user kecewa/cemas/marah, validasi singkat ("Saya mengerti ini merepotkan...") lalu beri solusi konkret.
 - Sapaan: gunakan "Pak/Bu" atau "Pak {Nama}"/"Bu {Nama}" saat nama user diketahui. Pakai sesekali di momen penting (sapaan awal, konfirmasi, penutup), bukan di setiap kalimat. Kalau nama tidak diketahui, cukup "Pak/Bu".

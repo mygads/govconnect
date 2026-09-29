@@ -12,6 +12,7 @@
 
 import type { Stage } from './stage-types';
 import { piiInbound } from '../gateway/pii-gateway';
+import { DEFAULT_IDENTITY, type VillageIdentity } from '../services/village-identity.service';
 
 /**
  * Version of the static system prompt below. MUST be bumped whenever the
@@ -51,6 +52,11 @@ export interface PromptInput {
   /** Language the user is writing in. */
   language?: string;
   /**
+   * Per-village AI identity (nama, disclosure, persona) dari pengaturan
+   * admin desa. Default: transparan, nama "Gana".
+   */
+  identity?: VillageIdentity;
+  /**
    * R13: resolved experiment variant. The treatment promptSuffix is appended
    * to the DYNAMIC context only (static prompt stays byte-identical for
    * prefix caching). Shadow variants are never applied — the resolver
@@ -65,12 +71,36 @@ export interface PromptInput {
 }
 
 /**
- * The static system prompt. MUST stay byte-identical across turns so the
- * provider can prefix-cache it. Never interpolate per-turn data here.
+ * The static system prompt. Byte-identical per identity variant so the
+ * provider can prefix-cache it (memoized by variant key). Never interpolate
+ * per-turn data here. Identity (nama, disclosure, persona) berasal dari
+ * pengaturan admin desa (village-identity.service).
  */
-export function buildStaticSystemPrompt(): string {
-  return [
-    'Kamu adalah Gana, asisten AI resmi layanan publik desa.',
+const staticPromptCache = new Map<string, string>();
+
+function identityLines(identity: VillageIdentity): string[] {
+  const name = identity.personaName;
+  const lines = identity.disclosure
+    ? [
+        `Kamu adalah ${name}, asisten AI resmi layanan publik desa.`,
+        'Selalu jujur bahwa kamu adalah AI bila ditanya; tegaskan kamu bukan petugas manusia.',
+      ]
+    : [
+        `Kamu adalah ${name}, asisten layanan publik desa yang membantu warga via WhatsApp.`,
+        'Jangan menyebut bahwa kamu adalah AI kecuali warga bertanya langsung; bila ditanya langsung, jawab jujur bahwa kamu adalah asisten AI. Jangan pernah mengaku sebagai manusia atau petugas desa.',
+      ];
+  if (identity.personaDescription) {
+    lines.push(`[Persona dari admin desa] ${identity.personaDescription}`);
+  }
+  return lines;
+}
+
+export function buildStaticSystemPrompt(identity: VillageIdentity = DEFAULT_IDENTITY): string {
+  const key = `${identity.disclosure ? 1 : 0}|${identity.personaName}|${identity.personaDescription ?? ''}`;
+  const hit = staticPromptCache.get(key);
+  if (hit) return hit;
+  const prompt = [
+    ...identityLines(identity),
     'Kamu membantu warga lewat WhatsApp: menjawab pertanyaan informasi, membantu cek status laporan, dan memandu pengaduan atau permohonan layanan.',
     '',
     'ATURAN KERAS:',
@@ -93,6 +123,8 @@ export function buildStaticSystemPrompt(): string {
     // relevant — never dump procedures you have not loaded.
     '9. Prosedur resmi: bila [Panduan prosedur desa] di konteks mencantumkan panduan yang relevan, baca dulu via tool load_skill sebelum menjawab. Jangan menjawab tata cara dari ingatan bila ada panduannya.',
   ].join('\n');
+  staticPromptCache.set(key, prompt);
+  return prompt;
 }
 
 /** Dynamic per-turn context — delivered as a user-role message. */
@@ -137,7 +169,7 @@ export interface BuiltPrompt {
 
 export async function buildPrompt(input: PromptInput): Promise<BuiltPrompt> {
   return {
-    system: buildStaticSystemPrompt(),
+    system: buildStaticSystemPrompt(input.identity ?? DEFAULT_IDENTITY),
     dynamicContext: await buildDynamicContext(input),
   };
 }

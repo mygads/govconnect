@@ -82,6 +82,12 @@ model village_behavior_configs {
   notification_enabled        Boolean? @default(true)
   notification_urgent_enabled Boolean? @default(true)
   admin_notification_number   String?
+  // Identitas AI per desa (pengaturan admin desa):
+  // - ai_identity_disclosure=true  → agen menyebut dirinya "asisten AI resmi, bukan petugas manusia"
+  // - ai_identity_disclosure=false → agen TIDAK menyebut dirinya AI ("Gana, asisten yang akan membantu Anda")
+  ai_identity_disclosure      Boolean  @default(true)
+  ai_persona_name              String   @default("Gana")
+  ai_persona_description       String?  @db.Text
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
 

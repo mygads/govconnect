@@ -76,6 +76,7 @@ import { redactForLog } from '../gateway/pii-gateway';
 import { extractTopicKey } from '../services/kb-suggester-core';
 import { checkOutboundForCanary, CANARY_SAFE_REPLY } from '../security/canary-docs';
 import { answerCsatSurvey, CSAT_THANKS } from '../services/csat.service';
+import { getVillageIdentity } from '../services/village-identity.service';
 import logger from '../utils/logger';
 // §10: per-resolution billing — v2 accrues per turn (v1 parity) and debits
 // per verified resolution via recordResolution (see maybeBillV2Resolution below).
@@ -777,6 +778,9 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
 
     // Track A2: real village name (DB-first, cached), fail-soft to 'Desa'.
     const villageName = await resolveVillageName(tenantId);
+    // Identitas AI per desa (pengaturan admin desa): nama, disclosure, persona.
+    // Fail-open ke default (transparan, "Gana") bila dashboard tak terjangkau.
+    const aiIdentity = await getVillageIdentity(tenantId);
     const turn = await runStagedTurn({
       message: input.message,
       decision,
@@ -786,6 +790,7 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       summary: undefined,
       language: 'id',
       facts: turnFacts,
+      identity: aiIdentity,
     });
 
     // KTP verification trigger: the turn hit an L2 identity denial, so the
@@ -913,7 +918,9 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       toolsUsed: turn.toolsUsed,
       // W16: prompt version that produced this turn's answer — bumped only
       // when the static system prompt text changes (see PROMPT_VERSION).
-      promptVersion: PROMPT_VERSION,
+      // Suffix identitas AI: varian disclosure/nama ikut tercatat karena
+      // mengubah teks static prompt (prefix cache per varian).
+      promptVersion: `${PROMPT_VERSION}+id${aiIdentity.disclosure ? 1 : 0}:${aiIdentity.personaName}`,
       // R5: deterministic topic key (from PII-redacted text) so the KB
       // suggester can cluster "10× tanya X" without reading raw messages.
       topic: extractTopicKey(redactForLog(input.message)),

@@ -2,71 +2,37 @@
 // Split into domain-specific pieces for adaptive prompt composition.
 // getAdaptiveSystemPrompt() composes only relevant pieces based on NLU classification.
 // This saves ~40-60% tokens vs sending the full monolithic prompt.
+import { DEFAULT_IDENTITY, type VillageIdentity } from '../services/village-identity.service';
 
 /**
  * PROMPT_CORE: Identity, time, personality, style, core safety rules, multi-tenancy.
  * ALWAYS included in every prompt focus. (~350 tokens)
  */
-export const PROMPT_CORE = `Anda adalah **Gana** — asisten AI resmi layanan publik desa/kelurahan yang membantu warga via WhatsApp.
 
-=== WAKTU SAAT INI ===
-Tanggal: {{current_date}} | Jam: {{current_time}} {{timezone_label}} | Waktu: {{time_of_day}} | Zona: {{timezone_name}}
-(Gunakan sapaan yang sesuai: pagi → "Selamat pagi", siang → "Selamat siang", sore → "Selamat sore", malam → "Selamat malam")
+/**
+ * buildPromptCore: Identity, time, personality, style, core safety rules, multi-tenancy.
+ * ALWAYS included in every prompt focus. (~350 tokens)
+ *
+ * Identitas (nama, disclosure, persona) berasal dari pengaturan admin desa.
+ * disclosure=true  -> "asisten AI resmi, bukan petugas manusia".
+ * disclosure=false -> tidak menyebut AI; bila ditanya langsung tetap jujur.
+ */
+export function buildPromptCore(identity: VillageIdentity = DEFAULT_IDENTITY): string {
+  const name = identity.personaName;
+  const headline = identity.disclosure
+    ? `Anda adalah **${name}** \u2014 asisten AI resmi layanan publik desa/kelurahan yang membantu warga via WhatsApp.`
+    : `Anda adalah **${name}** \u2014 asisten layanan publik desa/kelurahan yang membantu warga via WhatsApp.`;
+  const identityRule = identity.disclosure
+    ? `- Nama: "${name}" (asisten AI resmi, bukan petugas manusia \u2014 selalu jujur bahwa Anda adalah AI bila ditanya)`
+    : `- Nama: "${name}" (jangan menyebut bahwa Anda adalah AI kecuali warga bertanya langsung; bila ditanya langsung, jawab jujur bahwa Anda adalah asisten AI \u2014 jangan pernah mengaku sebagai manusia atau petugas desa)`;
+  const personaExtra = identity.personaDescription
+    ? `- Persona dari admin desa: ${identity.personaDescription}\n`
+    : '';
+  return `${headline}\n\n=== WAKTU SAAT INI ===\nTanggal: {{current_date}} | Jam: {{current_time}} {{timezone_label}} | Waktu: {{time_of_day}} | Zona: {{timezone_name}}\n(Gunakan sapaan yang sesuai: pagi \u2192 "Selamat pagi", siang \u2192 "Selamat siang", sore \u2192 "Selamat sore", malam \u2192 "Selamat malam")\n\n=== IDENTITAS ===\n${identityRule}\n- Kepribadian: Ramah, profesional, empati, langsung ke poin\n${personaExtra}- Panggilan: "Bapak/Ibu [Nama]" jika tahu nama, atau "Pak/Bu"\n- Minta nama hanya jika diperlukan (verifikasi/lanjutan), dan JANGAN mengulang jika sudah ada di history\n\n=== ATURAN GAYA BAHASA ===\n1. JANGAN memulai setiap respons dengan "Baik Bapak/Ibu" atau "Baik Pak/Bu". Variasikan pembuka.\n   Gunakan "Baik Pak/Bu" MAKSIMAL 1 kali per percakapan, setelah itu gunakan variasi lain:\n   - Langsung ke isi jawaban\n   - "Siap, Pak/Bu..."\n   - "Untuk [topik]..."\n   - Atau langsung mulai dengan informasinya\n2. Jika sudah tahu nama user \u2192 gunakan "Bapak [Nama]" atau "Ibu [Nama]", bukan "Bapak/Ibu"\n3. Jangan mengulangi frase yang sama di respons berturut-turut\n4. Jika user menyapa dengan bahasa informal/slang (contoh: "dah gaada", "gak ada lagi", "udah cukup", "yaudah"),\n   tanggapi dengan natural. Jangan balas "saya tidak mengerti".\n`;
+}
 
-=== IDENTITAS ===
-- Nama: "Gana" (asisten AI resmi, bukan petugas manusia — selalu jujur bahwa Anda adalah AI bila ditanya)
-- Kepribadian: Ramah, profesional, empati, langsung ke poin
-- Panggilan: "Bapak/Ibu [Nama]" jika tahu nama, atau "Pak/Bu"
-- Minta nama hanya jika diperlukan (verifikasi/lanjutan), dan JANGAN mengulang jika sudah ada di history
-
-=== ATURAN GAYA BAHASA ===
-1. JANGAN memulai setiap respons dengan "Baik Bapak/Ibu" atau "Baik Pak/Bu". Variasikan pembuka.
-   Gunakan "Baik Pak/Bu" MAKSIMAL 1 kali per percakapan, setelah itu gunakan variasi lain:
-   - Langsung ke isi jawaban
-   - "Siap, Pak/Bu..."
-   - "Untuk [topik]..."
-   - Atau langsung mulai dengan informasinya
-2. Jika sudah tahu nama user → gunakan "Bapak [Nama]" atau "Ibu [Nama]", bukan "Bapak/Ibu"
-3. Jangan mengulangi frase yang sama di respons berturut-turut
-4. Jika user menyapa dengan bahasa informal/slang (contoh: "dah gaada", "gak ada lagi", "udah cukup", "yaudah"),
-   tanggapi dengan natural. Jangan balas "saya tidak mengerti".
-
-=== ATURAN INTI ===
-1. JANGAN mengarang data (alamat, nomor, info yang tidak ada di knowledge)
-2. Gunakan \\n untuk line break (boleh \\n\\n untuk pisah paragraf)
-3. Output HANYA JSON valid (tanpa markdown/text tambahan)
-4. EKSTRAK semua data dari conversation history - jangan tanya ulang
-5. Jangan mengarahkan ke instansi lain jika tidak ada di knowledge.
-   Jika informasi tidak tersedia → nyatakan belum tersedia dan arahkan ke kantor desa/kelurahan
-6. Tidak ada delete. Cancel hanya ubah status
-7. Semua respons wajib Bahasa Indonesia, sopan, jelas, mudah dipahami
-8. JIKA RAGU atau pesan AMBIGU → TANYA KLARIFIKASI ke masyarakat. Jangan menebak intent.
-   Contoh: "mau lapor" (ambigu) → tanya apakah pengaduan infrastruktur atau layanan surat.
-   Jangan langsung buat laporan pengaduan jika user belum jelas menyebut masalah infrastruktur.
-   WAJIB berikan opsi spesifik saat bertanya — jangan hanya bilang "bisa diperjelas?"
-
-=== ATURAN PENTING: "LAPOR" BUKAN SELALU PENGADUAN ===
-Kata "lapor" punya 2 makna:
-1. **Pengaduan infrastruktur**: "lapor jalan rusak", "lapor lampu mati", "lapor sampah menumpuk" → CREATE_COMPLAINT
-2. **Layanan administrasi**: "lapor meninggal" (SK Kematian), "lapor pindah" (Surat Pindah), "lapor kelahiran" (Akta Lahir), "lapor nikah" (Surat Pengantar Nikah) → SERVICE_INFO
-WAJIB bedakan berdasarkan KONTEKS setelah kata "lapor".
-
-ATURAN PRIORITAS "LAPOR":
-- Jika setelah "lapor" ada kata terkait PERISTIWA KEPENDUDUKAN (meninggal, lahir, pindah, nikah, cerai, datang, pergi) → SELALU SERVICE_INFO
-- Jika setelah "lapor" ada kata terkait MASALAH INFRASTRUKTUR/LINGKUNGAN (rusak, mati, banjir, sampah, bocor, macet) → CREATE_COMPLAINT
-- Jika setelah "lapor" ada NAMA LAYANAN ADMINISTRASI (KTP, KK, SKTM, SKD, akta, surat) → SELALU SERVICE_INFO
-- Jika hanya "mau lapor" / "lapor" tanpa konteks → TANYA KLARIFIKASI (intent: QUESTION)
-- JANGAN pernah langsung asumsikan CREATE_COMPLAINT hanya karena ada kata "lapor"
-
-=== BATAS WILAYAH DESA (MULTI-TENANCY) ===
-Anda HANYA melayani warga dari desa/kelurahan {{village_name}}.
-1. Layanan, laporan, dan informasi yang Anda berikan KHUSUS untuk desa/kelurahan {{village_name}}.
-2. Jika user bertanya tentang layanan desa LAIN → jawab: "Mohon maaf, saya hanya melayani warga {{village_name}}. Untuk desa lain, silakan hubungi petugas desa/kelurahan terkait."
-3. Jangan pernah memberikan data, nomor kontak, atau info internal dari desa lain.
-4. Knowledge base dan layanan yang tersedia sudah difilter untuk desa {{village_name}} saja.
-5. PENGECUALIAN "Pindah Masuk": Jika user INGIN PINDAH MASUK ke {{village_name}} (contoh: "saya mau pindah ke sini", "mau daftar warga baru"), layani prosesnya karena mereka CALON warga {{village_name}}.
-6. Jika user dari desa lain tapi mengurus layanan yang TERKAIT dengan {{village_name}} (misal: surat pindah masuk), tetap layani.
-`;
+/** PROMPT_CORE: identitas default (transparan, nama "Gana"). */
+export const PROMPT_CORE = buildPromptCore();
 
 /**
  * PROMPT_RULES_FAREWELL: Farewell handling rules.
@@ -169,12 +135,16 @@ Saat menjawab pertanyaan dari knowledge base / informasi desa:
 8. Jika masih relevan, tutup dengan satu ajakan singkat seperti "Kalau mau, saya bantu cek lagi" atau "Ada yang ingin ditanyakan lagi?".
 `;
 
+export function buildSystemPromptTemplate(identity: VillageIdentity = DEFAULT_IDENTITY): string {
+  return [
+    buildPromptCore(identity), PROMPT_RULES_FAREWELL, PROMPT_RULES_SERVICE,
+    PROMPT_RULES_COMPLAINT, PROMPT_RULES_STATUS, PROMPT_RULES_CANCEL,
+    PROMPT_RULES_KNOWLEDGE,
+  ].join('\n');
+}
+
 // Backward-compatible: full SYSTEM_PROMPT_TEMPLATE (all rules combined)
-export const SYSTEM_PROMPT_TEMPLATE = [
-  PROMPT_CORE, PROMPT_RULES_FAREWELL, PROMPT_RULES_SERVICE,
-  PROMPT_RULES_COMPLAINT, PROMPT_RULES_STATUS, PROMPT_RULES_CANCEL,
-  PROMPT_RULES_KNOWLEDGE,
-].join('\n');
+export const SYSTEM_PROMPT_TEMPLATE = buildSystemPromptTemplate();
 
 export const SYSTEM_PROMPT_PART2 = `
 === FORMAT OUTPUT ===
@@ -709,11 +679,16 @@ export type PromptFocus = 'full' | 'complaint' | 'service' | 'knowledge' | 'stat
  *
  * @param hasKnowledge - If false, skip SYSTEM_PROMPT_PART5_KNOWLEDGE to save ~400 tokens
  */
-export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full', hasKnowledge: boolean = true): string {
+export function getAdaptiveSystemPrompt(
+  focus: PromptFocus = 'full',
+  hasKnowledge: boolean = true,
+  identity: VillageIdentity = DEFAULT_IDENTITY,
+): string {
+  const core = buildPromptCore(identity);
   switch (focus) {
     case 'complaint':
       return [
-        PROMPT_CORE, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
+        core, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
         PROMPT_RULES_COMPLAINT,
         PART3_INTENT_HEADER, PART3_COMPLAINT_INTENTS, PART3_GENERAL_INTENTS, PART3_CATEGORIES, PART3_INTENT_FALLBACK,
         CASES_COMPLAINT, CASES_EDGE,
@@ -722,7 +697,7 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full', hasKnowledg
 
     case 'service':
       return [
-        PROMPT_CORE, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
+        core, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
         PROMPT_RULES_SERVICE,
         PART3_INTENT_HEADER, PART3_SERVICE_INTENTS, PART3_GENERAL_INTENTS, PART3_INTENT_FALLBACK,
         CASES_SERVICE, CASES_EDGE,
@@ -731,7 +706,7 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full', hasKnowledg
 
     case 'knowledge':
       return [
-        PROMPT_CORE, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
+        core, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
         PROMPT_RULES_KNOWLEDGE,
         PART3_INTENT_HEADER, PART3_GENERAL_INTENTS, PART3_INTENT_FALLBACK,
         CASES_KNOWLEDGE, CASES_EDGE,
@@ -742,7 +717,7 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full', hasKnowledg
 
     case 'status':
       return [
-        PROMPT_CORE, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
+        core, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
         PROMPT_RULES_STATUS,
         PART3_INTENT_HEADER, PART3_GENERAL_INTENTS, PART3_INTENT_FALLBACK,
         CASES_STATUS, CASES_EDGE,
@@ -752,7 +727,7 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full', hasKnowledg
     case 'cancel':
       // Slim cancel: only cancel rules + relevant intents. No full complaint/service cases.
       return [
-        PROMPT_CORE, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
+        core, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
         PROMPT_RULES_CANCEL,
         PART3_INTENT_HEADER, PART3_COMPLAINT_INTENTS, PART3_SERVICE_INTENTS, PART3_GENERAL_INTENTS, PART3_INTENT_FALLBACK,
         CASES_EDGE,
@@ -762,7 +737,7 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full', hasKnowledg
     default:
       // 'full' — all parts (greeting cases excluded since handled by NLU pre-LLM)
       return [
-        SYSTEM_PROMPT_TEMPLATE, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
+        buildSystemPromptTemplate(identity), SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
         SYSTEM_PROMPT_PART3, SYSTEM_PROMPT_PART4,
         SYSTEM_PROMPT_PART5_IDENTITY,
         // Only include knowledge rules when RAG returned data
@@ -771,9 +746,9 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full', hasKnowledg
   }
 }
 
-export function getFullSystemPrompt(): string {
+export function getFullSystemPrompt(identity: VillageIdentity = DEFAULT_IDENTITY): string {
   return [
-    SYSTEM_PROMPT_TEMPLATE,
+    buildPromptCore(identity),
     SYSTEM_PROMPT_PART2,
     SYSTEM_PROMPT_PART2_5,
     SYSTEM_PROMPT_PART3,

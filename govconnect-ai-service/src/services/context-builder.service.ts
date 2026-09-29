@@ -3,6 +3,7 @@ import logger from '../utils/logger';
 import { getVillageDateTime } from '../utils/wib-datetime';
 import { config } from '../config/env';
 import { getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '../prompts/system-prompt';
+import type { VillageIdentity } from './village-identity.service';
 import { RAGContext } from '../types/embedding.types';
 import { summarizeConversation } from './micro-llm-matcher.service';
 import { buildComplaintCategoriesText } from './complaint-handler';
@@ -34,6 +35,7 @@ export async function buildContext(
   villageName?: string,
   serviceCatalogText?: string,
   villageTimezone?: string | null,
+  identity?: VillageIdentity,
 ) {
   logger.info('Building context for LLM', { wa_user_id, promptFocus: promptFocus || 'full' });
 
@@ -63,7 +65,7 @@ export async function buildContext(
     
     // Build full prompt using adaptive system prompt (filters by focus)
     // Pass hasKnowledge to skip PART5_KNOWLEDGE block when RAG returned no results (~400 tokens saved)
-    const systemPrompt = (promptFocus ? getAdaptiveSystemPrompt(promptFocus, hasKnowledge) : getFullSystemPrompt())
+    const systemPrompt = (promptFocus ? getAdaptiveSystemPrompt(promptFocus, hasKnowledge, identity) : getFullSystemPrompt(identity))
       .replace('{knowledge_context}', knowledgeSection)
       .replace('{history}', conversationHistory)
       .replace('{user_message}', currentMessage)

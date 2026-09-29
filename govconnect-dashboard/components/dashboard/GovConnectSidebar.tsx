@@ -20,6 +20,7 @@ import {
   Activity,
   Settings2,
   Bell,
+  Bot,
   Cpu,
   Database,
   UserPlus,
@@ -223,6 +224,12 @@ export function GovConnectSidebar() {
     {
       title: "Pengaturan Lanjutan",
       items: [
+        {
+          title: "Identitas AI",
+          url: "/dashboard/settings/identitas-ai",
+          icon: Bot,
+          excludeRoles: ["superadmin"],
+        },
         {
           title: "Pengaturan Notifikasi",
           url: "/dashboard/settings/notifications",
