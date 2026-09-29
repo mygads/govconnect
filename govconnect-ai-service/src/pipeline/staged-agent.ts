@@ -21,6 +21,11 @@ import {
   isExplicitConfirmation, isCancellation, isCorrectionRequest,
   buildPendingMutation, type SlotIntent, type Slots,
 } from './slot-fsm';
+import { verifyAnswerClaims } from './claim-verifier';
+import {
+  precedenceOf, assertTenant, detectPrecedenceConflict,
+  PRECEDENCE_LABEL, type EvidenceEntry,
+} from './kb-precedence';
 import { STAGE_TOOL_ALLOWLIST, isParallelizable } from '../gateway/tool-policy';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { buildPrompt } from './prompt-builder';
@@ -145,9 +150,12 @@ async function runBoundedLoop(
   input: StagedAgentInput,
   stage: Stage,
   tools: typeof AGENT_TOOLS,
-): Promise<{ text: string; traces: ToolTraceEntry[]; toolsUsed: string[]; model: string }> {
+): Promise<{ text: string; traces: ToolTraceEntry[]; toolsUsed: string[]; model: string; evidence: string[] }> {
   const traces: ToolTraceEntry[] = [];
   const toolsUsed: string[] = [];
+  const evidence: string[] = [];
+  const evidenceEntries: EvidenceEntry[] = [];
+  let conflictInjected = false;
   const gw = toGatewayContext(input, stage);
 
   const { system, dynamicContext } = await buildPrompt({
@@ -217,17 +225,43 @@ async function runBoundedLoop(
       const r = await gatewayExecute(c.name as AgentToolName, c.args, gw);
       traces.push(r.trace);
       if (!r.blocked && r.ok) toolsUsed.push(c.name);
-      const content = r.ok
+      let content = r.ok
         ? resultToText(r.result)
         : JSON.stringify({ success: false, error: r.error, errorKind: r.errorKind });
+      if (r.ok) {
+        // Tenant assertion (fail-closed) + precedence labeling on retrieval.
+        const check = assertTenant(r.result, input.ctx.tenantId ?? '');
+        if (!check.ok) {
+          logger.warn('[staged-agent] dropping cross-tenant retrieval result', {
+            traceId: input.ctx.traceId, tool: c.name,
+          });
+          content = JSON.stringify({ success: false, error: 'tenant_mismatch', errorKind: 'PERMANENT' });
+        } else {
+          const p = precedenceOf(c.name);
+          content = `${PRECEDENCE_LABEL[p]} (sumber: ${c.name})\n${content}`;
+          evidence.push(content);
+          evidenceEntries.push({ tool: c.name, precedence: p, text: content, tenantCheck: check });
+        }
+      }
       messages.push({ role: 'tool', tool_call_id: c.id, name: c.name, content });
     };
 
     await Promise.all(reads.map(execOne));
     for (const c of writes) await execOne(c);
+
+    // P0-vs-document conflict: surface the resolution rule to the model
+    // before it writes the final answer.
+    if (!conflictInjected) {
+      const conflict = detectPrecedenceConflict(evidenceEntries);
+      if (conflict) {
+        conflictInjected = true;
+        messages.push({ role: 'user', content: `[ATURAN SUMBER] ${conflict}` });
+        logger.info('[staged-agent] precedence conflict resolved to P0', { traceId: input.ctx.traceId });
+      }
+    }
   }
 
-  return { text: finalText, traces, toolsUsed, model };
+  return { text: finalText, traces, toolsUsed, model, evidence };
 }
 
 /** Shared confirmed-mutation runner for VERIFY→EXECUTE and EXECUTE. */
@@ -377,12 +411,19 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('turn_budget_exhausted')), Math.max(1000, remainingMs(input.ctx))),
     );
-    const { text, traces, toolsUsed, model } = await Promise.race([runPromise, timeoutPromise]);
+    const { text, traces, toolsUsed, model, evidence } = await Promise.race([runPromise, timeoutPromise]);
 
     if (!text.trim()) {
       return failover('empty_llm_output');
     }
-    const { text: verified } = verifyAnswer(text, traces);
+    // Per-claim verification: every factual claim must be grounded in evidence.
+    const claimCheck = verifyAnswerClaims(text, evidence);
+    if (claimCheck.unsupportedCount > 0) {
+      logger.warn('[staged-agent] unsupported claims hedged', {
+        traceId: input.ctx.traceId, unsupportedCount: claimCheck.unsupportedCount,
+      });
+    }
+    const { text: verified } = verifyAnswer(claimCheck.text, traces);
     return finish({
       terminalState: 'SUCCEEDED', response: verified, stage,
       intent: stage, fields: input.ctx.slots,

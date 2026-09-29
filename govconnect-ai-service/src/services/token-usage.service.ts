@@ -116,6 +116,7 @@ export type CallType =
   | 'rerank_documents'
   | 'agent_orchestrator'
   | 'staged_agent'
+  | 'stage_assess'
   | 'media_analysis'
   | 'smart_chunking'
   | 'consistency_entity_extract';

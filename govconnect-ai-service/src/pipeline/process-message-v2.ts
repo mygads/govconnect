@@ -18,6 +18,7 @@ import { assessStage, shouldSuggestHandoff } from './stage-assessor';
 import { runStagedTurn, createPipelineContext } from './staged-agent';
 import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
+import { resolveServiceSlug } from './micro-assessor';
 import {
   extractSlotsDeterministic, mergeSlots, classifySlotIntent,
   nextMissingSlot, isCollectComplete, renderVerifySummary,
@@ -131,6 +132,16 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       ctx.slots = { ...slots, [INTENT_SLOT_KEY]: intent, [COLLECT_ATTEMPTS_KEY]: attempts };
       if (errors.length > 0) {
         audit('COLLECT', 'slot_validation_errors', { errors });
+      }
+
+      // service_request: resolve the villager's phrasing to an official
+      // service_slug via micro-LLM (deterministic slot, LLM-assisted match).
+      if (intent === 'service_request' && !ctx.slots.service_slug) {
+        const slug = await resolveServiceSlug(input.message, tenantId, input.userId);
+        if (slug) {
+          ctx.slots.service_slug = slug;
+          audit('COLLECT', 'service_slug_resolved', { slug });
+        }
       }
 
       // 2x failed collection → deterministic handoff (SOP rule).

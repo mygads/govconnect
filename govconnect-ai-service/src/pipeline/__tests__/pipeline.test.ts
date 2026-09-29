@@ -17,6 +17,10 @@ import {
   isCollectComplete, renderVerifySummary, isExplicitConfirmation, isCancellation,
   isCorrectionRequest, buildPendingMutation, type Slots,
 } from '../slot-fsm';
+import { extractClaims, verifyClaims } from '../claim-verifier';
+import {
+  precedenceOf, assertTenant, detectPrecedenceConflict,
+} from '../kb-precedence';
 
 describe('stage-router (deterministic)', () => {
   it('routes emergency keywords to EMERGENCY deterministically', () => {
@@ -228,5 +232,72 @@ describe('slot-fsm', () => {
   it('refuses to plan a mutation when required data is missing', () => {
     expect(buildPendingMutation('complaint', {} as Slots)).toBeNull();
     expect(buildPendingMutation('service_request', {} as Slots)).toBeNull();
+  });
+});
+
+describe('claim-verifier', () => {
+  it('passes claims grounded in evidence', () => {
+    const { text, unsupported } = verifyClaims(
+      'Laporan LAP-20260101-001 statusnya diproses.',
+      ['{"reference_number":"LAP-20260101-001","status":"diproses"}'],
+    );
+    expect(unsupported).toHaveLength(0);
+    expect(text).toContain('LAP-20260101-001');
+  });
+
+  it('hedges ticket refs not present in evidence', () => {
+    const { text, unsupported } = verifyClaims(
+      'Laporan LAP-99999999-999 sudah selesai.',
+      ['{"reference_number":"LAP-20260101-001","status":"diproses"}'],
+    );
+    expect(unsupported.length).toBeGreaterThan(0);
+    expect(text).not.toContain('LAP-99999999-999');
+    expect(text).toContain('belum terverifikasi');
+  });
+
+  it('extracts dates and amounts as claims', () => {
+    const claims = extractClaims('Biaya Rp 50.000, jadwal 12/03/2026.');
+    expect(claims.map((c) => c.type)).toContain('amount');
+    expect(claims.map((c) => c.type)).toContain('date');
+  });
+});
+
+describe('kb-precedence', () => {
+  it('ranks DB tools as P0 and documents as P1/P2', () => {
+    expect(precedenceOf('check_status')).toBe('P0');
+    expect(precedenceOf('get_village_profile')).toBe('P0');
+    expect(precedenceOf('search_documents')).toBe('P1');
+    expect(precedenceOf('search_knowledge')).toBe('P2');
+  });
+
+  it('passes tenant assertion on matching metadata', () => {
+    expect(assertTenant({ village_id: 't1', data: 'x' }, 't1').ok).toBe(true);
+  });
+
+  it('fails closed on cross-tenant metadata', () => {
+    const r = assertTenant({ village_id: 'other-tenant' }, 't1');
+    expect(r.ok).toBe(false);
+    expect(r.detail).toBe('mismatch');
+  });
+
+  it('treats missing tenant metadata as untrusted-but-visible', () => {
+    const r = assertTenant({ text: 'no metadata here' }, 't1');
+    expect(r.ok).toBe(true);
+    expect(r.detail).toBe('missing-metadata');
+  });
+
+  it('detects P0-vs-document status conflicts with P0 winning', () => {
+    const note = detectPrecedenceConflict([
+      { tool: 'check_status', precedence: 'P0', text: 'status: diproses', tenantCheck: { ok: true, detail: 'match' } },
+      { tool: 'search_documents', precedence: 'P1', text: 'laporan selesai minggu lalu', tenantCheck: { ok: true, detail: 'match' } },
+    ]);
+    expect(note).toContain('P0');
+  });
+
+  it('returns null when there is no conflict', () => {
+    const note = detectPrecedenceConflict([
+      { tool: 'check_status', precedence: 'P0', text: 'status: diproses', tenantCheck: { ok: true, detail: 'match' } },
+    ]);
+    expect(note).toBeNull();
   });
 });
