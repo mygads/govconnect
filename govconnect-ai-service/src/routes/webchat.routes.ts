@@ -19,7 +19,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { processUnifiedMessage, ProcessMessageResult, isProcessingFailure } from '../services/unified-message-processor.service';
+import { processUnifiedMessage, ProcessMessageResult, isProcessingFailure, hasDeliverableFallback } from '../services/unified-message-processor.service';
 import {
   saveWebchatMessage,
   updateWebchatAIStatus,
@@ -415,12 +415,45 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       return;
     }
 
-    // Processing FAILURE (LLM timeout/down, empty reply, error): do NOT send a
-    // hollow apology to the resident. Return 503 so the widget shows a soft
-    // "belum terproses" indicator instead of a bot "sorry, try again". Persist
-    // to failed_messages so admin can reprocess via the dashboard button.
+    // Processing FAILURE (LLM timeout/down, empty reply, error).
+    // BUG-008 never-silent: when the pipeline still produced a static fallback
+    // response (v1 smart fallback / v2 issueFallback incl. a real ticket ref),
+    // DELIVER it instead of 503 — the citizen must never stare at silence.
+    // The 503 + failed_messages path is reserved for turns with genuinely
+    // nothing to say (empty response / hollow apology strings).
     if (isProcessingFailure(result)) {
-      logger.warn('🤐 Webchat message processing failed — returning 503 (no apology)', {
+      if (hasDeliverableFallback(result)) {
+        logger.warn('Webchat degraded — delivering static fallback instead of 503', {
+          session_id, village_id, error: result.error, intent: result.intent,
+        });
+        const replySynced = await saveWebchatMessage({
+          session_id,
+          village_id,
+          message: result.response,
+          direction: 'OUT',
+          source: 'AI',
+        });
+        await updateWebchatAIStatus({
+          session_id,
+          village_id,
+          action: 'clear',
+          message_id: undefined,
+        }).catch(() => {});
+        res.json({
+          success: true,
+          response: result.response,
+          intent: result.intent,
+          degraded: true,
+          replySynced,
+          metadata: {
+            session_id,
+            processingTimeMs: Date.now() - startTime,
+            degradedReason: result.error || 'processing_failed',
+          },
+        });
+        return;
+      }
+      logger.warn('🤐 Webchat message processing failed — returning 503 (no deliverable fallback)', {
         session_id, village_id, error: result.error, intent: result.intent,
       });
       await updateWebchatAIStatus({

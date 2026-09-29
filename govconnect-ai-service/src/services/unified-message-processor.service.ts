@@ -971,6 +971,20 @@ export function isProcessingFailure(result: ProcessMessageResult): boolean {
   return false;
 }
 
+/**
+ * BUG-008 never-silent: a failed turn that still produced a static fallback
+ * response (v1 smart fallback / v2 issueFallback with a real ticket ref) must
+ * be DELIVERED to the citizen, not swallowed by the 503 path. Returns true
+ * when the response is non-empty and is not one of the known hollow-apology
+ * strings (those stay on the 503 + failed_messages path).
+ */
+export function hasDeliverableFallback(result: ProcessMessageResult): boolean {
+  if (!result.response || !result.response.trim()) return false;
+  const response = result.response.toLowerCase();
+  if (GENERIC_TIMEOUT_PHRASES.some(phrase => response.includes(phrase))) return false;
+  return true;
+}
+
 async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessageResult> {
   const {
     userId,

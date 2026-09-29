@@ -1185,125 +1185,147 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
       for (const apiKey of apiKeys) {
         const startTime = Date.now();
 
-        try {
-          const envelope = await executePromptRequestWithJsonFallback(lane, gateway, apiKey, model, options);
-          const result = envelope.data;
-          const cacheMetadata = envelope.cache;
-          const durationMs = Date.now() - startTime;
-          const choice = result.choices?.[0];
-          let text = extractTextContent(choice?.message?.content).trim();
+        // BUG-008: empty content from free-tier models is frequently transient
+        // (the primary returned "empty message content" on ~63% of edge-case
+        // turns). Retry the SAME model+key once with a short backoff before
+        // cascading to the next model — cheaper and faster than burning the
+        // (slower, less reliable) fallback on a transient blip.
+        const MAX_EMPTY_CONTENT_RETRIES = 1;
+        let emptyContentRetries = 0;
+        for (;;) {
+          try {
+            const envelope = await executePromptRequestWithJsonFallback(lane, gateway, apiKey, model, options);
+            const result = envelope.data;
+            const cacheMetadata = envelope.cache;
+            const durationMs = Date.now() - startTime;
+            const choice = result.choices?.[0];
+            let text = extractTextContent(choice?.message?.content).trim();
 
-          // Thinking-mode models (e.g. TokenRouter mimo / deepseek in reasoning mode)
-          // sometimes return the user-facing answer in `reasoning_content` while leaving
-          // `content` empty. Fall back to it so the agent's synthesis turn isn't lost.
-          if (!text && !choice?.message?.tool_calls) {
-            const reasoning = (choice?.message as { reasoning_content?: unknown })?.reasoning_content;
-            if (typeof reasoning === 'string' && reasoning.trim()) {
-              text = reasoning.trim();
+            // Thinking-mode models (e.g. TokenRouter mimo / deepseek in reasoning mode)
+            // sometimes return the user-facing answer in `reasoning_content` while leaving
+            // `content` empty. Fall back to it so the agent's synthesis turn isn't lost.
+            if (!text && !choice?.message?.tool_calls) {
+              const reasoning = (choice?.message as { reasoning_content?: unknown })?.reasoning_content;
+              if (typeof reasoning === 'string' && reasoning.trim()) {
+                text = reasoning.trim();
+              }
             }
-          }
 
-          if (!text && !choice?.message?.tool_calls) {
-            throw new Error('AI gateway returned empty message content');
-          }
+            if (!text && !choice?.message?.tool_calls) {
+              if (emptyContentRetries < MAX_EMPTY_CONTENT_RETRIES) {
+                emptyContentRetries++;
+                logger.warn('AI gateway returned empty message content; retrying same model', {
+                  lane,
+                  provider: gateway.provider,
+                  model,
+                  keyLabel: apiKey.label,
+                  retry: emptyContentRetries,
+                });
+                await new Promise((resolve) => setTimeout(resolve, 800 * emptyContentRetries));
+                continue;
+              }
+              throw new Error('AI gateway returned empty message content');
+            }
 
-          const inputTokens = result.usage?.prompt_tokens ?? 0;
-          const outputTokens = result.usage?.completion_tokens ?? 0;
-          const totalTokens = result.usage?.total_tokens ?? (inputTokens + outputTokens);
-          const resolvedModel = result.model || model;
-          const metrics = buildMetrics(
-            lane,
-            resolvedModel,
-            gateway.provider,
-            apiKey,
-            durationMs,
-            { inputTokens, outputTokens, totalTokens },
-            startTime,
-            attempt,
-          );
+            const inputTokens = result.usage?.prompt_tokens ?? 0;
+            const outputTokens = result.usage?.completion_tokens ?? 0;
+            const totalTokens = result.usage?.total_tokens ?? (inputTokens + outputTokens);
+            const resolvedModel = result.model || model;
+            const metrics = buildMetrics(
+              lane,
+              resolvedModel,
+              gateway.provider,
+              apiKey,
+              durationMs,
+              { inputTokens, outputTokens, totalTokens },
+              startTime,
+              attempt,
+            );
 
-          modelStatsService.recordSuccess(resolvedModel, durationMs);
-          recordGatewayUsage(metrics, options, {
-            provider: result.provider || gateway.provider,
-            responseId: result.id ?? null,
-            finishReason: choice?.finish_reason ?? null,
-            requestJson: buildPromptBody(gateway, model, options, !!options.jsonMode),
-            responseJson: {
-              ...result,
-              openrouter_cache: cacheMetadata,
-            },
-            promptPreview: promptPreview(options.messages),
-            completionPreview: text,
-          });
-          await reportAttemptResult(lane, attempt, true);
+            modelStatsService.recordSuccess(resolvedModel, durationMs);
+            recordGatewayUsage(metrics, options, {
+              provider: result.provider || gateway.provider,
+              responseId: result.id ?? null,
+              finishReason: choice?.finish_reason ?? null,
+              requestJson: buildPromptBody(gateway, model, options, !!options.jsonMode),
+              responseJson: {
+                ...result,
+                openrouter_cache: cacheMetadata,
+              },
+              promptPreview: promptPreview(options.messages),
+              completionPreview: text,
+            });
+            await reportAttemptResult(lane, attempt, true);
 
-          logger.info('AI gateway call successful', {
-            lane,
-            provider: gateway.provider,
-            model: resolvedModel,
-            modelId: attempt.modelId,
-            modelDisplayName: attempt.modelDisplayName,
-            keyLabel: apiKey.label,
-            durationMs,
-            inputTokens,
-            outputTokens,
-            totalTokens,
-            source: resolved.meta?.source,
-            fallbackUsed: Boolean(attempt.modelId && resolved.meta?.fallbackModelId === attempt.modelId),
-            cacheStatus: cacheMetadata.status,
-            cachedTokens: result.usage?.prompt_tokens_details?.cached_tokens ?? 0,
-            cacheWriteTokens: result.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
-          });
+            logger.info('AI gateway call successful', {
+              lane,
+              provider: gateway.provider,
+              model: resolvedModel,
+              modelId: attempt.modelId,
+              modelDisplayName: attempt.modelDisplayName,
+              keyLabel: apiKey.label,
+              durationMs,
+              inputTokens,
+              outputTokens,
+              totalTokens,
+              source: resolved.meta?.source,
+              fallbackUsed: Boolean(attempt.modelId && resolved.meta?.fallbackModelId === attempt.modelId),
+              cacheStatus: cacheMetadata.status,
+              cachedTokens: result.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+              cacheWriteTokens: result.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
+            });
 
-          return {
-            text,
-            message: choice?.message,
-            choices: result.choices,
-            usage: result.usage,
-            model: resolvedModel,
-            provider: result.provider || gateway.provider,
-            responseId: result.id,
-            finishReason: choice?.finish_reason,
-            metrics,
-          };
-        } catch (error: any) {
-          const durationMs = Date.now() - startTime;
-          lastError = error.message || 'Unknown gateway error';
-          modelStatsService.recordFailure(model, lastError, durationMs);
-          await reportAttemptResult(lane, attempt, false);
-          const metrics = buildMetrics(
-            lane,
-            model,
-            gateway.provider,
-            apiKey,
-            durationMs,
-            { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            startTime,
-            attempt,
-          );
-          recordGatewayFailure(metrics, options, {
-            provider: gateway.provider,
-            requestJson: buildPromptBody(gateway, model, options, !!options.jsonMode),
-            responseJson: { error: lastError },
-            promptPreview: promptPreview(options.messages),
-            errorMessage: lastError,
-          });
+            return {
+              text,
+              message: choice?.message,
+              choices: result.choices,
+              usage: result.usage,
+              model: resolvedModel,
+              provider: result.provider || gateway.provider,
+              responseId: result.id,
+              finishReason: choice?.finish_reason,
+              metrics,
+            };
+          } catch (error: any) {
+            const durationMs = Date.now() - startTime;
+            lastError = error.message || 'Unknown gateway error';
+            modelStatsService.recordFailure(model, lastError, durationMs);
+            await reportAttemptResult(lane, attempt, false);
+            const metrics = buildMetrics(
+              lane,
+              model,
+              gateway.provider,
+              apiKey,
+              durationMs,
+              { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+              startTime,
+              attempt,
+            );
+            recordGatewayFailure(metrics, options, {
+              provider: gateway.provider,
+              requestJson: buildPromptBody(gateway, model, options, !!options.jsonMode),
+              responseJson: { error: lastError },
+              promptPreview: promptPreview(options.messages),
+              errorMessage: lastError,
+            });
 
-          logger.warn('AI gateway call failed', {
-            lane,
-            provider: gateway.provider,
-            model,
-            modelId: attempt.modelId,
-            modelDisplayName: attempt.modelDisplayName,
-            keyLabel: apiKey.label,
-            durationMs,
-            error: lastError,
-            source: resolved.meta?.source,
-          });
-        }
-      }
-    }
-  }
+            logger.warn('AI gateway call failed', {
+              lane,
+              provider: gateway.provider,
+              model,
+              modelId: attempt.modelId,
+              modelDisplayName: attempt.modelDisplayName,
+              keyLabel: apiKey.label,
+              durationMs,
+              error: lastError,
+              source: resolved.meta?.source,
+            });
+            break; // attempt failed; stop retrying this model+key, move to the next apiKey
+          } // end catch
+        } // end for(;;) — empty-content retry loop
+      } // end apiKey loop
+    } // end model loop
+  } // end attempt loop
 
   logger.error('All AI gateway attempts failed', {
     lane,
