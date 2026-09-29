@@ -42,6 +42,12 @@ const VILLAGE_ONLY_ROUTES: string[] = [
   '/dashboard/settings/rate-limit',
   '/dashboard/verifikasi-identitas',
   '/dashboard/sinyal-bukti',
+  // Fase-2 (track B): village-scoped. laporan-kecamatan is intentionally NOT
+  // village-only — superadmin views district rollup across village_ids.
+  '/dashboard/broadcast',
+  '/dashboard/proposal-kb',
+  '/dashboard/skills',
+  '/dashboard/csat-followup',
 ]
 
 const matchPath = (pathname: string, path: string) =>

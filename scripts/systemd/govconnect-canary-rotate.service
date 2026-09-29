@@ -1,0 +1,8 @@
+[Unit]
+Description=GovConnect ops job: canary-rotate
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/govconnect/scheduler.env
+ExecStart=/opt/govconnect/systemd/govconnect-scheduler-run.sh canary-rotate

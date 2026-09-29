@@ -1,0 +1,9 @@
+[Unit]
+Description=Hourly GovConnect H+3 document reminder sweep
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

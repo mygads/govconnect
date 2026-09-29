@@ -425,6 +425,23 @@ export const ai = {
   },
 
   /**
+   * §5.2 KB review gate: set a document's vector publish status
+   * ('draft' | 'published' | 'withdrawn'). Optionally supersedes older
+   * document ids when publishing.
+   */
+  async setDocumentPublishStatus(
+    documentId: string,
+    publishStatus: 'draft' | 'published' | 'withdrawn',
+    supersedeDocumentIds: string[] = [],
+  ) {
+    return apiFetch(buildUrl(ServicePath.AI, `/internal/documents/${documentId}/status`), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ publish_status: publishStatus, supersede_document_ids: supersedeDocumentIds }),
+    });
+  },
+
+  /**
    * Embed all knowledge
    */
   async embedAllKnowledge(villageId?: string) {

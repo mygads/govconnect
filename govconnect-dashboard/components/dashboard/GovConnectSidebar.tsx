@@ -28,6 +28,9 @@ import {
   Plug,
   MessageSquare,
   Wallet,
+  Megaphone,
+  Lightbulb,
+  Star,
 } from "lucide-react"
 
 import {
@@ -358,6 +361,41 @@ export function GovConnectSidebar() {
           url: "/dashboard/settings/cache",
           icon: Database,
           roles: ["superadmin"],
+        },
+      ],
+    },
+    // === Fase-2: AI & perbaikan berkelanjutan (track B) ===
+    {
+      title: "AI & Perbaikan",
+      items: [
+        {
+          title: "Laporan Kecamatan",
+          url: "/dashboard/laporan-kecamatan",
+          icon: BarChart3,
+        },
+        {
+          title: "Broadcast",
+          url: "/dashboard/broadcast",
+          icon: Megaphone,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Proposal KB",
+          url: "/dashboard/proposal-kb",
+          icon: Lightbulb,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Skills Agen",
+          url: "/dashboard/skills",
+          icon: Brain,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Tindak Lanjut CSAT",
+          url: "/dashboard/csat-followup",
+          icon: Star,
+          excludeRoles: ["superadmin"],
         },
       ],
     },

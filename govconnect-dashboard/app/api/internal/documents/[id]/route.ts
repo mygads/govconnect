@@ -23,12 +23,21 @@ export async function PUT(
 
     const { id } = await params
     const body = await request.json()
-    const { status, error_message, total_chunks } = body
+    const { status, error_message, total_chunks, publish_status } = body
+
+    // Processing status values (do NOT confuse with publish_status, the
+    // §5.2 KB review-gate state)
+    const allowedStatus = [
+      'pending', 'processing', 'ocr_pending', 'retrying', 'completed',
+      'failed', 'parse_fail', 'ocr_fail', 'embed_fail',
+    ]
+    const allowedPublishStatus = ['draft', 'published', 'withdrawn', 'superseded']
 
     await prisma.knowledge_documents.update({
       where: { id },
       data: {
-        ...(status && { status }),
+        ...(status && allowedStatus.includes(status) && { status }),
+        ...(publish_status && allowedPublishStatus.includes(publish_status) && { publish_status }),
         ...(error_message !== undefined && { error_message }),
         ...(total_chunks !== undefined && { total_chunks }),
         updated_at: new Date(),

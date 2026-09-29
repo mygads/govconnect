@@ -70,6 +70,7 @@ import {
   appendAudit, idempotencyCheck, idempotencyStore,
   loadTurnState, saveTurnState, clearTurnState,
 } from './pipeline-store';
+import { PROMPT_VERSION } from './prompt-builder';
 import type { ProcessMessageInput, ProcessMessageResult } from '../services/ump-types';
 import { redactForLog } from '../gateway/pii-gateway';
 import { extractTopicKey } from '../services/kb-suggester-core';
@@ -902,6 +903,9 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       terminalState: turn.terminalState,
       degraded: turn.degraded,
       toolsUsed: turn.toolsUsed,
+      // W16: prompt version that produced this turn's answer — bumped only
+      // when the static system prompt text changes (see PROMPT_VERSION).
+      promptVersion: PROMPT_VERSION,
       // R5: deterministic topic key (from PII-redacted text) so the KB
       // suggester can cluster "10× tanya X" without reading raw messages.
       topic: extractTopicKey(redactForLog(input.message)),

@@ -9,14 +9,14 @@ import { registerInterval } from '../utils/timer-registry';
 import { processDocumentSemanticChunking } from './document-processor.service';
 import { smartChunkDocument } from './ai-chunking.service';
 import { generateBatchEmbeddings } from './embedding.service';
-import { addDocumentChunks, deleteDocumentVectors } from './vector-db.service';
+import { addDocumentChunks, deleteDocumentVectors, getDocumentPublishStatus } from './vector-db.service';
 import { withAiBillingTurn } from './ai-turn-billing.service';
 import { callAIGatewayPrompt, NoCapableGatewayModelError } from './ai-gateway.service';
 import { runDocVsDocForDocument } from './knowledge-consistency.service';
 import { runDocVsDbForDocument } from './doc-vs-db-pipeline.service';
 import { routeKnowledgeDocument, KB_REJECTED_COPY, type KbRoute } from './kb-router.service';
 import { scanForSecrets, checkIngestForForeignCanary } from '../security/canary-docs';
-import { appendAudit } from '../pipeline/pipeline-store';
+import { appendAudit, semanticCacheInvalidate } from '../pipeline/pipeline-store';
 
 export interface ProcessDocumentInput {
   documentId: string;
@@ -273,7 +273,7 @@ async function parseFileContent(filePath: string, mimeType: string, originalName
   throw new Error(`Unsupported file type: ${normalizedMime}`);
 }
 
-async function updateDashboardDocument(documentId: string, data: Record<string, unknown>): Promise<void> {
+export async function updateDashboardDocument(documentId: string, data: Record<string, unknown>): Promise<void> {
   await fetch(`${config.dashboardServiceUrl}/api/internal/documents/${documentId}`, {
     method: 'PUT',
     headers: {
@@ -428,6 +428,12 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
     }));
   }
 
+  // §5.2 publish review gate: brand-new documents enter as 'draft' (invisible
+  // to retrieval) until an admin approves. Re-ingests (re-embed of an existing
+  // document) preserve the current review state instead of silently
+  // re-gating — content changes arrive as new document versions.
+  const existingPublishStatus = await getDocumentPublishStatus(input.documentId).catch(() => null);
+  const ingestPublishStatus = existingPublishStatus ?? 'draft';
   await deleteDocumentVectors(input.documentId);
   await addDocumentChunks(finalChunks.map((chunk, idx) => {
     const unit = findUnitForContent(input.extracted.units, chunk.content) || input.extracted.units[0];
@@ -457,8 +463,16 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
       pageNumber: unit?.pageNumber,
       sectionTitle: chunk.title,
       provenance,
+      publishStatus: ingestPublishStatus,
     };
   }));
+
+  // R7: the KB changed → drop this tenant's semantic cache so citizens never
+  // get stale answers served from pre-ingest content. Tenant-wide (not
+  // per-doc_version): doc_version is a manual env today, so scoping the
+  // invalidation to a version string would silently miss. Cache is fail-soft;
+  // worst case is a recompute, never a wrong answer.
+  void semanticCacheInvalidate(input.villageId ?? 'global').catch(() => undefined);
 
   return { chunksCount: finalChunks.length, usedAiChunking, kbRoute };
 }
