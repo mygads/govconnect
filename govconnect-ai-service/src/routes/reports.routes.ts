@@ -4,6 +4,7 @@
  */
 import { Router, type Request, type Response } from 'express';
 import { internalApiKeyMatches } from '../utils/internal-auth';
+import { getQuery, getParam } from '../utils/http';
 import {
   fetchCaseAggregates,
   fetchAiStats,
@@ -34,11 +35,11 @@ router.use(verifyInternalKey);
  */
 router.get('/monthly', async (req: Request, res: Response) => {
   try {
-    const villageId = String(req.query.village_id ?? req.query.villageId ?? '');
-    const year = Number(req.query.year);
-    const month = Number(req.query.month);
-    const format = String(req.query.format ?? 'json').toLowerCase();
-    const villageName = String(req.query.village_name ?? req.query.villageName ?? '') || undefined;
+    const villageId = String(getQuery(req, 'village_id') ?? getQuery(req, 'villageId') ?? '');
+    const year = Number(getQuery(req, 'year'));
+    const month = Number(getQuery(req, 'month'));
+    const format = String(getQuery(req, 'format') ?? 'json').toLowerCase();
+    const villageName = String(getQuery(req, 'village_name') ?? getQuery(req, 'villageName') ?? '') || undefined;
     if (!villageId) return res.status(400).json({ error: 'village_id required' });
     if (!Number.isInteger(year) || year < 2000 || year > 2100) {
       return res.status(400).json({ error: 'year must be a valid year' });
@@ -79,13 +80,13 @@ router.get('/monthly', async (req: Request, res: Response) => {
  */
 async function handleRegionRollup(req: Request, res: Response, scope: RollupScope) {
   try {
-    const ids = String(req.query.village_ids ?? '')
+    const ids = String(getQuery(req, 'village_ids') ?? '')
       .split(',').map((s) => s.trim()).filter(Boolean);
-    const names = String(req.query.village_names ?? '')
+    const names = String(getQuery(req, 'village_names') ?? '')
       .split(',').map((s) => s.trim());
-    const year = Number(req.query.year);
-    const month = Number(req.query.month);
-    const format = String(req.query.format ?? 'json').toLowerCase();
+    const year = Number(getQuery(req, 'year'));
+    const month = Number(getQuery(req, 'month'));
+    const format = String(getQuery(req, 'format') ?? 'json').toLowerCase();
     if (ids.length === 0) return res.status(400).json({ error: 'village_ids required (comma-separated)' });
     if (ids.length > 200) return res.status(400).json({ error: 'too many villages (max 200)' });
     if (!Number.isInteger(year) || year < 2000 || year > 2100) {

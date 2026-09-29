@@ -27,7 +27,7 @@ export async function listRecentMediaSignals(
   if (!db) return dbDown('listRecentMediaSignals', []);
   const safeLimit = Math.min(Math.max(Math.floor(limit) || 50, 1), MAX_LIMIT);
   try {
-    const rows = await db.$queryRawUnsafe<Array<{
+    interface SignalRow {
       occurred_at: Date | string;
       user_id: string;
       trace_id: string;
@@ -36,7 +36,8 @@ export async function listRecentMediaSignals(
         sha256?: string | null;
         duplicate?: boolean;
       } | null;
-    }>>(
+    }
+    const rows = (await db.$queryRawUnsafe(
       `SELECT occurred_at, user_id, trace_id, payload
          FROM pipeline_audit_events
         WHERE tenant_id = $1
@@ -46,7 +47,7 @@ export async function listRecentMediaSignals(
         ORDER BY occurred_at DESC
         LIMIT $2`,
       villageId, safeLimit,
-    );
+    )) as SignalRow[];
     return rows.map((r) => ({
       occurred_at: r.occurred_at instanceof Date ? r.occurred_at.toISOString() : String(r.occurred_at),
       user_id: r.user_id,

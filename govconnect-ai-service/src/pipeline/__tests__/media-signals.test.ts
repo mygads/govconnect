@@ -20,7 +20,7 @@ beforeEach(() => {
 describe('listRecentMediaSignals', () => {
   it('returns parsed signal rows', async () => {
     const db = {
-      $queryRawUnsafe: vi.fn(async () => ([
+      $queryRawUnsafe: vi.fn(async (..._args: any[]): Promise<any[]> => ([
         {
           occurred_at: new Date('2026-09-29T10:00:00Z'),
           user_id: 'u1', trace_id: 't1',
@@ -48,7 +48,7 @@ describe('listRecentMediaSignals', () => {
   });
 
   it('clamps limit to 1..100', async () => {
-    const db = { $queryRawUnsafe: vi.fn(async () => []) };
+    const db = { $queryRawUnsafe: vi.fn(async (..._args: any[]): Promise<any[]> => []) };
     mockGetDb.mockResolvedValue(db as any);
     await listRecentMediaSignals('v1', 9999);
     expect(db.$queryRawUnsafe.mock.calls[0][2]).toBe(100);
@@ -60,7 +60,7 @@ describe('listRecentMediaSignals', () => {
   });
 
   it('fail-soft when the table is missing', async () => {
-    const db = { $queryRawUnsafe: vi.fn(async () => { throw new Error('no table'); }) };
+    const db = { $queryRawUnsafe: vi.fn(async (..._args: any[]): Promise<any[]> => { throw new Error('no table'); }) };
     mockGetDb.mockResolvedValue(db as any);
     await expect(listRecentMediaSignals('v1')).resolves.toEqual([]);
   });

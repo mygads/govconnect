@@ -4,6 +4,7 @@
  */
 import { Router, type Request, type Response } from 'express';
 import { internalApiKeyMatches } from '../utils/internal-auth';
+import { getQuery, getParam } from '../utils/http';
 import { listRecentMediaSignals } from '../pipeline/media-signals';
 
 const router = Router();
@@ -21,9 +22,9 @@ function verifyInternalKey(req: Request, res: Response, next: Function) {
 router.use(verifyInternalKey);
 
 router.get('/recent', async (req: Request, res: Response) => {
-  const villageId = String(req.query.village_id ?? '');
+  const villageId = String(getQuery(req, 'village_id') ?? '');
   if (!villageId) return res.status(400).json({ error: 'village_id required' });
-  const limit = Math.min(Math.max(Number(req.query.limit ?? 50) || 50, 1), 100);
+  const limit = Math.min(Math.max(Number(getQuery(req, 'limit') ?? 50) || 50, 1), 100);
   const signals = await listRecentMediaSignals(villageId, limit);
   res.json({ success: true, signals });
 });
