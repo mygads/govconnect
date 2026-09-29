@@ -16,6 +16,7 @@ import crypto from 'crypto';
 import { routeMessage } from './stage-router';
 import { assessStage, shouldSuggestHandoff } from './stage-assessor';
 import { runStagedTurn, createPipelineContext, stripSystemMarkers } from './staged-agent';
+import { normalizeWithGlossary, loadGlossary } from './glossary';
 import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
@@ -358,6 +359,23 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       if (voice.transcript) {
         input.message = `[transkrip voice note] ${voice.transcript}`;
       }
+    }
+
+    // 0f. A2 glossary normalization: local terms → standard Indonesian BEFORE
+    // intent routing / slot extraction. Fail-open: no glossary = unchanged.
+    try {
+      const entries = await loadGlossary(tenantId);
+      if (entries.length > 0 && input.message) {
+        const norm = normalizeWithGlossary(input.message, entries);
+        if (norm.applied.length > 0) {
+          audit('INGRESS', 'glossary_normalized', {
+            applied: norm.applied.map((a) => `${a.istilah}→${a.bentukBaku}`),
+          });
+          input.message = norm.text;
+        }
+      }
+    } catch {
+      // fail-open: message flows through unchanged
     }
 
     // 1. Deterministic routing.
