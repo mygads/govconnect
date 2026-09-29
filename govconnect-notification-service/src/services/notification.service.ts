@@ -6,6 +6,44 @@ import { sendWhatsAppMessage, sendWebchatSystemNotification } from '../clients/c
 import { extractAdminNotificationNumber } from './urgent-alert-config';
 import { buildComplaintImportantContactsMessage } from './template.service';
 
+/**
+ * R12: ask ai-service to send the one-question CSAT survey after a DONE
+ * notification is delivered. No-op when AI_SERVICE_URL is unset.
+ * Fire-and-forget — never throws.
+ */
+async function triggerCsatSurvey(args: {
+  village_id: string;
+  user_id: string;
+  channel: string;
+  complaint_id: string;
+}): Promise<void> {
+  const base = (config.aiServiceUrl ?? '').replace(/\/$/, '');
+  if (!base || !args.complaint_id) return;
+  try {
+    const res = await fetch(`${base}/internal/csat/trigger`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-api-key': config.internalApiKey,
+      },
+      body: JSON.stringify({
+        village_id: args.village_id,
+        user_id: args.user_id,
+        channel: args.channel,
+        complaint_id: args.complaint_id,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      logger.warn('[csat] trigger call failed', { status: res.status });
+    }
+  } catch (err) {
+    logger.warn('[csat] trigger call failed (non-fatal)', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 interface DeliveryUpdateInput {
   message_id: string;
   delivery_status: 'sent' | 'delivered' | 'read' | 'failed';
@@ -410,6 +448,18 @@ export async function sendNotification(params: SendNotificationParams): Promise<
         message_id: messageId,
         provider_status: providerStatus,
       });
+      // R12: after a DONE notification is delivered, ask ai-service to send
+      // the one-question CSAT survey. Fire-and-forget: the survey flag lives
+      // in ai-service (CSAT_ENABLED) and failures here must never break
+      // the notification flow.
+      if (notificationType === 'status_updated' && entity_status === 'DONE') {
+        void triggerCsatSurvey({
+          village_id,
+          user_id: resolvedIdentifier,
+          channel: resolvedChannel,
+          complaint_id: reference_number ?? '',
+        }).catch(() => undefined);
+      }
     } else {
       status = 'failed';
       errorMsg = typeof response?.error === 'string'

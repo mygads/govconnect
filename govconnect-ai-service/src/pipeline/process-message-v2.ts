@@ -66,6 +66,7 @@ import type { ProcessMessageInput, ProcessMessageResult } from '../services/ump-
 import { redactForLog } from '../gateway/pii-gateway';
 import { extractTopicKey } from '../services/kb-suggester-core';
 import { checkOutboundForCanary, CANARY_SAFE_REPLY } from '../security/canary-docs';
+import { answerCsatSurvey, CSAT_THANKS } from '../services/csat.service';
 import logger from '../utils/logger';
 
 /**
@@ -178,6 +179,32 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
     }
 
     // 0c. Restore multi-turn state (stage + slots survive across turns).
+    // (R12 CSAT hook runs before this: a consumed survey short-circuits.)
+    if (sideEffectsAllowed) {
+      // R12: CSAT answer — a pending survey plus a lone 1-5 digit is
+      // consumed deterministically here, before the staged turn. Anything
+      // else flows through normally and the survey stays pending.
+      const csat = await answerCsatSurvey({
+        villageId: tenantId,
+        userId: input.userId,
+        message: input.message ?? '',
+        traceId,
+      });
+      if (csat.consumed) {
+        audit('INGRESS', 'csat_answer_consumed', { rating: csat.rating, complaint_id: csat.complaintId });
+        return {
+          success: true,
+          response: csat.response ?? CSAT_THANKS,
+          intent: 'csat',
+          metadata: {
+            processingTimeMs: Date.now() - started,
+            hasKnowledge: false,
+            agentMode: 'single_orchestrator',
+            traceId,
+          },
+        };
+      }
+    }
     const prior = await loadTurnState(tenantId, input.userId, channel);
     if (prior) {
       ctx.slots = { ...(prior.slots as Record<string, unknown>) };
