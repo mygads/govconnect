@@ -15,6 +15,7 @@ import { callAIGatewayPrompt, NoCapableGatewayModelError } from './ai-gateway.se
 import { runDocVsDocForDocument } from './knowledge-consistency.service';
 import { runDocVsDbForDocument } from './doc-vs-db-pipeline.service';
 import { routeKnowledgeDocument, KB_REJECTED_COPY, type KbRoute } from './kb-router.service';
+import { scanForSecrets, checkIngestForForeignCanary } from '../security/canary-docs';
 
 export interface ProcessDocumentInput {
   documentId: string;
@@ -286,6 +287,40 @@ async function updateDashboardDocument(documentId: string, data: Record<string, 
 async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer' | 'mimeType' | 'fileHash' | 'tracePrefix'> & { extracted: ExtractedDocument }) {
   const docTitle = input.title || input.originalName;
   const content = unitsToText(input.extracted.units);
+
+  // R6: secret + foreign-canary scan BEFORE anything is indexed.
+  // Secrets must never enter vectors; a foreign canary proves upstream
+  // exfiltration. Both reject the document with no chunks written.
+  const secretFindings = scanForSecrets(content);
+  if (secretFindings.length > 0) {
+    const kinds = secretFindings.map((f) => `${f.kind}×${f.count}`).join(', ');
+    logger.warn('[canary] document rejected: credential patterns detected', {
+      documentId: input.documentId, kinds,
+    });
+    await updateDashboardDocument(input.documentId, {
+      status: 'rejected',
+      error_message:
+        `DITOLAK: dokumen terdeteksi mengandung kredensial (${kinds}). ` +
+        `Hapus kredensial dari dokumen sebelum upload ulang. Kredensial tidak pernah diindeks ke knowledge base.`,
+    });
+    return { chunksCount: 0, usedAiChunking: false, kbRoute: 'rejected' as KbRoute };
+  }
+  const { foreignCanary } = await checkIngestForForeignCanary(content, input.villageId ?? '');
+  if (foreignCanary) {
+    // Label only — the token value never lands in logs.
+    logger.error('[canary] document rejected: foreign canary token detected', {
+      documentId: input.documentId,
+      ownerVillageId: foreignCanary.ownerVillageId,
+      label: foreignCanary.label,
+    });
+    await updateDashboardDocument(input.documentId, {
+      status: 'rejected',
+      error_message:
+        `DITOLAK: dokumen mengandung penanda keamanan milik desa lain (${foreignCanary.label}). ` +
+        `Indikasi kebocoran data antar-desa — hubungi administrator sebelum upload ulang.`,
+    });
+    return { chunksCount: 0, usedAiChunking: false, kbRoute: 'rejected' as KbRoute };
+  }
 
   // R3: KB router — classify BEFORE chunking/embedding. Type-D (authoritative
   // operational data: jam layanan, tarif, kontak) is rejected here with no

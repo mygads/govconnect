@@ -127,6 +127,8 @@ export interface ProcessMessageResult {
     };
     /** Unique trace ID for correlating logs across NLU → RAG → LLM → response */
     traceId?: string;
+    /** R6: outbound response contained a canary token and was substituted */
+    canaryLeakBlocked?: boolean;
     walletStatus?: string;
     walletBalanceUsd?: number;
     /** True when a wallet-exhausted message was held for later flush. */

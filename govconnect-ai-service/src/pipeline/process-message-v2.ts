@@ -65,6 +65,7 @@ import {
 import type { ProcessMessageInput, ProcessMessageResult } from '../services/ump-types';
 import { redactForLog } from '../gateway/pii-gateway';
 import { extractTopicKey } from '../services/kb-suggester-core';
+import { checkOutboundForCanary, CANARY_SAFE_REPLY } from '../security/canary-docs';
 import logger from '../utils/logger';
 
 /**
@@ -88,7 +89,7 @@ function idemKey(input: ProcessMessageInput): string {
   return buildIdempotencyKey(input);
 }
 
-export async function processMessageV2(input: ProcessMessageInput): Promise<ProcessMessageResult> {
+export async function processMessageV2Inner(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   const started = Date.now();
   const traceId = crypto.randomUUID();
   const tenantId = input.villageId ?? '';
@@ -614,4 +615,32 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       error: 'v2_unexpected_exception',
     };
   }
+}
+
+/**
+ * R6: outbound canary tripwire — the single choke point for every response
+ * leaving the pipeline (all early returns funnel through here). If a canary
+ * token leaked into the response, substitute a safe static reply and audit
+ * `canary_token_leaked`. Never silent, never throws.
+ */
+export async function processMessageV2(input: ProcessMessageInput): Promise<ProcessMessageResult> {
+  const result = await processMessageV2Inner(input);
+  try {
+    // traceId lives on the result metadata, not the input.
+    const traceId = result.metadata?.traceId ?? '';
+    const check = await checkOutboundForCanary(result.response ?? '', input.villageId ?? '', traceId);
+    if (check.leaked) {
+      return {
+        ...result,
+        success: true,
+        response: CANARY_SAFE_REPLY,
+        metadata: { ...(result.metadata ?? {}), canaryLeakBlocked: true },
+      };
+    }
+  } catch (err) {
+    logger.warn('[processMessageV2] canary outbound check failed (fail-open on the check, response untouched)', {
+      traceId: result.metadata?.traceId, error: (err as Error)?.message ?? String(err),
+    });
+  }
+  return result;
 }
