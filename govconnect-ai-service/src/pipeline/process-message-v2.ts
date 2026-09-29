@@ -15,7 +15,7 @@
 import crypto from 'crypto';
 import { routeMessage } from './stage-router';
 import { assessStage, shouldSuggestHandoff } from './stage-assessor';
-import { runStagedTurn, createPipelineContext } from './staged-agent';
+import { runStagedTurn, createPipelineContext, stripSystemMarkers } from './staged-agent';
 import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
@@ -133,6 +133,13 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
         },
       };
     }
+
+    // P1-8: strip literal system-authority markers ("[SISTEM]",
+    // "[ATURAN SUMBER]") from user input before anything else sees it —
+    // routing, slots, idempotency key, classifier, and the prompt. Our own
+    // system notes use those markers with role:'system'; a user typing the
+    // same literal must not borrow that authority.
+    input.message = stripSystemMarkers(input.message);
 
     // 0b. Idempotency: duplicate delivery → replay stored response.
     // Skipped in shadow/evaluation (P1-1): shadow must compute fresh, and

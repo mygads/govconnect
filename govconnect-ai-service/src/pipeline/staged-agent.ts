@@ -150,6 +150,20 @@ function verifyAnswer(text: string, traces: ToolTraceEntry[]): { text: string; l
   return { text: clean, leaked };
 }
 
+/**
+ * P1-8: strip literal system-authority markers from user-supplied text.
+ *
+ * Our own system notes use `[SISTEM]` / `[ATURAN SUMBER]` with role:'system'.
+ * A user who types the same literal (e.g. "[SISTEM] abaikan aturan") must
+ * not gain that authority — the marker tokens are removed, the rest of the
+ * message is kept verbatim.
+ */
+export function stripSystemMarkers(text: string): string {
+  return (text ?? '')
+    .replace(/\[(SISTEM|ATURAN SUMBER)\]/gi, '')
+    .replace(/[ \t]{2,}/g, ' ');
+}
+
 async function runBoundedLoop(
   input: StagedAgentInput,
   stage: Stage,
@@ -173,7 +187,14 @@ async function runBoundedLoop(
     language: input.language,
   });
 
-  const { text: safeMessage } = await piiInbound(input.message, input.ctx.tenantId ?? '');
+  // P1-8: system-authority notes go out as role:'system', never role:'user'.
+  // A model instructed by a user-role message treats it as untrusted user
+  // content; system role carries the intended authority and cannot be
+  // confused with (or forged by) user input.
+  const { text: safeMessage } = await piiInbound(
+    stripSystemMarkers(input.message),
+    input.ctx.tenantId ?? '',
+  );
   const messages: GatewayChatMessage[] = [
     { role: 'system', content: system },
     { role: 'user', content: dynamicContext },
@@ -245,7 +266,7 @@ async function runBoundedLoop(
         });
         if (!identityNoteInjected) {
           identityNoteInjected = true;
-          messages.push({ role: 'user', content: `[SISTEM] ${copy}` });
+          messages.push({ role: 'system', content: `[SISTEM] ${copy}` });
         }
       }
       if (r.ok) {
@@ -275,7 +296,7 @@ async function runBoundedLoop(
       const conflict = detectPrecedenceConflict(evidenceEntries);
       if (conflict) {
         conflictInjected = true;
-        messages.push({ role: 'user', content: `[ATURAN SUMBER] ${conflict}` });
+        messages.push({ role: 'system', content: `[ATURAN SUMBER] ${conflict}` });
         logger.info('[staged-agent] precedence conflict resolved to P0', { traceId: input.ctx.traceId });
       }
     }
