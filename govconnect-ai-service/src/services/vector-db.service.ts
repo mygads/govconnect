@@ -629,3 +629,59 @@ export async function getVectorDbStats(): Promise<{
     };
   }
 }
+
+/**
+ * Direct keyword search on knowledge_vectors using ILIKE.
+ * Last-resort fallback when vector/RAG and dashboard keyword search fail.
+ * Uses tenant scope filter for isolation.
+ * (Fix K2/K3/C3/N5: ensures KB answers are found even when semantic search misses.)
+ */
+export interface KeywordSearchResult {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+}
+
+export async function searchKnowledgeByKeywordsDirect(
+  query: string,
+  villageId?: string,
+  limit: number = 3,
+): Promise<KeywordSearchResult[]> {
+  try {
+    // Extract meaningful keywords (min 3 chars, skip stopwords).
+    const stopwords = new Set(['apa', 'yang', 'dan', 'di', 'ke', 'dari', 'untuk', 'berapa', 'gimana', 'bagaimana', 'cara', 'bikin', 'buat', 'saya', 'kamu', 'ini', 'itu', 'adalah', 'dengan', 'pada', 'sudah', 'belum', 'bisa', 'mau', 'ingin', 'tolong']);
+    const keywords = query
+      .toLowerCase()
+      .replace(/[?!.,;:()"']/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !stopwords.has(w));
+
+    if (keywords.length === 0) return [];
+
+    const tenantScopeFilter = villageId
+      ? Prisma.sql`((village_id = ${villageId} AND scope = 'village' AND is_global = FALSE) OR (scope = 'global' AND is_global = TRUE))`
+      : Prisma.sql`(scope = 'global' AND is_global = TRUE)`;
+
+    // Build OR conditions for each keyword matching title or content.
+    const keywordConditions = keywords.map(
+      (kw) => Prisma.sql`(title ILIKE ${'%' + kw + '%'} OR content ILIKE ${'%' + kw + '%'})`,
+    );
+    const whereClause = Prisma.join(keywordConditions, ' OR ');
+
+    const results = await prisma.$queryRaw<KeywordSearchResult[]>`
+      SELECT id, title, content, category
+      FROM ai.knowledge_vectors
+      WHERE ${tenantScopeFilter} AND (${whereClause})
+      ORDER BY
+        CASE WHEN ${keywords[0]} IS NOT NULL AND title ILIKE ${'%' + keywords[0] + '%'} THEN 0 ELSE 1 END,
+        LENGTH(content)
+      LIMIT ${limit}
+    `;
+
+    return results;
+  } catch (error: any) {
+    logger.error('Direct keyword search failed', { error: error.message });
+    return [];
+  }
+}

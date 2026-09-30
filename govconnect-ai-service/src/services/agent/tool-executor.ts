@@ -28,6 +28,7 @@ import {
 } from '../case-client.service';
 import { rememberMemoryEvent, searchUserMemories } from '../hybrid-memory.service';
 import { searchDocuments, searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
+import { searchKnowledgeByKeywordsDirect } from '../vector-db.service';
 import { loadSkill } from '../skill-loader.service';
 import { recordMemoryTrace } from '../runtime-observability.service';
 import { resolveServiceSlugFromSearch } from '../service-handler';
@@ -477,6 +478,25 @@ async function toolGetServiceInfo(
           meta: {
             trustLevel: 'trusted_fact',
             sourceKind: 'knowledge_base_fallback',
+          },
+        };
+      }
+      // Last resort: direct keyword ILIKE search (bypasses vector + dashboard).
+      const directHits = await searchKnowledgeByKeywordsDirect(kbQuery, ctx.villageId, 3);
+      if (directHits.length > 0) {
+        return {
+          success: true,
+          data: {
+            found: true,
+            fromKnowledgeBase: true,
+            documents: directHits.map((d) => ({
+              title: d.title,
+              content: (d.content || '').substring(0, 500),
+            })),
+          },
+          meta: {
+            trustLevel: 'trusted_fact',
+            sourceKind: 'knowledge_base_direct_keyword',
           },
         };
       }
