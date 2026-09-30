@@ -171,6 +171,20 @@ describe('confirmation binding (pure)', () => {
     }
   });
 
+  it('resolveConfirmation: webchat affirmative TEXT → execute (no buttons)', () => {
+    for (const text of ['Ya', 'ya', 'Ya, lanjutkan', 'setuju', 'lanjutkan']) {
+      expect(resolveConfirmation({
+        message: text, pending: PENDING, channel: 'webchat',
+      })).toEqual({ kind: 'execute' });
+    }
+  });
+
+  it('resolveConfirmation: webchat without pending → route (no execution)', () => {
+    expect(resolveConfirmation({
+      message: 'Ya, lanjutkan', pending: null, channel: 'webchat',
+    })).toEqual({ kind: 'route' });
+  });
+
   it('resolveConfirmation: ordinary text → route', () => {
     expect(resolveConfirmation({ message: 'halo', pending: PENDING })).toEqual({ kind: 'route' });
     expect(resolveConfirmation({ message: 'Ya', pending: null })).toEqual({ kind: 'route' });

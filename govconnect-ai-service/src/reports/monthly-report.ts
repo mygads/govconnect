@@ -114,7 +114,7 @@ export async function fetchAiStats(
         villageId, startIso, endIso,
       ),
       one(
-        `SELECT coalesce(sum(actual_cost_usd),0) AS n FROM ai_token_usage
+        `SELECT coalesce(sum(actual_cost_usd),0) AS n FROM ai.ai_token_usage
          WHERE village_id = $1 AND created_at >= $2 AND created_at < $3`,
         villageId, startIso, endIso,
       ),

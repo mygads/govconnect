@@ -68,7 +68,12 @@ export const SLOT_SCHEMAS: Record<SlotIntent, SlotDef[]> = {
 export type Slots = Record<string, string>;
 
 /** Deterministic keyword extraction for the most common slots (best-effort). */
-export function extractSlotsDeterministic(text: string, intent: SlotIntent): Partial<Slots> {
+export function extractSlotsDeterministic(
+  text: string,
+  intent: SlotIntent,
+  /** Name of the slot the FSM is currently asking for (from nextMissingSlot). */
+  expectedSlot?: string | null,
+): Partial<Slots> {
   const out: Partial<Slots> = {};
   const lower = text.toLowerCase();
   if (intent === 'complaint') {
@@ -82,8 +87,25 @@ export function extractSlotsDeterministic(text: string, intent: SlotIntent): Par
     for (const [re, cat] of catKeywords) {
       if (re.test(lower)) { out.category = cat; break; }
     }
-    const rtRw = text.match(/\bRT\s*\d+\s*\/\s*RW\s*\d+/i);
-    if (rtRw) out.location = rtRw[0].toUpperCase();
+    // Location: "RT 03/RW 05" or "RT 03 RW 05" (slash optional), plus
+    // street/landmark phrases (Jl., jalan, gang, dusun, depan/dekat/samping).
+    const rtRw = text.match(/\bRT\s*\d+\s*\/?\s*RW\s*\d+/i);
+    const street = text.match(/\b(jl\.[^,.]{2,80}|(jalan|gang|dusun|depan|dekat|samping|seberang)\b[^,.]{2,80})/i);
+    if (rtRw) {
+      const rtRwUpper = rtRw[0].toUpperCase();
+      // Avoid duplicating RT/RW when the street phrase already contains it.
+      out.location = street && !street[1].toUpperCase().includes(rtRwUpper)
+        ? `${street[1].trim()} (${rtRwUpper})`
+        : (street ? street[1].trim() : rtRwUpper);
+    } else if (street) {
+      out.location = street[1].trim();
+    }
+    // Description: when the FSM is asking for it, the user's free-text answer
+    // IS the description (unless it was clearly just a location fragment).
+    // Validation (min 10 chars) happens in mergeSlots.
+    if (expectedSlot === 'description' && !out.location && text.trim().length >= 4) {
+      out.description = text.trim();
+    }
   }
   return out;
 }
