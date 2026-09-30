@@ -663,6 +663,58 @@ export function recordServiceUsage(wa_user_id: string, serviceCode: string, vill
 /**
  * Learn user data from message (auto-extract and save)
  */
+
+// G7: words that terminate a captured name — prevents "nama saya mau lapor"
+// from being stored as a name. Conservative list of verbs/particles.
+const NAME_STOPWORDS = new Set([
+  'mau', 'ingin', 'akan', 'sudah', 'belum', 'tidak', 'bukan', 'jangan',
+  'lapor', 'melapor', 'melaporkan', 'bertanya', 'tanya', 'menanyakan',
+  'minta', 'meminta', 'tolong', 'butuh', 'perlu', 'bisa', 'dapat',
+  'yang', 'dan', 'untuk', 'dari', 'dengan', 'adalah', 'ini', 'itu',
+  'saya', 'aku', 'gue', 'gw', 'kami', 'kita', 'anda',
+  'halo', 'hai', 'selamat', 'pagi', 'siang', 'sore', 'malam',
+  'terima', 'kasih', 'mohon', 'apakah', 'bagaimana', 'gimana',
+  'kenapa', 'kapan', 'dimana', 'siapa', 'berapa', 'mengapa', 'nama',
+]);
+
+/**
+ * G7: Extract a self-introduced name from explicit introduction patterns only
+ * ("nama saya X", "namaku X", "perkenalkan saya X", "saya bernama X",
+ * "panggil saya X"). Returns null when no confident match.
+ * Exported for unit testing.
+ */
+export function extractIntroducedName(message: string): string | null {
+  const patterns = [
+    /\bnama\s+(?:saya|aku|gue|gw)\s+([a-zA-Z][a-zA-Z\s.'-]{1,60})/i,
+    /\bnamaku\s+([a-zA-Z][a-zA-Z\s.'-]{1,60})/i,
+    /\bperkenalkan(?:[,\s]+(?:nama\s+)?(?:saya|aku))?\s+([a-zA-Z][a-zA-Z\s.'-]{1,60})/i,
+    /\bsaya\s+bernama\s+([a-zA-Z][a-zA-Z\s.'-]{1,60})/i,
+    /\bpanggil\s+(?:saya|aku)\s+([a-zA-Z][a-zA-Z\s.'-]{1,60})/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (!match) continue;
+
+    // Take words until a stopword / punctuation boundary; names are short.
+    const words: string[] = [];
+    for (const rawWord of match[1].split(/\s+/)) {
+      const word = rawWord.replace(/[^a-zA-Z.'-]/g, '');
+      if (!word) break;
+      const lower = word.toLowerCase().replace(/[^a-z]/g, '');
+      if (NAME_STOPWORDS.has(lower)) break;
+      if (!/^[a-zA-Z]/.test(word)) break;
+      words.push(word);
+      if (words.length >= 4) break;
+    }
+    const name = words.join(' ').replace(/[.'-]+$/, '').trim();
+    if (name.length >= 2 && name.length <= 60 && /[a-zA-Z]{2,}/.test(name)) {
+      return name;
+    }
+  }
+  return null;
+}
+
 export function learnFromMessage(wa_user_id: string, message: string, village_id?: string): void {
   const profile = getProfile(wa_user_id, village_id);
   let updated = false;
@@ -678,6 +730,21 @@ export function learnFromMessage(wa_user_id: string, message: string, village_id
       profile.no_hp = encryptPii(phoneMatch[1]);
       updated = true;
       logger.debug('👤 Learned phone from message (encrypted)', {
+        wa_user_id,
+        village_id: normalizeVillageScope(village_id),
+      });
+    }
+  }
+
+  // G7: Extract self-introduced name ("nama saya X", "namaku X", ...) when we
+  // don't know the name yet. Explicit introduction patterns only — no generic
+  // "saya ..." matching, to avoid false positives.
+  if (!profile.nama_lengkap) {
+    const introducedName = extractIntroducedName(message);
+    if (introducedName) {
+      profile.nama_lengkap = introducedName;
+      updated = true;
+      logger.debug('👤 Learned name from introduction', {
         wa_user_id,
         village_id: normalizeVillageScope(village_id),
       });

@@ -103,6 +103,13 @@ export function appendToHistoryCache(userId: string, role: 'user' | 'assistant',
     }
     cached.timestamp = Date.now();
     conversationHistoryCache.set(userId, cached);
+  } else {
+    // C1/C2/E6: create cache entry if none exists (e.g. webchat testing
+    // where channel service has no stored messages yet).
+    conversationHistoryCache.set(userId, {
+      history: [{ role, content }],
+      timestamp: Date.now(),
+    });
   }
 }
 
@@ -128,6 +135,20 @@ export function deriveLastDiscussedServiceContext(
       if (!candidate) continue;
       if (/^(?:LAY|LAP)-\d/i.test(candidate)) continue;
       return { serviceName: candidate };
+    }
+    // C1: detect service names directly from messages (e.g. "surat domisili")
+    const serviceKeywords: Array<{ pattern: RegExp; slug: string; name: string }> = [
+      { pattern: /\bdomisili\b/i, slug: 'surat-domisili', name: 'Surat Keterangan Domisili' },
+      { pattern: /\bktp\b/i, slug: 'ktp', name: 'KTP' },
+      { pattern: /\bkk\b|kartu keluarga\b/i, slug: 'kk', name: 'Kartu Keluarga' },
+      { pattern: /\bakta kelahiran\b/i, slug: 'akta-kelahiran', name: 'Akta Kelahiran' },
+      { pattern: /\bsktm\b/i, slug: 'sktm', name: 'SKTM' },
+      { pattern: /\bsurat pindah\b/i, slug: 'surat-pindah', name: 'Surat Pindah' },
+    ];
+    for (const svc of serviceKeywords) {
+      if (svc.pattern.test(content)) {
+        return { serviceSlug: svc.slug, serviceName: svc.name };
+      }
     }
   }
   return {};

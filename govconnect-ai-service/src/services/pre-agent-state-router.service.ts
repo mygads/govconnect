@@ -1645,6 +1645,52 @@ export async function tryHandleLatePreAgentState(
   // Extract the latest user turn from a potentially batched/timestamped message
   const latestTurn = message.split(/\n/).pop()?.trim().replace(/^\[\d{2}[.:]\d{2}[.:]\d{2}\]\s*/, '').trim() || message.trim();
 
+  // C1: explicit "kirim link formulirnya" without a pending offer — resolve
+  // the service from conversation history (last discussed service).
+  if (isExplicitServiceActionRequest(latestTurn)) {
+    try {
+      const { deriveLastDiscussedServiceContext } = await import('./ump-utils');
+      const hist = await fetchConversationHistoryFromChannel(userId, villageId);
+      const svcCtx = deriveLastDiscussedServiceContext(hist || []);
+      if (svcCtx.serviceName) {
+        tracker.preparing();
+        notifyStage('preparing', 80);
+        const linkReply = await handleServiceRequestCreation(userId, channel, {
+          intent: 'CREATE_SERVICE_REQUEST',
+          fields: {
+            service_name: svcCtx.serviceName,
+            service_query: svcCtx.serviceName,
+            _original_message: svcCtx.serviceName,
+            ...(villageId ? { village_id: villageId } : {}),
+          },
+          reply_text: '',
+        });
+        const normalized = normalizeHandlerResult(linkReply);
+        tracker.complete();
+        // Only return if we got a real link response, not an error
+        if (normalized.replyText && !/tidak ditemukan|sebutkan nama layanan/i.test(normalized.replyText)) {
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: normalized.replyText,
+            guidanceText: normalized.guidanceText,
+            intent: 'CREATE_SERVICE_REQUEST',
+            guardrail: {
+              stage: 'pre_agent_service_link',
+              type: 'service_link_from_history',
+              action: 'created',
+              reason: 'explicit_action_with_history_context',
+              details: { serviceName: svcCtx.serviceName },
+            },
+          });
+        }
+      }
+    } catch (err: any) {
+      logger.debug('[PreAgent] service link from history failed', { error: err?.message });
+    }
+    // No service in history — fall through to agent for clarification.
+  }
+
   // Early cancel-confirmation shortcut: if user sends bare YA on WA and there's
   // a recent cancel request in history, execute the cancellation immediately
   // before any other routing can intercept it.
@@ -1753,12 +1799,19 @@ export async function tryHandleLatePreAgentState(
     });
 
     if (decision.action === 'interrupt') {
-      clearPendingAddressRequest(userId);
+      // E1/E2/E3: only release the draft for definitive topic changes.
+      // For correction/question/frustration/handoff, keep the draft so the
+      // agent can resume it with context instead of asking to repeat all.
+      const releaseReasons = ['explicit_cancel', 'service_info_switch', 'status_lookup'];
+      if (releaseReasons.includes(decision.reason)) {
+        clearPendingAddressRequest(userId);
+      }
       // Fall through so the rest of the router (contact lookup, status, etc.)
       // or the agent can handle this turn.
-      logger.info('🧭 complaint-fsm: pending address released due to interrupt', {
+      logger.info('🧭 complaint-fsm: interrupt during pending address', {
         userId,
         reason: decision.reason,
+        draftReleased: releaseReasons.includes(decision.reason),
         messagePreview: message.substring(0, 60),
       });
     } else if (decision.action === 'resume') {
@@ -1834,11 +1887,19 @@ export async function tryHandleLatePreAgentState(
     });
 
     if (identityDecision.action === 'interrupt') {
-      clearPendingComplaintData(userId);
-      logger.info('🧭 complaint-fsm: pending identity released due to interrupt', {
+      // E1/E2/E3: only release the draft for definitive topic changes.
+      // For correction/question/frustration/handoff, keep the draft so the
+      // agent can resume it with context instead of asking to repeat all.
+      const releaseReasons = ['explicit_cancel', 'service_info_switch', 'status_lookup'];
+      const released = releaseReasons.includes(identityDecision.reason);
+      if (released) {
+        clearPendingComplaintData(userId);
+      }
+      logger.info('🧭 complaint-fsm: interrupt during pending identity', {
         userId,
         reason: identityDecision.reason,
         waitingFor: pendingComplaint.waitingFor,
+        draftReleased: released,
         messagePreview: message.substring(0, 60),
       });
     } else {
