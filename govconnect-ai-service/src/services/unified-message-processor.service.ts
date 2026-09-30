@@ -1116,7 +1116,13 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
       });
     }
     const finalIntent = residentKnowledgeFallback?.intent || derivedIntent;
-    const finalResponse = residentKnowledgeFallback?.response || result.replyText;
+    let finalResponse = residentKnowledgeFallback?.response || result.replyText;
+
+    // W7/UU PDP: redact NIK (16 digit) dari respons sebelum dikirim ke user.
+    // Mencegah LLM meng-echo NIK yang disuplai user secara penuh.
+    if (finalResponse) {
+      finalResponse = finalResponse.replace(/\b\d{16}\b/g, '**** **** **** ****');
+    }
 
     // Empty reply = the agent produced no answer (LLM timeout/down or loop
     // exhausted without grounding). Treat as a processing FAILURE: stay silent
