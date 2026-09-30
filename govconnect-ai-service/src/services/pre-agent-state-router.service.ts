@@ -1857,6 +1857,19 @@ export async function tryHandleLatePreAgentState(
         draftReleased: releaseReasons.includes(decision.reason),
         messagePreview: message.substring(0, 60),
       });
+      // E1 fix: answer questions in draft context (same as pending-identity).
+      if (decision.reason === 'question' && !releaseReasons.includes(decision.reason)) {
+        const draftSummary = [
+          pendingAddr.kategori,
+          pendingAddr.deskripsi ? `- ${pendingAddr.deskripsi}` : '',
+        ].filter(Boolean).join(' ');
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: `Untuk laporan ${draftSummary || 'tersebut'}, saya belum bisa pastikan jadwalnya karena saya masih butuh lokasi kejadiannya dulu. Setelah laporan lengkap dan masuk, Bapak/Ibu akan dapat nomor pelacakan untuk cek status. Boleh sebutkan lokasinya (RT/RW atau patokan)?`,
+          intent: 'CREATE_COMPLAINT',
+        });
+      }
     } else if (decision.action === 'resume') {
       clearPendingAddressRequest(userId);
       if (mediaUrl) addPendingPhoto(userId, mediaUrl);
@@ -1945,6 +1958,25 @@ export async function tryHandleLatePreAgentState(
         draftReleased: released,
         messagePreview: message.substring(0, 60),
       });
+      // E1 fix: answer timeline/process questions IN CONTEXT of the draft
+      // instead of falling through to a generic KB answer that forgets it.
+      if (identityDecision.reason === 'question' && !released) {
+        const draftSummary = [
+          pendingComplaint.kategori,
+          pendingComplaint.alamat ? `di ${pendingComplaint.alamat}` : '',
+        ].filter(Boolean).join(' ');
+        const needField = pendingComplaint.waitingFor === 'nama'
+          ? 'nama Bapak/Ibu'
+          : pendingComplaint.waitingFor === 'no_hp'
+            ? 'nomor HP Bapak/Ibu'
+            : 'data yang kurang';
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: `Untuk laporan ${draftSummary || 'tersebut'}, saya belum bisa pastikan jadwal perbaikannya karena laporannya belum selesai dibuat — saya masih butuh ${needField} dulu. Setelah laporan masuk dan dapat nomor pelacakan, Bapak/Ibu bisa cek statusnya kapan saja. Boleh sebutkan ${needField} sekarang?`,
+          intent: 'CREATE_COMPLAINT',
+        });
+      }
     } else {
       const userProfile = await getAutoFillSuggestionsWithFallback(userId, villageId); // W5: village-scoped
 
