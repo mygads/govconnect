@@ -457,12 +457,12 @@ async function toolGetServiceInfo(
 
   if (services.length === 0) {
     // Fallback to KB search before giving up with generic response.
-    // (Fix K2/K3: "biaya bikin surat domisili berapa?" was answered generically
+    // (Fix K2/K3/C3/N5: "biaya bikin surat domisili berapa?" was answered generically
     // even though KB has the exact answer.)
     const kbQuery = serviceName || contextualServiceName || 'layanan administrasi desa';
     try {
       const kbResult = await searchKnowledge(kbQuery, undefined, ctx.villageId);
-      const hits = Array.isArray((kbResult as any)?.documents) ? (kbResult as any).documents : [];
+      const hits = Array.isArray(kbResult?.data) ? kbResult.data : [];
       if (hits.length > 0) {
         return {
           success: true,

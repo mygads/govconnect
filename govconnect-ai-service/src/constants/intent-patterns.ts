@@ -140,6 +140,9 @@ export const CANCEL_PATTERNS = [
   /\b(batalkan|cancel|batal)\s+(laporan|pengaduan)\b/i,
   /\b(mau|ingin)\s+(batalkan|cancel|batal)\b/i,
   /\b(hapus)\s+(laporan|pengaduan)\b/i,
+  // Fix C6: frasa natural pembatalan tanpa objek eksplisit.
+  /^\s*(batal|cancel|batalkan)\s*(aja|saja)?\s*[.!]?\s*$/i,
+  /\b(nggak|gak|ga|tidak)\s+(jadi|usah)\b/i,
 ];
 
 export const CANCEL_SERVICE_PATTERNS = [
