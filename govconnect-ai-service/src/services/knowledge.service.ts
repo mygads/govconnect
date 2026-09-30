@@ -6,6 +6,7 @@ import { aiAnalyticsService } from './ai-analytics.service';
 import {
   retrieveContext,
 } from './rag.service';
+import { searchKnowledgeByKeywordsDirect } from './vector-db.service';
 import { RAGContext } from '../types/embedding.types';
 import { classifyProfileQuery } from './micro-llm-matcher.service';
 
@@ -138,6 +139,38 @@ export async function searchKnowledge(
 
     // Keyword-based search (fallback or when RAG is disabled)
     const keywordResult = await searchKnowledgeWithKeywords(query, categories, villageId);
+    if (keywordResult.total > 0) {
+      trackKnowledgeSearch(query, villageId, keywordResult, searchContext.channel);
+      return keywordResult;
+    }
+
+    // Last resort: direct keyword ILIKE on knowledge_vectors (bypasses dashboard).
+    // (Fix D6/K2/K3: RAG + dashboard keyword both missed existing KB docs.)
+    try {
+      const directHits = await searchKnowledgeByKeywordsDirect(query, villageId, 3);
+      if (directHits.length > 0) {
+        const directResult: KnowledgeSearchResult = {
+          data: directHits.map((h) => ({
+            id: h.id,
+            title: h.title,
+            content: h.content,
+            category: h.category,
+            keywords: [],
+            source_type: 'knowledge' as const,
+          })),
+          total: directHits.length,
+          context: directHits.map((h) => `${h.title}: ${h.content}`).join('\n\n'),
+          confidenceLevel: 'medium',
+          retrievalMode: 'keyword',
+          sourceTitles: directHits.map((h) => h.title),
+        };
+        trackKnowledgeSearch(query, villageId, directResult, searchContext.channel);
+        return directResult;
+      }
+    } catch (directError: any) {
+      logger.warn('Direct keyword search fallback failed', { error: directError.message });
+    }
+
     trackKnowledgeSearch(query, villageId, keywordResult, searchContext.channel);
     return keywordResult;
   } catch (error: any) {
