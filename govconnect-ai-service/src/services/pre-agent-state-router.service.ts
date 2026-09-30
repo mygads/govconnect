@@ -107,6 +107,57 @@ export type PreAgentRouteResult =
   | { kind: 'defer'; reason: string }
   | { kind: 'release_and_defer'; reason: string; releasedState: string[] };
 
+/**
+ * E3: Parse a correction message into draft field updates.
+ * Handles: "maksudnya X" (location), "bukan di X" (location),
+ * "bukan Y, tapi Z" (category), "salah, Z" (category).
+ */
+function parseDraftCorrection(message: string): { alamat?: string; kategori?: string } {
+  const trimmed = (message || '').trim();
+  const result: { alamat?: string; kategori?: string } = {};
+
+  // "bukan <old>, tapi <new>" -> category correction
+  const bukanTapi = trimmed.match(/bukan\s+[^,]+,\s*(?:tapi|melainkan)\s+(.+)$/i);
+  if (bukanTapi) {
+    result.kategori = bukanTapi[1].trim();
+    return result;
+  }
+
+  // "maksudnya <location>" / "maksud saya <location>" -> location correction
+  const maksudnya = trimmed.match(/(?:maksud(?:nya| saya|ku)?|yang\s+benar)\s+(.+)$/i);
+  if (maksudnya) {
+    const loc = maksudnya[1].trim();
+    // If it looks like a location (contains gang/jalan/rt/rw/desa/dusun), treat as alamat
+    if (/\b(gang|jalan|jl\.?|rt|rw|dusun|desa|kelurahan|depan|belakang|samping)\b/i.test(loc)) {
+      result.alamat = loc;
+    } else {
+      result.kategori = loc;
+    }
+    return result;
+  }
+
+  // "bukan di <location>" -> location correction
+  const bukanDi = trimmed.match(/bukan\s+di\s+(.+)$/i);
+  if (bukanDi) {
+    result.alamat = bukanDi[1].trim();
+    return result;
+  }
+
+  // "salah, <new>" / "ganti ke <new>" / "ubah ke <new>"
+  const ganti = trimmed.match(/(?:salah|ganti|ubah|rubah|koreksi|revisi)[,:]?\s+(?:ke\s+|jadi\s+)?(.+)$/i);
+  if (ganti) {
+    const val = ganti[1].trim();
+    if (/\b(gang|jalan|jl\.?|rt|rw|dusun|desa|kelurahan)\b/i.test(val)) {
+      result.alamat = val;
+    } else {
+      result.kategori = val;
+    }
+    return result;
+  }
+
+  return result;
+}
+
 function buildGuardResult(input: {
   startTime: number;
   traceId: string;
@@ -1857,7 +1908,7 @@ export async function tryHandleLatePreAgentState(
         draftReleased: releaseReasons.includes(decision.reason),
         messagePreview: message.substring(0, 60),
       });
-      // E1 fix: answer questions in draft context (same as pending-identity).
+      // E1 fix: answer timeline questions in draft context (same as pending-identity).
       if (decision.reason === 'question' && !releaseReasons.includes(decision.reason)) {
         const draftSummary = [
           pendingAddr.kategori,
@@ -1869,6 +1920,52 @@ export async function tryHandleLatePreAgentState(
           response: `Untuk laporan ${draftSummary || 'tersebut'}, saya belum bisa pastikan jadwalnya karena saya masih butuh lokasi kejadiannya dulu. Setelah laporan lengkap dan masuk, Bapak/Ibu akan dapat nomor pelacakan untuk cek status. Boleh sebutkan lokasinya (RT/RW atau patokan)?`,
           intent: 'CREATE_COMPLAINT',
         });
+      }
+      // E3 fix: for pending-address, a "correction" like "maksudnya gang mawar"
+      // is actually the user PROVIDING the address. Handle as resume directly.
+      if (decision.reason === 'correction' && !releaseReasons.includes(decision.reason)) {
+        const corrected = parseDraftCorrection(message);
+        if (corrected.alamat) {
+          clearPendingAddressRequest(userId);
+          if (mediaUrl) addPendingPhoto(userId, mediaUrl);
+          const complaintResult = await handleComplaintCreation(userId, channel, {
+            fields: {
+              village_id: pendingAddr.village_id,
+              kategori: pendingAddr.kategori,
+              deskripsi: pendingAddr.deskripsi,
+              alamat: corrected.alamat,
+            },
+          }, message);
+          const normalized = normalizeHandlerResult(complaintResult);
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: normalized.replyText,
+            contacts: normalized.contacts,
+            intent: 'CREATE_COMPLAINT',
+            guardrail: {
+              stage: 'pre_agent_complaint_fsm',
+              type: 'complaint_fsm_resume',
+              action: 'resumed',
+              reason: 'correction_as_address',
+              details: { waitingFor: 'alamat', extractedAddress: corrected.alamat },
+            },
+          });
+        } else if (corrected.kategori) {
+          const { setPendingAddressRequest } = await import('./ump-state');
+          setPendingAddressRequest(userId, {
+            ...pendingAddr,
+            kategori: corrected.kategori,
+            deskripsi: corrected.kategori,
+            timestamp: Date.now(),
+          });
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: `Baik, kategorinya saya ubah ke "${corrected.kategori}". Boleh sebutkan lokasi kejadiannya (RT/RW atau patokan)?`,
+            intent: 'CREATE_COMPLAINT',
+          });
+        }
       }
     } else if (decision.action === 'resume') {
       clearPendingAddressRequest(userId);
@@ -1976,6 +2073,32 @@ export async function tryHandleLatePreAgentState(
           response: `Untuk laporan ${draftSummary || 'tersebut'}, saya belum bisa pastikan jadwal perbaikannya karena laporannya belum selesai dibuat — saya masih butuh ${needField} dulu. Setelah laporan masuk dan dapat nomor pelacakan, Bapak/Ibu bisa cek statusnya kapan saja. Boleh sebutkan ${needField} sekarang?`,
           intent: 'CREATE_COMPLAINT',
         });
+      }
+      // E3 fix: apply corrections to the draft (location/category).
+      if (identityDecision.reason === 'correction' && !released) {
+        const corrected = parseDraftCorrection(message);
+        if (corrected.alamat || corrected.kategori) {
+          setPendingComplaintData(userId, {
+            ...pendingComplaint,
+            ...(corrected.alamat ? { alamat: corrected.alamat } : {}),
+            ...(corrected.kategori ? { kategori: corrected.kategori, deskripsi: corrected.kategori } : {}),
+            timestamp: Date.now(),
+          });
+          const parts = [];
+          if (corrected.kategori) parts.push(`kategorinya saya ubah ke "${corrected.kategori}"`);
+          if (corrected.alamat) parts.push(`lokasinya saya ubah ke "${corrected.alamat}"`);
+          const needField = pendingComplaint.waitingFor === 'nama'
+            ? 'nama Bapak/Ibu'
+            : pendingComplaint.waitingFor === 'no_hp'
+              ? 'nomor HP Bapak/Ibu'
+              : 'data yang kurang';
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: `Baik, ${parts.join(' dan ')}. Untuk melanjutkan laporan, boleh saya tahu ${needField}?`,
+            intent: 'CREATE_COMPLAINT',
+          });
+        }
       }
     } else {
       const userProfile = await getAutoFillSuggestionsWithFallback(userId, villageId); // W5: village-scoped
