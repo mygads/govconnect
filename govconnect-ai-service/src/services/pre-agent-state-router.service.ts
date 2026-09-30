@@ -163,6 +163,11 @@ function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncer
     /^(ya|iya|yes)\s+(lanjut|boleh|setuju|batalkan|proses|silakan)$/i,
     /^(oke|ok|siap)\s+(ya|iya|lanjut|batalkan)$/i,
     /^boleh(\s+ya)?$/i,
+    // C2 fix: "ok saya mau bikin" / "ya mau lanjut" after a form-link offer
+    // is a clear affirmative. Safe here because this detector is only used
+    // in pending-offer/confirmation context.
+    /^(ok|oke|ya|iya|siap|boleh)\s+(saya\s+)?mau\s+(bikin|buat|lanjut|aju(kan)?|proses|daftar)/i,
+    /^saya\s+mau\s+(bikin|buat|lanjut|aju(kan)?)/i,
   ];
 
   const explicitNoPatterns = [
