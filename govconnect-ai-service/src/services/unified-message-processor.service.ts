@@ -1216,20 +1216,29 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
   // Identity questions: answer directly from village identity settings,
   // bypass KB lookup. The LLM system prompt already has the identity,
   // but we handle it here deterministically for reliability.
+  // IMPORTANT: "kamu siapa?" follows persona/disclosure setting, but a DIRECT
+  // question like "apakah kamu AI?" must ALWAYS be answered honestly as AI,
+  // even when disclosure=false (honesty over persona).
   const normalizedMsg = message.toLowerCase().trim();
-  const identityPatterns = [
+  const generalIdentityPatterns = [
     /^(kamu|kau) siapa\??$/,
     /^siapa (kamu|kau)\??$/,
-    /^(apakah|apa) (kamu|kau) (ai|bot|robot)\??$/,
-    /^(kamu|kau) (ai|bot|robot) (ya|bukan)\??$/,
   ];
-  const isIdentityQuestion = identityPatterns.some(p => p.test(normalizedMsg));
-  if (isIdentityQuestion) {
+  const directAiQuestionPatterns = [
+    /^(apakah|apa) (kamu|kau) (ai|bot|robot)\??$/,
+    /^(kamu|kau) (ai|bot|robot) (ya|kan|bukan)\??$/,
+  ];
+  const isGeneralIdentity = generalIdentityPatterns.some(p => p.test(normalizedMsg));
+  const isDirectAiQuestion = directAiQuestionPatterns.some(p => p.test(normalizedMsg));
+  if (isGeneralIdentity || isDirectAiQuestion) {
     const { getVillageIdentity } = await import('./village-identity.service');
     const identity = await getVillageIdentity(villageId);
     const personaName = identity.personaName || 'Gana';
     let response: string;
-    if (identity.disclosure !== false) {
+    if (isDirectAiQuestion) {
+      // Direct question → always honest, regardless of disclosure setting.
+      response = `Ya, saya ${personaName}, asisten AI layanan desa. Ada yang bisa saya bantu?`;
+    } else if (identity.disclosure !== false) {
       response = `Saya ${personaName}, asisten AI resmi layanan desa. Ada yang bisa saya bantu?`;
     } else {
       response = `Saya ${personaName}, asisten layanan desa yang siap membantu. Ada yang bisa saya bantu?`;

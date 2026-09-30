@@ -352,7 +352,15 @@ function isClearlyDifferentIntent(message: string): boolean {
   if (VILLAGE_PROFILE_TOPIC_PATTERN.test(normalized)) return true;
   if (isNonOfficeLocalKnowledgeQuery(message)) return true;
   if (STATUS_CANCEL_EDIT_TOPIC_PATTERN.test(normalized)) return true;
-  if (CORRECTION_TOPIC_SHIFT_PATTERN.test(normalized)) return true;
+  // "maksudnya X" where X is complaint/service-related is a CORRECTION to the
+  // pending draft, not a topic shift. Only treat as topic shift if the
+  // correction target is unrelated to village services.
+  // (Fix E4: "eh maksudnya jembatan rusak" was abandoning the complaint draft.)
+  if (CORRECTION_TOPIC_SHIFT_PATTERN.test(normalized)) {
+    const complaintKeywords = /\b(jalan|jembatan|rusak|lampu|mati|air|sampah|banjir|drainase|got|selokan|posyandu|ktp|kk|surat|domisili|bansos|pkh|blt)\b/i;
+    if (complaintKeywords.test(normalized)) return false;
+    return true;
+  }
   return /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|lapor jalan|lampu mati|sampah|darurat|kebakaran|kecelaka+an|pohon tumbang)\b/i.test(normalized);
 }
 
