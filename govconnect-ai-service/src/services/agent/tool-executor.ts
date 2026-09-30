@@ -143,7 +143,7 @@ function maskPhoneLike(raw: string): string {
 export function pickArgString(args: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
     const v = args[key];
-    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'string' && v.trim() && !/^(null|undefined|none)$/i.test(v.trim())) return v.trim();
   }
   return '';
 }
@@ -593,7 +593,11 @@ async function toolGetServiceInfo(
   clearPendingServiceClarification(ctx.userId);
 
   if (!resolved.service) {
-    const queriedName = (serviceName || contextualServiceName || '').trim();
+    const rawQueried = (serviceName || contextualServiceName || '').trim();
+    // E6 fix: the agent sometimes passes the literal string "null"/"undefined"
+    // as service_name. Treat those as empty so we fall back to listing
+    // services instead of emitting "layanan *null*".
+    const queriedName = /^(null|undefined|none)$/i.test(rawQueried) ? '' : rawQueried;
     if (!queriedName) {
       // No concrete service name to look up: fall back to listing active
       // services instead of emitting a blank "layanan **" not-found message.
