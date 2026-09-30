@@ -546,6 +546,22 @@ function shouldStopAfterSufficientServiceInfo(
 }
 
 function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { toolName: AgentToolName; args: Record<string, unknown> } | null {
+  const jsonMatch = text.match(/\[\[\s*\{[\s\S]*?\}\s*\]\]/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const first = parsed[0] as { name?: string; parameters?: Record<string, unknown>; arguments?: Record<string, unknown> };
+        const toolName = first?.name as AgentToolName;
+        if (toolName && allowedToolNames.includes(toolName) && !isMutationTool(toolName)) {
+          const args = (first?.parameters ?? first?.arguments ?? {}) as Record<string, unknown>;
+          return { toolName, args };
+        }
+      }
+    } catch {
+    }
+  }
+
   const functionMatch = text.match(/<function=([a-z_]+)>/i);
   if (!functionMatch) return null;
 
