@@ -1724,6 +1724,28 @@ export async function tryHandleLatePreAgentState(
       clearPendingComplaintData(userId);
       clearPendingAddressRequest(userId);
     } catch {}
+    // J2 fix: set durable HANDOFF_PENDING state via startTakeoverForUser
+    // (previously the pre-agent bypassed the state machine entirely).
+    try {
+      const { startTakeoverForUser } = await import('./channel-client.service');
+      await startTakeoverForUser(userId, {
+        village_id: villageId,
+        channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+        admin_id: 'system-auto-handoff',
+        admin_name: 'Petugas Desa',
+        reason: 'user_requested_human_agent',
+        enrichment: {
+          intent: 'TAKEOVER',
+          last_user_message: latestTurn,
+          conversation_summary: null,
+          escalation_reason: 'user_requested_human_agent',
+          channel,
+          village_id: villageId || null,
+        },
+      });
+    } catch (err) {
+      logger.warn('pre-agent handoff: startTakeoverForUser failed', { userId, error: String(err) });
+    }
     tracker.complete();
     return buildGuardResult({
       startTime,
