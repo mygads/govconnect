@@ -675,6 +675,29 @@ describe('agent text-tool fallback guardrails', () => {
       });
   });
 
+  it('parses nested JSON tool-call format [[{"name":...}]] (regression K1/K6)', () => {
+    // Format bocor dari LLM: [[{"name":"search_knowledge","parameters":{"query":"..."}}]]
+    // parsed[0] adalah array [{...}], bukan object — harus di-unwrap.
+    expect(parseTextToolCall(
+      '[[{"name":"search_knowledge","parameters":{"query":"jadwal posyandu"}}]]',
+      ['search_knowledge'] as any,
+    )).toMatchObject({
+      toolName: 'search_knowledge',
+      args: { query: 'jadwal posyandu' },
+    });
+  });
+
+  it('parses malformed nested JSON tool-call [[{...}] (missing bracket)', () => {
+    // LLM kadang output malformed: [[{ "name": ... } }] (kurang satu ])
+    expect(parseTextToolCall(
+      '[[{ "name": "search_knowledge", "parameters": { "query": "jadwal posyandu" } }]',
+      ['search_knowledge'] as any,
+    )).toMatchObject({
+      toolName: 'search_knowledge',
+      args: { query: 'jadwal posyandu' },
+    });
+  });
+
   it('rejects text-tool fallback when multiple tools are allowed for the turn', () => {
     expect(shouldAllowTextToolFallback({
       userMessage: 'biaya surat domisili dan nomor puskesmas berapa?',

@@ -546,19 +546,32 @@ function shouldStopAfterSufficientServiceInfo(
 }
 
 function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { toolName: AgentToolName; args: Record<string, unknown> } | null {
-  const jsonMatch = text.match(/\[\[\s*\{[\s\S]*?\}\s*\]\]/);
+  // Match [[ ... ]] (or malformed [[ ... ]) and try JSON.parse. Handles nested objects.
+  // (Fix K1/K6: LLM sometimes outputs malformed [[{...}] with missing bracket.)
+  const jsonMatch = text.match(/\[\[([\s\S]*?)(?:\]\]|$)/);
   if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const first = parsed[0] as { name?: string; parameters?: Record<string, unknown>; arguments?: Record<string, unknown> };
-        const toolName = first?.name as AgentToolName;
-        if (toolName && allowedToolNames.includes(toolName) && !isMutationTool(toolName)) {
-          const args = (first?.parameters ?? first?.arguments ?? {}) as Record<string, unknown>;
-          return { toolName, args };
+    // Try parsing as-is, then with fixed brackets.
+    const candidates = [jsonMatch[0]];
+    if (!jsonMatch[0].endsWith(']]')) {
+      candidates.push(jsonMatch[0] + ']');
+      candidates.push(jsonMatch[0] + ']]');
+    }
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Unwrap nested array: format is [[{name,...}]] so parsed[0] is [{...}], not the object.
+          const firstRaw = parsed[0] as unknown;
+          const first = (Array.isArray(firstRaw) ? firstRaw[0] : firstRaw) as { name?: string; parameters?: Record<string, unknown>; arguments?: Record<string, unknown> };
+          const toolName = first?.name as AgentToolName;
+          if (toolName && allowedToolNames.includes(toolName) && !isMutationTool(toolName)) {
+            const args = (first?.parameters ?? first?.arguments ?? {}) as Record<string, unknown>;
+            return { toolName, args };
+          }
         }
+      } catch {
+        // Try next candidate.
       }
-    } catch {
     }
   }
 
