@@ -23,7 +23,7 @@ import { formatVillageDateTimeForPrompt } from '../utils/wib-datetime';
 import { sanitizeUserInput } from './context-builder.service';
 import { getVillageProfileSummary } from './knowledge.service';
 import { isSpamMessage } from './rag.service';
-import { getAutoFillSuggestionsWithFallback } from './user-profile.service';
+import { getAutoFillSuggestionsWithFallback, learnFromMessage, getProfileWithFallback } from './user-profile.service';
 import { normalizeText } from './text-normalizer.service';
 import { classifyMessage, type UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { aiAnalyticsService } from './ai-analytics.service';
@@ -1249,6 +1249,18 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     };
   }
 
+  // G7: Passive profile learning — extract name/phone/style from every message
+  // (e.g. "nama saya Rina Wijaya") into durable_user_profiles.nama_lengkap.
+  // Never breaks the pipeline: failures are swallowed after logging.
+  try {
+    learnFromMessage(userId, message, villageId);
+  } catch (err: any) {
+    logger.warn('profile learnFromMessage failed (non-fatal)', {
+      userId,
+      error: err?.message,
+    });
+  }
+
   let workingMessage = message;
   let resolvedHistory = conversationHistory;
   let villageTimezone: string | null = null;
@@ -1290,6 +1302,34 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       success: true,
       response,
       intent: 'identity',
+      metadata: {
+        processingTimeMs: Date.now() - startTime,
+        model: 'deterministic',
+        hasKnowledge: false,
+        agentMode: 'deterministic_fact_router' as const,
+      },
+    };
+  }
+
+  // G7: "siapa nama saya?" — answer deterministically from the durable profile
+  // instead of letting the agent guess (the agent prompt only carries a masked
+  // name, so it can never answer this reliably).
+  const selfNameQuestionPatterns = [
+    /^(siapa\s+nama\s+(saya|aku|gue|gw|ku)|siapa\s+namaku|namaku\s+siapa|nama\s+(saya|aku)\s+siapa)(\s+(dong|ya|sih|deh))?\??$/,
+    /^(apakah\s+)?(kamu|kau)\s+(tahu|tau|ingat)\s+(nama\s+(saya|aku|ku)|namaku)\??$/,
+    /^(kamu|kau)\s+(tahu|tau)\s+siapa\s+(saya|aku)\??$/,
+  ];
+  const isSelfNameQuestion = selfNameQuestionPatterns.some((p) => p.test(normalizedMsg));
+  if (isSelfNameQuestion) {
+    const knownName = (await getProfileWithFallback(userId, villageId)).nama_lengkap?.trim();
+    const selfNameResponse = knownName
+      ? `Nama Bapak/Ibu tercatat sebagai ${knownName}. Ada lagi yang bisa saya bantu?`
+      : 'Sepertinya saya belum tahu nama Bapak/Ibu. Boleh perkenalkan nama Anda?';
+    decrementActiveProcessing();
+    return {
+      success: true,
+      response: selfNameResponse,
+      intent: 'PROFILE_NAME_QUERY',
       metadata: {
         processingTimeMs: Date.now() - startTime,
         model: 'deterministic',
@@ -1346,6 +1386,17 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     const split = splitFollowUpGuidance(result.response, result.guidanceText);
     result.response = split.response;
     result.guidanceText = split.guidanceText;
+
+    // C1/C2/E6: persist assistant reply to history cache so multi-turn
+    // context is available on the next turn (for webchat and whatsapp).
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test' && result.response) {
+      try {
+        appendToHistoryCache(userId, 'assistant', result.response);
+      } catch (err: any) {
+        logger.debug('[HistoryCache] append assistant skipped', { error: err?.message });
+      }
+    }
+
     finalResult = result;
     return result;
   };
@@ -1659,12 +1710,15 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       }
     }
 
-    if (channel === 'whatsapp' && (!resolvedHistory || resolvedHistory.length === 0)) {
+    // C1/C2/E6: fetch history for webchat too, not just whatsapp, so
+    // multi-turn context (active topic, previous service) is available.
+    if ((channel === 'whatsapp' || channel === 'webchat') && (!resolvedHistory || resolvedHistory.length === 0)) {
       resolvedHistory = await fetchConversationHistoryFromChannel(userId, resolvedVillageId);
       // Append current user message to cache so subsequent calls see it
       appendToHistoryCache(userId, 'user', workingMessage);
-      logger.info('📚 [UnifiedProcessor] Loaded WhatsApp history', {
+      logger.info('📚 [UnifiedProcessor] Loaded channel history', {
         userId,
+        channel,
         historyCount: resolvedHistory?.length || 0,
       });
     }

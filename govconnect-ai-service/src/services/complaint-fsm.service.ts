@@ -87,12 +87,23 @@ export type FsmInterrupt =
   | 'status_lookup'
   | 'contact_directory_interrupt'
   | 'service_info_switch'
+  | 'frustration'
+  | 'handoff_request'
+  | 'correction'
+  | 'question'
   | 'none';
 
 const EXPLICIT_ESCAPE_PATTERN = /\b(batal|cancel|lupakan|gausah|gak\s*jadi|nanti\s+(aja|dulu)|stop|berhenti)\b/i;
 const GREETING_PATTERN = /^(halo|hai|hi|hello|assalamualaikum|permisi|p|selamat (pagi|siang|sore|malam))[\s!.,?]*$/i;
 const STATUS_LOOKUP_PATTERN = /\b(lap|lay)-?\d{8}-?\d{3}\b/i;
 const SERVICE_SWITCH_PATTERN = /\b(saya\s+mau|ingin|urus|urusin)\s+(ktp|kk|akta|domisili|sktm|surat)\b/i;
+// E1/E2/E3/J2/J4: detect frustration, handoff requests, corrections, and
+// questions while a complaint draft is active so the FSM does not hijack
+// the turn by endlessly re-asking for the pending field.
+const FRUSTRATION_PATTERN = /\b(muter[-\s]?muter|berputar[-\s]?putar|lama\s+banget|kelamaan|payah|bodoh|menyebalkan|kesal|kesel|frustrasi|tidak\s+membantu|nggak\s+membantu|gak\s+membantu|capek|bosan|nyebelin|gajelas|nggak\s+jelas|gak\s+jelas)\b/i;
+const HANDOFF_PATTERN = /\b(petugas\s+asli|orang\s+asli|manusia|operator|cs\s+asli|bicara\s+dengan\s+(petugas|orang|manusia)|sambungkan|hubungkan\s+(ke|sama)|mau\s+(bicara|ngomong)\s+(sama|dengan|ke))\b/i;
+const CORRECTION_PATTERN = /\b(eh\s+)?(salah|rubah|ubah|ganti|koreksi|revisi|maksud\s+(saya|aku|gue)|bukan\s+itu|bukan\s+di)\b/i;
+const QUESTION_PATTERN = /^(kapan|bagaimana|gimana|kenapa|mengapa|dimana|di\s+mana|berapa|apakah|bisakah|bisa\s+nggak|bisa\s+tidak).*\?|^.*\?\s*$/i;
 
 export function detectComplaintInterrupt(message: string): FsmInterrupt {
   const trimmed = (message || '').trim();
@@ -103,6 +114,10 @@ export function detectComplaintInterrupt(message: string): FsmInterrupt {
   if (STATUS_LOOKUP_PATTERN.test(trimmed)) return 'status_lookup';
   if (isContactDirectoryLookup(trimmed)) return 'contact_directory_interrupt';
   if (SERVICE_SWITCH_PATTERN.test(trimmed)) return 'service_info_switch';
+  if (FRUSTRATION_PATTERN.test(trimmed)) return 'frustration';
+  if (HANDOFF_PATTERN.test(trimmed)) return 'handoff_request';
+  if (CORRECTION_PATTERN.test(trimmed)) return 'correction';
+  if (QUESTION_PATTERN.test(trimmed)) return 'question';
 
   return 'none';
 }
@@ -198,6 +213,17 @@ export async function decideIdentityResume(input: DecideIdentityResumeInput): Pr
   const interrupt = detectComplaintInterrupt(input.message);
   if (interrupt !== 'none') {
     return { action: 'interrupt', reason: interrupt };
+  }
+
+  // E1: if waiting for name but the message looks like a location (not a
+  // name), treat it as an implicit location correction — don't hijack.
+  if (input.waitingFor === 'nama') {
+    const looksLikeLocation = /\b(gang|jl\.?|jln|jalan|rt\s*\d|rw\s*\d|dusun|kampung|depan|belakang|samping|sebelah|dekat|patokan)\b/i.test(input.message);
+    const looksLikeName = /^[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/.test(input.message.trim()) ||
+      /\b(nama\s+(saya|aku)|namaku|saya\s+bernama|panggil\s+(saya|aku))\b/i.test(input.message);
+    if (looksLikeLocation && !looksLikeName) {
+      return { action: 'interrupt', reason: 'correction' };
+    }
   }
 
   const trimmed = input.message.trim();
