@@ -110,7 +110,7 @@ describe('state persistence debounce', () => {
     await vi.advanceTimersByTimeAsync(__test_only__.STATE_PERSIST_DEBOUNCE_MS);
 
     expect(testState.prismaMock.conversation_sessions.upsert).not.toHaveBeenCalled();
-    expect(testState.prismaMock.conversation_sessions.delete).toHaveBeenCalledTimes(1);
+    expect(testState.prismaMock.conversation_sessions.deleteMany).toHaveBeenCalledTimes(1);
     expect(__test_only__.getBufferedStateCount()).toBe(0);
   });
 

@@ -720,7 +720,7 @@ export async function getDailyCostUsd(tenantId: string): Promise<number | null> 
   if (!db) return dbDown('getDailyCostUsd', null);
   try {
     const rows = (await db.$queryRawUnsafe(
-      `SELECT COALESCE(SUM(cost_usd),0) AS total FROM ai_token_usage
+      `SELECT COALESCE(SUM(cost_usd),0) AS total FROM ai.ai_token_usage
         WHERE village_id=$1 AND created_at > now() - interval '1 day'`,
       tenantId,
     )) as Array<{ total: string | number }>;

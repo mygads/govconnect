@@ -114,18 +114,19 @@ describe('ai-provider-health', () => {
     expect(await isAvailable(PID, 'llm')).toBe(true);
   });
 
-  it('demotes after 3 consecutive failures', async () => {
-    await recordFailure(PID, 'llm');
-    await recordFailure(PID, 'llm');
-    expect(await isAvailable(PID, 'llm')).toBe(true);
+  it('demotes after 6 consecutive failures (FAIL_THRESHOLD)', async () => {
+    for (let i = 0; i < 5; i++) {
+      await recordFailure(PID, 'llm');
+      expect(await isAvailable(PID, 'llm')).toBe(true);
+    }
     await recordFailure(PID, 'llm');
     expect(await isAvailable(PID, 'llm')).toBe(false);
   });
 
   it('success resets failure counter and demotion', async () => {
-    await recordFailure(PID, 'llm');
-    await recordFailure(PID, 'llm');
-    await recordFailure(PID, 'llm');
+    for (let i = 0; i < 6; i++) {
+      await recordFailure(PID, 'llm');
+    }
     expect(await isAvailable(PID, 'llm')).toBe(false);
 
     await recordSuccess(PID, 'llm');
@@ -137,9 +138,9 @@ describe('ai-provider-health', () => {
   });
 
   it('requires a single probe claim after cooldown lapses', async () => {
-    await recordFailure(PID, 'llm');
-    await recordFailure(PID, 'llm');
-    await recordFailure(PID, 'llm');
+    for (let i = 0; i < 6; i++) {
+      await recordFailure(PID, 'llm');
+    }
 
     const row = testState.rows.get(testState.rowKey(PID, 'llm'));
     testState.rows.set(testState.rowKey(PID, 'llm'), {

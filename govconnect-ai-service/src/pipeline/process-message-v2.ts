@@ -601,7 +601,17 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
     if (decision.hints?.needsAssessor) {
       const hasFuzzy = transitionsFrom(decision.stage).some((t) => t.kind === 'fuzzy');
       if (hasFuzzy) {
-        const assessed = await assessStage({ message: input.message, fromStage: decision.stage });
+        // Active-COLLECT awareness: if a complaint/service-request is mid-collection
+        // (slots incomplete), tell the assessor so weak keyword drift cannot abandon it.
+        const activeIntent = ctx.slots[INTENT_SLOT_KEY] as SlotIntent | undefined;
+        const collectActive =
+          (activeIntent === 'complaint' || activeIntent === 'service_request') &&
+          !isCollectComplete(activeIntent, ctx.slots as unknown as Slots);
+        const assessed = await assessStage({
+          message: input.message,
+          fromStage: decision.stage,
+          activeCollectIntent: collectActive ? activeIntent : null,
+        });
         ctx.assessorConfidences.push(assessed.confidence);
         if (shouldSuggestHandoff(ctx.assessorConfidences)) {
           decision = {
@@ -627,7 +637,10 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       const attempts = Number(ctx.slots[COLLECT_ATTEMPTS_KEY] ?? 0) + 1;
       ctx.slots[COLLECT_ATTEMPTS_KEY] = attempts;
 
-      const extracted = extractSlotsDeterministic(input.message, intent);
+      // Tell the extractor which slot we're asking for so free-text answers
+      // (e.g. the description) can be captured deterministically.
+      const expectedSlot = nextMissingSlot(intent, ctx.slots as unknown as Slots)?.name ?? null;
+      const extracted = extractSlotsDeterministic(input.message, intent, expectedSlot);
       const { slots, errors } = mergeSlots(intent, ctx.slots as unknown as Slots, extracted);
       ctx.slots = { ...slots, [INTENT_SLOT_KEY]: intent, [COLLECT_ATTEMPTS_KEY]: attempts };
       if (errors.length > 0) {

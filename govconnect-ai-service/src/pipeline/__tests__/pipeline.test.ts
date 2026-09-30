@@ -90,6 +90,36 @@ describe('stage-assessor', () => {
     expect(shouldSuggestHandoff([0.3, 0.8])).toBe(false);
     expect(shouldSuggestHandoff([0.3])).toBe(false);
   });
+
+  it('protects active COLLECT from "sudah" STATUS_CHECK drift', async () => {
+    // Regression: "sudah 2 minggu, lubangnya besar..." mid-complaint must NOT
+    // flip to STATUS_CHECK. "sudah" is a temporal adverb, not a status signal.
+    const d = await assessStage({
+      message: 'sudah 2 minggu, lubangnya besar-besar, motor saya hampir jatuh kemarin',
+      fromStage: 'TRIAGE',
+      activeCollectIntent: 'complaint',
+    });
+    expect(d.stage).toBe('COLLECT');
+    expect(d.reasons).toContain('assessor_active_collect_protected');
+  });
+
+  it('still allows HANDOFF on explicit frustration during active COLLECT', async () => {
+    const d = await assessStage({
+      message: 'bodoh, tidak membantu sama sekali',
+      fromStage: 'TRIAGE',
+      activeCollectIntent: 'complaint',
+    });
+    expect(d.stage).toBe('HANDOFF');
+  });
+
+  it('does not protect COLLECT when no active collection', async () => {
+    const d = await assessStage({
+      message: 'cek status laporan saya',
+      fromStage: 'TRIAGE',
+      activeCollectIntent: null,
+    });
+    expect(d.stage).toBe('STATUS_CHECK');
+  });
 });
 
 describe('stage-graph', () => {
@@ -211,6 +241,28 @@ describe('slot-fsm', () => {
     const slots = extractSlotsDeterministic('Jalan rusak parah di RT 02/RW 05', 'complaint');
     expect(slots.category).toBe('jalan rusak');
     expect(slots.location).toMatch(/RT 02\/RW 05/i);
+  });
+
+  it('extracts RT/RW without slash and street landmarks', () => {
+    const slots = extractSlotsDeterministic('di Jl. Mawar RT 03 RW 05, depan warung Bu Ani', 'complaint');
+    expect(slots.location).toMatch(/RT 03 RW 05/i);
+    expect(slots.location).toMatch(/mawar/i);
+  });
+
+  it('captures free-text description when that slot is expected', () => {
+    const slots = extractSlotsDeterministic(
+      'sudah 2 minggu, lubangnya besar-besar, motor saya hampir jatuh kemarin',
+      'complaint',
+      'description',
+    );
+    expect(slots.description).toMatch(/sudah 2 minggu/);
+    expect(slots.location).toBeUndefined();
+  });
+
+  it('does not capture description when message is clearly a location', () => {
+    const slots = extractSlotsDeterministic('di Jl. Mawar RT 03 RW 05', 'complaint', 'description');
+    expect(slots.location).toBeDefined();
+    expect(slots.description).toBeUndefined();
   });
 
   it('detects the next missing slot and completion', () => {

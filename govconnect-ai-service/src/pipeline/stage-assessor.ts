@@ -20,6 +20,12 @@ export interface AssessorInput {
   message: string;
   fromStage: Stage;
   previousConfidence?: number;
+  /**
+   * Intent of an ACTIVE (incomplete) COLLECT session, if any.
+   * When set, the deterministic fallback requires a strong explicit signal
+   * to leave COLLECT — weak keyword hits must not abandon slot collection.
+   */
+  activeCollectIntent?: 'complaint' | 'service_request' | null;
 }
 
 /** Optional LLM hook — injected by wiring code, not imported directly. */
@@ -55,8 +61,10 @@ function assessDeterministic(input: AssessorInput, candidates: Stage[]): StageDe
   bump('COLLECT', /\b(surat|ktp|kk|domisili|skck|sktm|pengantar|permohonan|daftar|urus)\b/, 3);
   // Information intent → INFORMATION
   bump('INFORMATION', /\b(apa|bagaimana|gimana|kapan|dimana|berapa|siapa|jadwal|info|tanya)\b/, 2);
-  // Status intent → STATUS_CHECK
-  bump('STATUS_CHECK', /\b(status|cek|lacak|sudah|progress)\b/, 2);
+  // Status intent → STATUS_CHECK.
+  // NOTE: "sudah" deliberately EXCLUDED — it is a temporal adverb ("sudah 2 minggu")
+  // extremely common in complaint continuations, not a status-check signal.
+  bump('STATUS_CHECK', /\b(status|cek|lacak|progress)\b/, 2);
   // Human request / frustration → HANDOFF
   bump('HANDOFF', /\b(manusia|orang|admin|petugas|operator|cs|kesal|kecewa|bodoh|lemot|tidak membantu|nggak membantu)\b/, 3);
 
@@ -67,6 +75,24 @@ function assessDeterministic(input: AssessorInput, candidates: Stage[]): StageDe
       bestScore = score;
       best = stage;
     }
+  }
+
+  // Active COLLECT protection: when a complaint/service-request is mid-collection,
+  // weak keyword signals must NOT yank the conversation to another stage.
+  // INFORMATION / STATUS_CHECK drift (score ≤ 3, keyword level only) is blocked;
+  // HANDOFF (explicit frustration) is still allowed through as a safety valve.
+  if (
+    input.activeCollectIntent &&
+    best !== 'COLLECT' &&
+    best !== 'HANDOFF' &&
+    bestScore <= 3
+  ) {
+    return {
+      stage: 'COLLECT',
+      source: 'deterministic',
+      confidence: 0.7,
+      reasons: ['assessor_active_collect_protected'],
+    };
   }
 
   // No signal at all → stay in TRIAGE and ask a clarifying question.
@@ -102,29 +128,51 @@ export async function assessStage(input: AssessorInput): Promise<StageDecision> 
     };
   }
 
+  let decision: StageDecision;
   if (llmHook) {
     try {
       const r = await llmHook(input, candidates);
       if (r && candidates.includes(r.stage)) {
-        return {
+        decision = {
           stage: r.stage,
           source: 'assessor',
           confidence: Math.max(0, Math.min(1, r.confidence)),
           reasons: [r.reason],
         };
+      } else {
+        logger.warn('[assessor] LLM returned invalid stage, falling back', {
+          returned: r?.stage,
+          candidates,
+        });
+        decision = assessDeterministic(input, candidates);
       }
-      logger.warn('[assessor] LLM returned invalid stage, falling back', {
-        returned: r?.stage,
-        candidates,
-      });
     } catch (err) {
       logger.warn('[assessor] LLM failed, using deterministic fallback', {
         error: (err as Error)?.message,
       });
+      decision = assessDeterministic(input, candidates);
     }
+  } else {
+    decision = assessDeterministic(input, candidates);
   }
 
-  return assessDeterministic(input, candidates);
+  // Active COLLECT protection also applies to the LLM-hook path: a low-confidence
+  // drift away from an incomplete collection is overridden deterministically.
+  if (
+    input.activeCollectIntent &&
+    decision.stage !== 'COLLECT' &&
+    decision.stage !== 'HANDOFF' &&
+    decision.confidence < 0.8
+  ) {
+    return {
+      stage: 'COLLECT',
+      source: 'deterministic',
+      confidence: 0.7,
+      reasons: ['assessor_active_collect_protected'],
+    };
+  }
+
+  return decision;
 }
 
 /** Handoff heuristic: two consecutive low-confidence assessments. */
