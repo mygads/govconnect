@@ -1232,6 +1232,23 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
   incrementActiveProcessing();
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange, messageId, batchedMessageIds } = input;
+
+  // F7: Guard untuk pesan kosong/whitespace-only — respons graceful langsung,
+  // tidak masuk full agent pipeline yang akan error.
+  if (!message || !message.trim()) {
+    decrementActiveProcessing();
+    return {
+      success: true,
+      intent: 'GREETING',
+      response: 'Halo! Ada yang bisa saya bantu? Silakan tulis pesan Anda.',
+      metadata: {
+        processingTimeMs: Date.now() - startTime,
+        hasKnowledge: false,
+        agentMode: 'pre_agent_guard',
+      },
+    };
+  }
+
   let workingMessage = message;
   let resolvedHistory = conversationHistory;
   let villageTimezone: string | null = null;
