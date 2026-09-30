@@ -122,6 +122,8 @@ export const UPDATE_SERVICE_REQUEST_PATTERNS = [
 export const UPDATE_COMPLAINT_PATTERNS = [
   /\b(ubah|ganti|perbarui|update)\s+(laporan|pengaduan|keluhan)\b/i,
   /\b(ubah|ganti)\s+(alamat|deskripsi|keterangan)\s+laporan\b/i,
+  // Fix A1: "tambah info ke LAP-xxx" / "tambah keterangan"
+  /\b(tambah|tambahkan)\s+(info|informasi|keterangan|detail|catatan)\b/i,
 ];
 
 // ==================== STATUS CHECK PATTERNS ====================
@@ -226,8 +228,8 @@ export function detectIntentFromPatterns(message: string): IntentType | null {
   }
   
   // Other intents
-  if (matchesAnyPattern(lowerMessage, CHECK_STATUS_PATTERNS)) return 'CHECK_STATUS';
   if (matchesAnyPattern(lowerMessage, UPDATE_COMPLAINT_PATTERNS)) return 'UPDATE_COMPLAINT';
+  if (matchesAnyPattern(lowerMessage, CHECK_STATUS_PATTERNS)) return 'CHECK_STATUS';
   if (matchesAnyPattern(lowerMessage, CANCEL_SERVICE_PATTERNS)) return 'CANCEL_SERVICE_REQUEST';
   if (matchesAnyPattern(lowerMessage, CANCEL_PATTERNS)) return 'CANCEL_COMPLAINT';
   if (matchesAnyPattern(lowerMessage, HISTORY_PATTERNS)) return 'HISTORY';
