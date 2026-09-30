@@ -301,6 +301,21 @@ function isExplicitServiceActionRequest(message: string): boolean {
   return SERVICE_EXPLICIT_ACTION_PATTERN.test((message || '').toLowerCase());
 }
 
+// J1/J3/J4: detect explicit human handoff requests (mirrors unified processor)
+function isExplicitHumanHandoffRequest(message: string): boolean {
+  const text = (message || '').toLowerCase().trim();
+  if (!text) return false;
+  return [
+    /\bcs\s+manusia\b/,
+    /\b(?:petugas|admin|operator)\s+(?:asli|manusia|desa)\b/,
+    /^operator[\s!.,?]*$/,
+    /\b(?:minta|mohon)\s+(?:petugas|admin|operator|manusia)\b/,
+    /\b(?:minta|mohon|tolong|ingin|mau|butuh|perlu)\b.*\b(?:dibantu|disambungkan|dialihkan|diteruskan|bicara|ngobrol|chat)\b.*\b(?:petugas|admin|operator|manusia)\b/,
+    /\b(?:hubungkan|sambungkan|disambungkan|alih(?:kan)?|dialihkan|teruskan|diteruskan)\b.*\b(?:petugas|admin|operator|manusia)\b/,
+    /\b(?:mau|ingin|butuh|perlu)\s+(?:orang|manusia|petugas|admin|operator)\b/,
+  ].some((pattern) => pattern.test(text));
+}
+
 function isInformationalServiceLinkInquiry(message: string): boolean {
   if (isExplicitServiceActionRequest(message)) {
     return false;
@@ -1644,6 +1659,29 @@ export async function tryHandleLatePreAgentState(
   const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
   // Extract the latest user turn from a potentially batched/timestamped message
   const latestTurn = message.split(/\n/).pop()?.trim().replace(/^\[\d{2}[.:]\d{2}[.:]\d{2}\]\s*/, '').trim() || message.trim();
+
+  // J1/J3/J4: explicit human handoff request — handle before any draft logic
+  // can hijack the turn.
+  if (isExplicitHumanHandoffRequest(latestTurn)) {
+    // Release any active draft so it doesn't block the handoff
+    try {
+      clearPendingComplaintData(userId);
+      clearPendingAddressRequest(userId);
+    } catch {}
+    tracker.complete();
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: 'Baik, percakapan ini kami teruskan ke petugas agar dibantu lebih lanjut. Mohon tunggu sebentar ya.',
+      intent: 'TAKEOVER',
+      guardrail: {
+        stage: 'pre_agent_handoff',
+        type: 'explicit_handoff_request',
+        action: 'handoff_started',
+        reason: 'user_requested_human_agent',
+      },
+    });
+  }
 
   // C1: explicit "kirim link formulirnya" without a pending offer — resolve
   // the service from conversation history (last discussed service).

@@ -213,10 +213,20 @@ function mentionsTransactionSuccessClaim(text: string): boolean {
     || /\b(lap|lay)-\s?\d[\s\S]{0,40}\b(berhasil dibuat|telah dibuat|sudah dibuat|telah kami terima|sudah kami terima|berhasil dicatat|telah tercatat)\b/i.test(t)) {
     return true;
   }
-  // "laporan/pengaduan/permohonan (sudah/berhasil/telah) ... masuk/tercatat/dibuat/kami catat/kami terima/diteruskan"
+  // I2 fix: procedural SOP text ("permohonan yang lengkap akan diproses",
+  // "berkas diproses hari yang sama") describes a procedure, not a claim that
+  // THIS user's transaction was filed. Only treat as a claim when the model
+  // asserts completion in first/second person or with a definite completed
+  // marker tied to the user's own submission.
   const recorded = /(laporan|pengaduan|permohonan|laporannya|aduan)\b[\s\S]{0,40}\b(sudah|telah|berhasil|saya|kami)?\s*(masuk|tercatat|dicatat|kami catat|saya catat|kami terima|kami terima|terkirim|dibuat|dibuatkan|diteruskan|kami teruskan|diproses|kami proses|tersimpan)\b/i;
   const recordedAlt = /\b(masuk ya|sudah masuk|berhasil dibuat|berhasil dicatat|sudah saya catat|sudah kami catat|sudah dicatat|sudah tercatat|sudah diteruskan|sudah kami teruskan)\b/i;
-  return recorded.test(t) || recordedAlt.test(t);
+  if (!(recorded.test(t) || recordedAlt.test(t))) return false;
+  // Procedural-context guard: generic procedure descriptions are not claims.
+  const proceduralContext = /\b(langkah-langkah|cara mengurus|prosedur|tata cara|syarat\b[\s\S]{0,60}\b(dokumen|berkas|fotokopi))/i.test(t);
+  const firstPersonCompletion = /\b(sudah|telah)\s+(saya|kami)\s+(catat|terima|proses|buatkan|teruskan)\b/i.test(t)
+    || /\b(laporan|permohonan|pengaduan)\s+(bapak|ibu|anda)\b[\s\S]{0,40}\b(sudah|telah)\b/i.test(t);
+  if (proceduralContext && !firstPersonCompletion) return false;
+  return true;
 }
 
 function classify(message: string, result: ProcessMessageResult): AnswerPolicyKind {
@@ -458,11 +468,17 @@ async function buildVillageProfileFallback(
   };
 }
 
-function buildTransactionFallback(traceId: string, startTime: number): ProcessMessageResult {
+function buildTransactionFallback(traceId: string, startTime: number, originalIntent?: string): ProcessMessageResult {
+  // I2 fix: the fallback must match the original intent. A knowledge/service
+  // question that tripped the phantom-claim guard must NOT get a
+  // complaint-flavored fallback ("laporannya belum sempat kami catat").
+  const isKnowledge = originalIntent === 'KNOWLEDGE_QUERY' || originalIntent === 'SERVICE_INFO';
   return {
     success: true,
-    response: 'Maaf Pak/Bu, laporannya belum sempat kami catat resmi tadi. Boleh tolong ulangi singkat: jenis masalahnya, lokasi (RT/RW atau patokan), dan nama Bapak/Ibu — biar langsung saya buatkan laporannya dengan nomor pelacakan ya.',
-    intent: 'CREATE_COMPLAINT',
+    response: isKnowledge
+      ? 'Maaf Pak/Bu, saya belum bisa memastikan informasi itu dari sumber resmi desa. Boleh tanyakan ulang dengan lebih spesifik, atau hubungi kantor desa langsung ya.'
+      : 'Maaf Pak/Bu, laporannya belum sempat kami catat resmi tadi. Boleh tolong ulangi singkat: jenis masalahnya, lokasi (RT/RW atau patokan), dan nama Bapak/Ibu — biar langsung saya buatkan laporannya dengan nomor pelacakan ya.',
+    intent: isKnowledge ? 'KNOWLEDGE_QUERY' : 'CREATE_COMPLAINT',
     metadata: {
       processingTimeMs: Date.now() - startTime,
       hasKnowledge: false,
@@ -617,7 +633,7 @@ export async function verifyAnswer(input: VerifyInput): Promise<AnswerPolicyDeci
       ok: false,
       rewritten: true,
       reason: 'transaction_success_without_tool',
-      replacement: buildTransactionFallback(traceId, startTime),
+      replacement: buildTransactionFallback(traceId, startTime, result.intent),
     };
   }
 
