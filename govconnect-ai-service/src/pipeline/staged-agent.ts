@@ -257,7 +257,7 @@ async function runBoundedLoop(
         modelPriority: [],
         messages,
         temperature: 0.2,
-        maxTokens: 1500,
+        maxTokens: 4000,
         timeoutMs: Math.min(20000, budget - 1000),
         layerType: 'agent',
         callType: 'staged_agent',

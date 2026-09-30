@@ -59,7 +59,7 @@ function interactiveForTurn(turn: {
   return undefined;
 }
 import {
-  extractSlotsDeterministic, mergeSlots, classifySlotIntent,
+  extractSlotsDeterministic, mergeSlots, classifySlotIntent, isServiceConfirmation,
   nextMissingSlot, isCollectComplete, renderVerifySummary,
   INTENT_SLOT_KEY, COLLECT_ATTEMPTS_KEY, type SlotIntent, type Slots,
 } from './slot-fsm';
@@ -632,7 +632,11 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
     // The FSM owns slot state; the LLM only proposes values conversationally.
     if (decision.stage === 'COLLECT') {
       const priorIntent = ctx.slots[INTENT_SLOT_KEY] as SlotIntent | undefined;
-      const intent = priorIntent ?? classifySlotIntent(input.message) ?? 'complaint';
+      const classified = classifySlotIntent(input.message);
+      // C2 parity: ambiguous affirmative ("ok saya mau bikin") after service
+      // info → service_request, not the complaint default.
+      const intent = priorIntent ?? classified ??
+        (isServiceConfirmation(input.message) ? 'service_request' : 'complaint');
       ctx.slots[INTENT_SLOT_KEY] = intent;
       const attempts = Number(ctx.slots[COLLECT_ATTEMPTS_KEY] ?? 0) + 1;
       ctx.slots[COLLECT_ATTEMPTS_KEY] = attempts;

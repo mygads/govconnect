@@ -177,6 +177,21 @@ export function classifySlotIntent(text: string): SlotIntent | null {
 }
 
 /**
+ * Service-confirmation detector for ambiguous COLLECT turns (C2 parity with v1).
+ * When the user affirms ("ok saya mau bikin") after service info was discussed,
+ * and classifySlotIntent returned null, prefer 'service_request' over the
+ * 'complaint' default. Matches v1's pending-offer confirmation patterns.
+ */
+export function isServiceConfirmation(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  return (
+    /^(ok|oke|ya|iya|siap|boleh)\s+(saya\s+)?mau\s+(bikin|buat|lanjut|aju(kan)?|proses|daftar)/i.test(t) ||
+    /^saya\s+mau\s+(bikin|buat|lanjut|aju(kan)?)/i.test(t) ||
+    /^(ya|iya)\s+(mau|boleh)\b/i.test(t)
+  );
+}
+
+/**
  * Explicit confirmation detectors (button payloads or typed text).
  *
  * P0-1: also matches the confirm-button TITLES sent by wa-interactive

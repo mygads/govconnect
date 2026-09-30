@@ -523,7 +523,12 @@ export function parseModelListEnv(envValue: string | undefined, fallback: string
  * of them. Use buildUserPromptMessages() for genuine user content.
  */
 export function buildPromptMessages(prompt: string): GatewayChatMessage[] {
-  return [{ role: 'system', content: prompt }];
+  // Sumopod/GLM requires at least one user message; system-only is rejected
+  // as "messages parameter is illegal".
+  return [
+    { role: 'system', content: prompt },
+    { role: 'user', content: 'Proses sesuai instruksi sistem di atas.' },
+  ];
 }
 
 /**
