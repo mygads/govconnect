@@ -456,6 +456,33 @@ async function toolGetServiceInfo(
   const services = (await getServiceCatalog(ctx.villageId)).filter((service) => service.is_active);
 
   if (services.length === 0) {
+    // Fallback to KB search before giving up with generic response.
+    // (Fix K2/K3: "biaya bikin surat domisili berapa?" was answered generically
+    // even though KB has the exact answer.)
+    const kbQuery = serviceName || contextualServiceName || 'layanan administrasi desa';
+    try {
+      const kbResult = await searchKnowledge(kbQuery, undefined, ctx.villageId);
+      const hits = Array.isArray((kbResult as any)?.documents) ? (kbResult as any).documents : [];
+      if (hits.length > 0) {
+        return {
+          success: true,
+          data: {
+            found: true,
+            fromKnowledgeBase: true,
+            documents: hits.slice(0, 3).map((d: any) => ({
+              title: d.title,
+              content: (d.content || '').substring(0, 500),
+            })),
+          },
+          meta: {
+            trustLevel: 'trusted_fact',
+            sourceKind: 'knowledge_base_fallback',
+          },
+        };
+      }
+    } catch {
+      // KB fallback failed, continue to generic response below.
+    }
     return {
       success: true,
       data: {
