@@ -200,6 +200,11 @@ const DEFAULT_GROUNDING_SOURCE_BY_TOOL: Partial<Record<string, string>> = {
   get_emergency_contacts: 'official_emergency_contacts',
 };
 
+// Tracks consecutive AGENT_ERROR per user to avoid immediate handoff on
+// transient model failures (fix N1/N3). In-memory is acceptable: worst case
+// is an extra handoff, not data loss.
+const transientErrorCounts = new Map<string, number>();
+
 interface PendingStateSnapshot {
   serviceOffer?: any;
   emergencyOffer?: any;
@@ -901,11 +906,25 @@ async function maybeTriggerHumanHandoff(input: {
   } else {
     const ctx = getEnhancedContext(input.userId);
     if (input.result.intent === 'AGENT_ERROR') {
+      // Retry on transient model errors before handing off to human.
+      // (Fix N1/N3: single AGENT_EMPTY_REPLY immediately triggered takeover.)
+      const key = `agent_error_count:${input.userId}`;
+      const count = (transientErrorCounts.get(key) || 0) + 1;
+      transientErrorCounts.set(key, count);
+      if (count < 2) {
+        // First failure: don't handoff yet, let caller retry or fallback.
+        return { started: false };
+      }
+      transientErrorCounts.delete(key);
       handoffReason = 'agent_error';
-    } else if (input.sentiment.isEscalationCandidate || needsHumanEscalation(input.userId)) {
-      handoffReason = 'negative_sentiment_escalation';
-    } else if (ctx.needsHumanHelp) {
-      handoffReason = 'conversation_stuck';
+    } else {
+      // Reset counter on success.
+      transientErrorCounts.delete(`agent_error_count:${input.userId}`);
+      if (input.sentiment.isEscalationCandidate || needsHumanEscalation(input.userId)) {
+        handoffReason = 'negative_sentiment_escalation';
+      } else if (ctx.needsHumanHelp) {
+        handoffReason = 'conversation_stuck';
+      }
     }
   }
 

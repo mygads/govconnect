@@ -43,7 +43,9 @@ export const AGENT_TOOLS: ToolDefinition[] = [
         'Detail layanan administrasi: daftar layanan aktif, persyaratan, dan mode layanan. ' +
         'Gunakan untuk menjelaskan syarat dan kesiapan layanan sebelum mengirim link formulir. ' +
         'Gunakan untuk pertanyaan syarat, biaya, proses, dokumen, surat, atau layanan kependudukan. ' +
-        'Jika service_name kosong, tool boleh dipakai untuk menampilkan layanan aktif yang tersedia.',
+        'Jika service_name kosong, tool boleh dipakai untuk menampilkan layanan aktif yang tersedia. ' +
+        'Jika tidak ada layanan yang cocok di database, gunakan search_knowledge sebagai fallback — ' +
+        'dokumen KB mungkin memuat informasi yang dibutuhkan.',
       parameters: {
         type: 'object',
         properties: {
