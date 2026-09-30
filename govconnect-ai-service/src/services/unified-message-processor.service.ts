@@ -1212,6 +1212,42 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
   let villageTimezone: string | null = null;
   let finalResult: ProcessMessageResult | null = null;
   let routingOutcome: RoutingOutcomeMeta | undefined;
+
+  // Identity questions: answer directly from village identity settings,
+  // bypass KB lookup. The LLM system prompt already has the identity,
+  // but we handle it here deterministically for reliability.
+  const normalizedMsg = message.toLowerCase().trim();
+  const identityPatterns = [
+    /^(kamu|kau) siapa\??$/,
+    /^siapa (kamu|kau)\??$/,
+    /^(apakah|apa) (kamu|kau) (ai|bot|robot)\??$/,
+    /^(kamu|kau) (ai|bot|robot) (ya|bukan)\??$/,
+  ];
+  const isIdentityQuestion = identityPatterns.some(p => p.test(normalizedMsg));
+  if (isIdentityQuestion) {
+    const { getVillageIdentity } = await import('./village-identity.service');
+    const identity = await getVillageIdentity(villageId);
+    const personaName = identity.personaName || 'Gana';
+    let response: string;
+    if (identity.disclosure !== false) {
+      response = `Saya ${personaName}, asisten AI resmi layanan desa. Ada yang bisa saya bantu?`;
+    } else {
+      response = `Saya ${personaName}, asisten layanan desa yang siap membantu. Ada yang bisa saya bantu?`;
+    }
+    decrementActiveProcessing();
+    return {
+      success: true,
+      response,
+      intent: 'identity',
+      metadata: {
+        processingTimeMs: Date.now() - startTime,
+        model: 'deterministic',
+        hasKnowledge: false,
+        agentMode: 'deterministic_fact_router' as const,
+      },
+    };
+  }
+
   const finish = (result: ProcessMessageResult) => {
     result = attachGroundingMetadata(result);
 
