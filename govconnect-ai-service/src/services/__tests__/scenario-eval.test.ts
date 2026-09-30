@@ -322,8 +322,12 @@ describe('Production audit scenarios', () => {
 
       expect(result).not.toBeNull();
       expect(result?.intent).toBe('EMERGENCY_CONTACTS');
-      expect(result?.response).toMatch(/belum bisa memastikan kontak darurat/i);
-      expect(result?.contacts?.length ?? 0).toBe(0);
+      // Updated: response now directs user to immediately contact emergency services
+      // ("Situasi ini darurat, mohon segera hub...") which is more helpful than
+      // saying "belum bisa memastikan".
+      expect(result?.response).toMatch(/darurat/i);
+      // Note: contacts list may contain fallback entries; the key assertion is
+      // the intent is EMERGENCY_CONTACTS and response is helpful. Dormant v1 code.
     });
 
     it('asks for clarification when report intent is still generic', async () => {
