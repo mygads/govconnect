@@ -482,6 +482,89 @@ describe('agent preferred reply selection', () => {
       guidanceText: 'Link formulir layanan:\nhttps://example.test/form',
     });
   });
+
+  it('I2 regression: ignores a failed document search suggestion when knowledge retrieval already returned context', () => {
+    // search_knowledge found HIGH-confidence context (no suggested_response on
+    // success), then search_documents failed with a suggested_response.
+    // The document failure must not become the preferred reply.
+    expect(derivePreferredToolReply([
+      {
+        toolName: 'search_knowledge',
+        result: {
+          success: true,
+          data: {
+            found: true,
+            context: 'Langkah-langkah mengurus Surat Keterangan Domisili: ...',
+            sources: [{ title: 'Surat Keterangan Domisili' }],
+          },
+          meta: {
+            trustLevel: 'untrusted_retrieval',
+            sourceKind: 'knowledge_retrieval',
+            found: true,
+            confidenceLevel: 'high',
+          },
+        },
+      },
+      {
+        toolName: 'search_documents',
+        result: {
+          success: true,
+          data: {
+            found: false,
+            suggested_response: 'Saya belum menemukan dokumen yang cukup relevan.',
+          },
+          meta: {
+            trustLevel: 'untrusted_retrieval',
+            sourceKind: 'document_retrieval',
+            found: false,
+            confidenceLevel: 'none',
+          },
+        },
+      },
+    ])).toMatchObject({
+      replyText: undefined,
+    });
+  });
+
+  it('still prefers a not-found suggestion when no tool returned usable context', () => {
+    expect(derivePreferredToolReply([
+      {
+        toolName: 'search_knowledge',
+        result: {
+          success: true,
+          data: {
+            found: false,
+            suggested_response: 'Saya belum menemukan informasi yang cukup akurat.',
+          },
+          meta: {
+            trustLevel: 'untrusted_retrieval',
+            sourceKind: 'knowledge_retrieval',
+            found: false,
+            confidenceLevel: 'none',
+          },
+        },
+      },
+      {
+        toolName: 'search_documents',
+        result: {
+          success: true,
+          data: {
+            found: false,
+            suggested_response: 'Saya belum menemukan dokumen yang cukup relevan.',
+          },
+          meta: {
+            trustLevel: 'untrusted_retrieval',
+            sourceKind: 'document_retrieval',
+            found: false,
+            confidenceLevel: 'none',
+          },
+        },
+      },
+    ])).toMatchObject({
+      // search_knowledge outranks search_documents by base priority when both fail
+      replyText: 'Saya belum menemukan informasi yang cukup akurat.',
+    });
+  });
 });
 
 describe('agent service-info sufficiency stop', () => {

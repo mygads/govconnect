@@ -236,15 +236,37 @@ function isBetterPreferredToolReplyCandidate(
   return candidate.index > current.index;
 }
 
+function toolResultHasUsableContext(result: ToolCallResult): boolean {
+  const payload = result?.data;
+  const data = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
+  if (!data || data.found !== true) return false;
+  const context = data.context;
+  const sources = data.sources;
+  return (typeof context === 'string' && context.trim().length > 0)
+    || (Array.isArray(sources) && sources.length > 0);
+}
+
 function derivePreferredToolReply(
   toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
 ): { replyText?: string; guidanceText?: string } {
   let bestReply: PreferredToolReplyCandidate | undefined;
   let bestGuidance: PreferredToolReplyCandidate | undefined;
 
+  // I2 fix: a failed tool's suggested_response must never outrank a successful
+  // retrieval that actually returned context. Otherwise e.g. search_documents
+  // returning "not found" would discard a HIGH-confidence search_knowledge hit
+  // and the agent would answer "tidak ditemukan" despite having the answer.
+  const hasSuccessfulContext = toolResults.some(({ result }) => toolResultHasUsableContext(result));
+
   toolResults.forEach(({ toolName, result }, index) => {
     const { replyText, guidanceText } = readToolReplyFields(result);
     if (!replyText && !guidanceText) {
+      return;
+    }
+
+    const payload = result?.data;
+    const data = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
+    if (hasSuccessfulContext && data && data.found === false) {
       return;
     }
 
