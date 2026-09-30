@@ -452,8 +452,28 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
     }
     // ── HANDOFF: deterministic human handoff — W1 WAITING_FOR_HUMAN ──
     // Turn berakhir di sini; manusia yang melanjutkan. Tidak ada LLM call.
-    // (Ringkasan handoff disimpan oleh pemanggil/takeover.ts bila diperlukan.)
     if (stage === 'HANDOFF') {
+      // J2 fix (v2): set durable HANDOFF_PENDING state so the takeover
+      // actually blocks subsequent AI turns (previously response-only).
+      try {
+        const { startTakeoverForUser } = await import('../services/channel-client.service');
+        await startTakeoverForUser(input.ctx.userId, {
+          village_id: input.ctx.tenantId,
+          channel: input.ctx.channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+          admin_id: 'system-auto-handoff',
+          admin_name: 'Petugas Desa',
+          reason: 'user_requested_human_agent',
+          enrichment: {
+            intent: 'handoff',
+            last_user_message: input.message,
+            escalation_reason: 'user_requested_human_agent',
+            channel: input.ctx.channel,
+            village_id: input.ctx.tenantId || null,
+          },
+        });
+      } catch (err) {
+        logger.warn('v2 handoff: startTakeoverForUser failed', { error: String(err) });
+      }
       return finish({
         terminalState: 'WAITING_FOR_HUMAN',
         response: 'Baik, saya teruskan ke petugas desa ya. Mohon tunggu sebentar, petugas akan segera membantu. 🙏',
