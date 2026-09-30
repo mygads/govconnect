@@ -103,7 +103,7 @@ export const CREATE_COMPLAINT_PATTERNS = [
 export const SERVICE_INFO_PATTERNS = [
   /\b(syarat|persyaratan|prosedur|biaya|tarif)\b/i,
   /\b(apa\s+saja)\s+(syarat|dokumen|berkas)\b/i,
-  /\b(cara|proses)\s+(buat|bikin|urus|daftar)\b/i,
+  /\b(cara|proses)\s+(buat|bikin|urus|ngurus|daftar)\b/i,
 ];
 
 export const CREATE_SERVICE_REQUEST_PATTERNS = [
@@ -179,7 +179,7 @@ export const KNOWLEDGE_QUERY_PATTERNS = [
   
   // Process questions
   /\b(bagaimana|gimana)\s+(cara|proses|prosedur)\b/i,
-  /\b(cara|proses|prosedur|langkah)\s+(buat|bikin|urus|daftar)\b/i,
+  /\b(cara|proses|prosedur|langkah)\s+(buat|bikin|urus|ngurus|daftar)\b/i,
   /\b(berapa\s+lama|durasi|waktu\s+proses)\b/i,
   
   // Service list questions
