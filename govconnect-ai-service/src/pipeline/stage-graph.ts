@@ -63,6 +63,9 @@ export const STAGE_TRANSITIONS: StageTransition[] = [
   { from: 'EMERGENCY', to: 'CLOSE', kind: 'deterministic', rule: 'kirim kontak darurat + eskalasi → tutup' },
   { from: 'HANDOFF', to: 'CLOSE', kind: 'deterministic', rule: 'serah terima tercatat → tutup turn' },
   { from: 'CLOSE', to: 'INGRESS', kind: 'deterministic', rule: 'turn selesai' },
+  { from: 'INFORMATION', to: 'HANDOFF', kind: 'deterministic', rule: 'permintaan handoff eksplisit → serah terima (W4)' },
+  { from: 'STATUS_CHECK', to: 'HANDOFF', kind: 'deterministic', rule: 'permintaan handoff eksplisit → serah terima (W4)' },
+  { from: 'VERIFY', to: 'HANDOFF', kind: 'deterministic', rule: 'permintaan handoff eksplisit → serah terima (W4)' },
 ];
 
 /**

@@ -210,6 +210,40 @@ export type DecideIdentityResumeOutput =
   | { action: 'reprompt'; reason: 'invalid_name' | 'invalid_phone' }
   | { action: 'resume'; extractedName?: string; extractedPhone?: string };
 
+/**
+ * P0-4 (2026-10-02): Deterministic name extraction fallback.
+ */
+export function extractNameDeterministic(message: string): string | null {
+  const trimmed = message.trim();
+  if (!trimmed || trimmed.length > 50) return null;
+  const explicitMatch = trimmed.match(
+    /(?:nama\s+saya|namaku|saya\s+bernama|panggil\s+(?:saya|aku))\s+([A-Za-z][A-Za-z\s]{1,40})/i
+  );
+  if (explicitMatch) {
+    const name = normalizeDeterministicName(explicitMatch[1]);
+    if (name) return name;
+  }
+  const words = trimmed.split(/\s+/);
+  if (words.length >= 2 && words.length <= 3) {
+    const allCapitalized = words.every((w) => /^[A-Z][a-z]+$/.test(w));
+    const hasNumber = /\d/.test(trimmed);
+    const nonNameWords = /^(yang|dan|atau|dengan|untuk|dari|ke|di|saya|aku|kami|kita|ini|itu|adalah|jalan|gang|rt|rw|dusun|desa|nomor|no|telp|hp)$/i;
+    const hasNonNameWord = words.some((w) => nonNameWords.test(w));
+    if (allCapitalized && !hasNumber && !hasNonNameWord) {
+      return normalizeDeterministicName(trimmed);
+    }
+  }
+  return null;
+}
+
+function normalizeDeterministicName(name: string): string | null {
+  const cleaned = name.trim().replace(/\s+/g, ' ');
+  if (cleaned.length < 2) return null;
+  const words = cleaned.split(' ').slice(0, 3);
+  if (words.some((w) => w.length < 2 || !/^[A-Za-z]+$/.test(w))) return null;
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
 export async function decideIdentityResume(input: DecideIdentityResumeInput): Promise<DecideIdentityResumeOutput> {
   const interrupt = detectComplaintInterrupt(input.message);
   if (interrupt !== 'none') {
@@ -241,7 +275,11 @@ export async function decideIdentityResume(input: DecideIdentityResumeInput): Pr
         return { action: 'resume', extractedName: result.name };
       }
     } catch {
-      // fall through
+      // fall through to deterministic fallback
+    }
+    const deterministicName = extractNameDeterministic(trimmed);
+    if (deterministicName) {
+      return { action: 'resume', extractedName: deterministicName };
     }
     return { action: 'reprompt', reason: 'invalid_name' };
   }
@@ -425,4 +463,32 @@ export async function releaseIdentityDraft(userId: string): Promise<void> {
 
 export const __test_only__ = {
   detectComplaintInterrupt,
+  buildConfirmationSummary,
 };
+
+/**
+ * P1-1: Build the VERIFY-stage summary shown to the citizen before a
+ * complaint is created. Per architecture \u00a74 (VERIFIKASI \u2192 EKSEKUSI), the
+ * citizen must review and explicitly confirm the collected data.
+ */
+export function buildConfirmationSummary(input: {
+  kategori: string;
+  deskripsi?: string;
+  alamat?: string;
+  reporter_name?: string;
+  reporter_phone?: string;
+  kategoriLabel?: string;
+}): string {
+  const lines = [
+    'Mohon periksa kembali laporan Anda:',
+    '',
+    `\uD83D\uDCCB Kategori: ${input.kategoriLabel || input.kategori}`,
+    `\uD83D\uDCDD Deskripsi: ${input.deskripsi || '-'}`,
+  ];
+  if (input.alamat) lines.push(`\uD83D\uDCCD Lokasi: ${input.alamat}`);
+  if (input.reporter_name) lines.push(`\uD83D\uDC64 Nama: ${input.reporter_name}`);
+  if (input.reporter_phone) lines.push(`\uD83D\uDCDE Telepon: ${input.reporter_phone}`);
+  lines.push('');
+  lines.push('Apakah data sudah benar? Balas **YA** untuk mengirim laporan, atau sebutkan bagian yang perlu diubah.');
+  return lines.join('\n');
+}

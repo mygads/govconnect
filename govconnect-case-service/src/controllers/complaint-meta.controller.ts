@@ -289,6 +289,38 @@ export async function handleGetComplaintTypes(req: Request, res: Response) {
       include: { category: true },
       orderBy: { created_at: 'asc' },
     });
+    if (data.length === 0 && !category_id) {
+      const categories = await prisma.complaintCategory.findMany({
+        where: {
+          ...(village_id ? { village_id } : {}),
+          is_active: true,
+        },
+        orderBy: { created_at: 'asc' },
+      });
+      const fallbackData = categories.map((cat) => ({
+        id: cat.id,
+        category_id: cat.id,
+        name: cat.name,
+        name_key: cat.name_key,
+        description: cat.description,
+        is_urgent: false,
+        require_address: true,
+        send_important_contacts: false,
+        important_contact_category: null,
+        important_contact_category_id: null,
+        created_at: cat.created_at,
+        updated_at: cat.updated_at,
+        category: {
+          id: cat.id,
+          village_id: cat.village_id,
+          name: cat.name,
+          name_key: cat.name_key,
+          description: cat.description,
+          is_active: cat.is_active,
+        },
+      }));
+      return res.json({ data: fallbackData, fallback: 'categories' });
+    }
     return res.json({ data });
   } catch (error: any) {
     logger.error('Get complaint types error', { error: error.message });

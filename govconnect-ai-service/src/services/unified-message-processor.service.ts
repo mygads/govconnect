@@ -884,6 +884,8 @@ function isExplicitHumanHandoffRequest(message: string): boolean {
     /\b(?:minta|mohon|tolong|ingin|mau|butuh|perlu)\b.*\b(?:dibantu|disambungkan|dialihkan|diteruskan|bicara|ngobrol|chat)\b.*\b(?:petugas|admin|operator|manusia)\b/,
     /\b(?:hubungkan|sambungkan|disambungkan|alih(?:kan)?|dialihkan|teruskan|diteruskan)\b.*\b(?:petugas|admin|operator|manusia)\b/,
     /\b(?:mau|ingin|butuh|perlu)\s+(?:orang|manusia|petugas|admin|operator)\b/,
+    /\b(?:mau|ingin|pengen)\b.*\b(?:ngomong|bicara|ngobrol)\b.*\b(?:sama|dengan)\b.*\b(?:orang|manusia)\b/,
+    /\b(?:panggilkan|panggil|hubungi)\b.*\b(?:petugas|admin|operator|orang)\b/,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -1323,10 +1325,13 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
   const generalIdentityPatterns = [
     /^(kamu|kau) siapa\??$/,
     /^siapa (kamu|kau)\??$/,
+    /\bkamu\b.{0,10}\bsiapa\b/,
   ];
   const directAiQuestionPatterns = [
     /^(apakah|apa) (kamu|kau) (ai|bot|robot)\??$/,
     /^(kamu|kau) (ai|bot|robot) (ya|kan|bukan)\??$/,
+    /\bkamu\b.{0,20}\b(robot|ai|bot)\b/,
+    /\b(robot|ai|bot)\b.{0,20}\bkamu\b/,
   ];
   const isGeneralIdentity = generalIdentityPatterns.some(p => p.test(normalizedMsg));
   const isDirectAiQuestion = directAiQuestionPatterns.some(p => p.test(normalizedMsg));
