@@ -187,10 +187,33 @@ export function rewriteQueryForRAG(
     return { rewritten: original, didRewrite: false, reason: 'no_anaphoric_signal' };
   }
 
+  // [P2-3 FIX] Deteksi pola multi-entity: "semua itu", "semuanya", "keduanya", "masing-masing"
+  // Jika ada, gabungkan SEMUA entitas konteks, bukan hanya activeTopic
+  const MULTI_ENTITY_PATTERN = /\b(semua\s+itu|semuanya|keduanya|masing-masing|total\s+semuanya)\b/i;
+  const isMultiEntityQuery = MULTI_ENTITY_PATTERN.test(original);
+
   // Susun label konteks: topik aktif dulu, lalu entitas yang belum disebut.
   const qLower = original.toLowerCase();
   const bits: string[] = [];
-  if (context.activeTopic?.trim()) bits.push(context.activeTopic.trim());
+  if (isMultiEntityQuery) {
+    // Multi-entity: kumpulkan semua entitas unik dari konteks
+    const allEntities = new Set<string>();
+    if (context.activeTopic?.trim()) allEntities.add(context.activeTopic.trim());
+    for (const e of context.entities ?? []) {
+      const trimmed = e?.trim();
+      if (trimmed) allEntities.add(trimmed);
+    }
+    // Juga ekstrak dari recentTurns jika entities kosong
+    if (allEntities.size <= 1 && context.recentTurns?.length) {
+      for (const turn of context.recentTurns.slice(-4)) {
+        const svcMatch = turn.match(/\b(ktp|kk|kartu keluarga|sktm|domisili|surat keterangan \w+|akta kelahiran)\b/gi);
+        if (svcMatch) svcMatch.forEach(m => allEntities.add(m.trim()));
+      }
+    }
+    bits.push(...allEntities);
+  } else if (context.activeTopic?.trim()) {
+    bits.push(context.activeTopic.trim());
+  }
   for (const e of context.entities ?? []) {
     const trimmed = e?.trim();
     if (trimmed && !significantWords(trimmed).some((w) => qLower.includes(w))) {

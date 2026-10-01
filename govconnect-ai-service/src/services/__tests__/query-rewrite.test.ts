@@ -253,3 +253,28 @@ describe('retrieveContext: rewrite berjalan SEBELUM retrieval', () => {
     expect(querySentToRetrieval).toBe('kapan selesainya?');
   });
 });
+
+describe('[P2-3] multi-entity anaphora', () => {
+  it('rewrites "semua itu" with all entities', async () => {
+    const { rewriteQueryForRAG } = await import('../query-rewrite.service');
+    const result = rewriteQueryForRAG('biayanya berapa semua itu?', {
+      activeTopic: 'KTP',
+      entities: ['KTP', 'Kartu Keluarga'],
+      recentTurns: ['syarat KTP apa?', 'kalau KK gimana?'],
+    });
+    expect(result.didRewrite).toBe(true);
+    expect(result.rewritten).toMatch(/KTP/i);
+    expect(result.rewritten).toMatch(/Kartu Keluarga/i);
+  });
+
+  it('rewrites single entity normally', async () => {
+    const { rewriteQueryForRAG } = await import('../query-rewrite.service');
+    const result = rewriteQueryForRAG('biayanya berapa?', {
+      activeTopic: 'KTP',
+      entities: ['KTP'],
+      recentTurns: [],
+    });
+    expect(result.didRewrite).toBe(true);
+    expect(result.rewritten).toMatch(/KTP/i);
+  });
+});
