@@ -47,6 +47,12 @@ export const STAGE_TRANSITIONS: StageTransition[] = [
   { from: 'VERIFY', to: 'EXECUTE', kind: 'deterministic', rule: 'konfirmasi eksplisit via tombol → eksekusi' },
   { from: 'VERIFY', to: 'COLLECT', kind: 'deterministic', rule: 'warga pilih "ubah" → kembali kumpulkan' },
   { from: 'VERIFY', to: 'CLOSE', kind: 'deterministic', rule: 'warga batalkan → tutup' },
+  // P1-11: VERIFY terinterupsi pesan non-konfirmasi (mis. "kapan selesainya?").
+  // Assessor menilai apakah warga bertanya tentang item yang diverifikasi
+  // (tetap VERIFY, jawab dengan konteks pending mutation) atau jelas memulai
+  // topik baru (TRIAGE → routing ulang). Tidak ada eksekusi di kedua jalur.
+  { from: 'VERIFY', to: 'VERIFY', kind: 'fuzzy', rule: 'assessor: warga bertanya/menanggapi item yang diverifikasi → tetap VERIFY, jawab dengan konteks' },
+  { from: 'VERIFY', to: 'TRIAGE', kind: 'fuzzy', rule: 'assessor: warga jelas memulai topik/permintaan baru → routing ulang' },
 
   { from: 'EXECUTE', to: 'CLOSE', kind: 'deterministic', rule: 'eksekusi sukses → tutup + ringkasan' },
   { from: 'EXECUTE', to: 'HANDOFF', kind: 'deterministic', rule: 'eksekusi gagal permanen 2x → handoff' },

@@ -1073,6 +1073,9 @@ async function toolSearchKnowledge(
     channel: ctx.channel,
   });
   if (!result.context || result.total === 0) {
+    // W6: if the fail-closed assertion discarded the retrieval, tell the
+    // agent explicitly — it must NOT fabricate a specific answer.
+    const ragUnreliable = result.ragUnreliable === true;
     return {
       success: true,
       data: {
@@ -1081,7 +1084,11 @@ async function toolSearchKnowledge(
         sources: [],
         confidence_level: result.confidenceLevel || 'none',
         retrieval_mode: result.retrievalMode || 'rag',
-        message: 'Tidak ditemukan informasi knowledge yang relevan.',
+        rag_unreliable: ragUnreliable || undefined,
+        rag_quality_level: result.ragQuality?.level,
+        message: ragUnreliable
+          ? 'Hasil pencarian knowledge tidak cukup dapat dipercaya (skor relevansi di bawah ambang).'
+          : 'Tidak ditemukan informasi knowledge yang relevan.',
         suggested_response: 'Saya belum menemukan informasi yang cukup akurat untuk menjawab itu. Bisa sebutkan topiknya lebih spesifik, atau saya arahkan ke kantor desa untuk konfirmasi?'
       },
       meta: {

@@ -16,6 +16,8 @@ import {
   RAGContext,
   RAGConfidence,
   RAGConflictInfo,
+  RAGFailClosedDecision,
+  RAGQualityAssessment,
   RetrievalMode,
   VectorSearchResult,
   VectorSearchOptions,
@@ -24,6 +26,7 @@ import { config } from '../config/env';
 import { generateEmbedding } from './embedding.service';
 import { searchVectors, recordBatchRetrievals } from './vector-db.service';
 import { hybridSearch, HybridSearchResult } from './hybrid-search.service';
+import { evaluateRAGQuality, recordRAGQualityMetrics } from './rag-quality-gate.service';
 import {
   buildPromptMessages,
   callAIGatewayPrompt,
@@ -43,6 +46,43 @@ const DEFAULT_RERANK_MIN_SCORE = 0.2;
 const DEFAULT_RETRIEVAL_MODE: RetrievalMode = 'heuristic_rerank';
 const HYBRID_RERANK_MIN_CANDIDATES = 8;
 const HYBRID_RERANK_CLOSE_SCORE_GAP = 0.08;
+
+/**
+ * W6: post-retrieval fail-closed threshold.
+ * If the best result scores below this, the retrieval is discarded entirely
+ * (ragUnreliable=true) instead of letting the LLM answer from shaky context.
+ * Must stay aligned with RAG_QUALITY_MEDIUM_MIN in rag-quality-gate.service.ts.
+ */
+export const RAG_FAILCLOSED_MIN_SCORE = 0.65;
+
+/**
+ * W6: pure post-retrieval fail-closed decision (no I/O — unit testable).
+ *
+ * @param topScore  best similarity score, or null when there are no results
+ * @param resultCount number of results that survived filtering
+ * @param queryIntent intent from classifyQueryIntent ('skip' = greeting/smalltalk)
+ */
+export function evaluateFailClosed(
+  topScore: number | null,
+  resultCount: number,
+  queryIntent: string,
+): RAGFailClosedDecision {
+  if (resultCount === 0 || topScore === null) {
+    return { unreliable: false, reason: 'no results to evaluate' };
+  }
+  // Greetings/smalltalk never reach retrieval (early return), but guard anyway:
+  // fail-closed only applies to substantive queries.
+  if (queryIntent === 'skip') {
+    return { unreliable: false, reason: 'greeting/smalltalk exempt' };
+  }
+  if (topScore < RAG_FAILCLOSED_MIN_SCORE) {
+    return {
+      unreliable: true,
+      reason: `top score ${topScore.toFixed(3)} < fail-closed threshold ${RAG_FAILCLOSED_MIN_SCORE}`,
+    };
+  }
+  return { unreliable: false, reason: `top score ${topScore.toFixed(3)} >= threshold` };
+}
 
 function resolveRetrievalMode(mode?: RetrievalMode): RetrievalMode {
   if (mode === 'external_rerank' || mode === 'heuristic_rerank' || mode === 'raw_no_rerank') {
@@ -835,6 +875,64 @@ export async function retrieveContext(
       };
     }
 
+    // W9: live RAG quality gate — runs on every retrieval.
+    const ragQuality: RAGQualityAssessment = evaluateRAGQuality(
+      filteredResults.map((r) => (typeof r.score === 'number' ? r.score : 0)),
+    );
+    if (ragQuality.level === 'LOW') {
+      logger.warn('RAG quality gate: LOW quality retrieval', {
+        trace: 'rag_quality_low',
+        query: query.substring(0, 100),
+        villageId,
+        top1Score: ragQuality.top1Score,
+        top2Score: ragQuality.top2Score,
+        scoreGap: ragQuality.scoreGap,
+        resultCount: ragQuality.resultCount,
+        avgScore: ragQuality.avgScore,
+        reasons: ragQuality.reasons,
+      });
+    }
+    // Persist metrics for monitoring (fire-and-forget; never breaks retrieval).
+    void recordRAGQualityMetrics({
+      villageId,
+      channel,
+      queryPreview: query.substring(0, 200),
+      assessment: ragQuality,
+    });
+
+    // W6: post-retrieval fail-closed assertion. If every surviving result is
+    // below the trust threshold, discard them all — never let the LLM answer
+    // from irrelevant context. The caller sees ragUnreliable=true and must
+    // answer honestly ("don't know") instead of hallucinating.
+    const failClosed = evaluateFailClosed(ragQuality.top1Score, filteredResults.length, queryIntent);
+    if (failClosed.unreliable) {
+      logger.warn('RAG fail-closed: discarding unreliable retrieval', {
+        trace: 'rag_fail_closed',
+        query: query.substring(0, 100),
+        villageId,
+        reason: failClosed.reason,
+        discardedCount: filteredResults.length,
+        searchTimeMs: Date.now() - startTime,
+      });
+      const failClosedResponse: RAGContext = {
+        relevantChunks: [],
+        contextString: '',
+        totalResults: 0,
+        searchTimeMs: Date.now() - startTime,
+        confidence: {
+          level: 'low',
+          score: 0,
+          reason: `Fail-closed: ${failClosed.reason}`,
+          suggestFallback: true,
+        },
+        ragUnreliable: true,
+        ragQuality,
+        retrievalDebug,
+      };
+      setCachedRetrieval(retrievalCacheKey, failClosedResponse);
+      return failClosedResponse;
+    }
+
     // Step 5: Record retrievals for analytics (fire and forget)
     const knowledgeIds = filteredResults
       .filter(r => r.sourceType === 'knowledge')
@@ -871,6 +969,8 @@ export async function retrieveContext(
       confidence,
       conflicts: conflicts.length > 0 ? conflicts : undefined,
       retrievalDebug,
+      ragUnreliable: false,
+      ragQuality,
     };
 
     setCachedRetrieval(retrievalCacheKey, response);

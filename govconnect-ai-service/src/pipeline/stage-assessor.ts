@@ -26,6 +26,15 @@ export interface AssessorInput {
    * to leave COLLECT — weak keyword hits must not abandon slot collection.
    */
   activeCollectIntent?: 'complaint' | 'service_request' | null;
+  /**
+   * P1-11: true when the previous turn left the citizen at VERIFY with a
+   * minted pending mutation, and the current message is not a button click,
+   * explicit confirmation, cancellation, or correction. The citizen is most
+   * likely asking about the item under verification ("kapan selesainya?").
+   * The deterministic fallback keeps VERIFY (fail-safe: the mutation is
+   * never executed nor dropped without an explicit user decision).
+   */
+  verifyPending?: boolean;
 }
 
 /** Optional LLM hook — injected by wiring code, not imported directly. */
@@ -44,6 +53,20 @@ export function setAssessorLLM(fn: AssessorLLMFn): void {
 
 /** Deterministic fallback: keyword scoring over candidate stages. */
 function assessDeterministic(input: AssessorInput, candidates: Stage[]): StageDecision {
+  // P1-11 fail-safe: an interrupted VERIFY keeps its pending mutation.
+  // Without the LLM we cannot reliably tell a question about the pending
+  // item from a brand-new topic; staying in VERIFY is the safe choice —
+  // the mutation is never executed nor dropped, the citizen can still
+  // confirm, correct, or cancel on the next turn.
+  if (input.verifyPending && input.fromStage === 'VERIFY' && candidates.includes('VERIFY')) {
+    return {
+      stage: 'VERIFY',
+      source: 'deterministic',
+      confidence: 0.6,
+      reasons: ['assessor_verify_pending_protected'],
+    };
+  }
+
   const text = input.message.toLowerCase();
 
   const scores = new Map<Stage, number>();
