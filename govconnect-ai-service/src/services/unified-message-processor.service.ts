@@ -124,6 +124,7 @@ import {
   detectMultiIntent,
   buildMultiIntentResponse,
   tryHandleServiceListingShortcut,
+  tryHandleEmergencyShortcut,
   type FastIntentDecision,
 } from './pre-agent-state-router.service';
 
@@ -436,6 +437,15 @@ function shouldHandleActiveServiceFollowUp(routingDecision: FastIntentDecision, 
 function shouldHandleServiceListing(routingDecision: FastIntentDecision): boolean {
   return routingDecision.action === 'handle_pre_agent'
     && routingDecision.primaryIntent === 'service_listing';
+}
+
+/**
+ * [T-22 FIX] Jalur DARURAT: bypass langsung eskalasi + info kontak darurat.
+ * Sesuai stage DARURAT di arsitektur final — bukan flow complaint biasa.
+ */
+function shouldHandleEmergencyShortcut(routingDecision: FastIntentDecision): boolean {
+  return routingDecision.action === 'handle_pre_agent'
+    && routingDecision.primaryIntent === 'emergency_contact';
 }
 
 function shouldHardBlockOutOfScope(routingDecision: FastIntentDecision): boolean {
@@ -2163,6 +2173,42 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         messagePreview: workingMessage,
       });
       return finish(nikValidationResult);
+    }
+
+    // [T-22 FIX] Deterministic emergency — bypass langsung eskalasi + kontak darurat
+    const emergencyResult = sideEffectMode === 'knowledge_test' || !shouldHandleEmergencyShortcut(routingDecision)
+      ? null
+      : await tryHandleEmergencyShortcut({
+          message: workingMessage,
+          villageId: resolvedVillageId,
+          traceId,
+          startTime,
+          sideEffectMode,
+        });
+    if (emergencyResult) {
+      const guardrail = emergencyResult.metadata.guardrail;
+      routingOutcome = {
+        outcome: 'handled_pre_agent',
+        reason: guardrail?.reason || emergencyResult.intent,
+        ...(releasedRoutingStates.length > 0 ? { releasedStates: releasedRoutingStates } : {}),
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: guardrail?.stage || 'pre_agent_emergency',
+        guardType: guardrail?.type || 'emergency_shortcut',
+        action: guardrail?.action || 'handled',
+        reason: guardrail?.reason || emergencyResult.intent,
+        messagePreview: workingMessage,
+        metadata: guardrail?.details,
+      });
+      tracker.complete();
+      notifyStage('done', 100);
+      return finish(emergencyResult);
     }
 
     // Deterministic service listing — bypasses RAG/knowledge for "layanan apa aja"
