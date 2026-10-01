@@ -308,3 +308,51 @@ describe('[P1-3] multi-intent detection', () => {
     expect(response).toMatch(/mau mulai dari yang mana/i);
   });
 });
+
+describe('[P1-4] spam guard', () => {
+  it('detects repeated identical messages as spam', async () => {
+    const { checkSpamGuard, clearSpamTracker } = await import('../pre-agent-state-router.service');
+    const userId = 'spam-test-user-1';
+    clearSpamTracker(userId);
+
+    expect(checkSpamGuard(userId, 'halo').isSpam).toBe(false);
+    expect(checkSpamGuard(userId, 'halo').isSpam).toBe(false);
+    const third = checkSpamGuard(userId, 'halo');
+    expect(third.isSpam).toBe(true);
+    expect(third.count).toBe(3);
+
+    clearSpamTracker(userId);
+  });
+
+  it('does not flag different messages as spam', async () => {
+    const { checkSpamGuard, clearSpamTracker } = await import('../pre-agent-state-router.service');
+    const userId = 'spam-test-user-2';
+    clearSpamTracker(userId);
+
+    checkSpamGuard(userId, 'halo');
+    checkSpamGuard(userId, 'mau tanya');
+    const result = checkSpamGuard(userId, 'halo lagi');
+    expect(result.isSpam).toBe(false);
+
+    clearSpamTracker(userId);
+  });
+
+  it('greeting shortcut deflects spam with clarification', async () => {
+    const { tryHandleGreetingShortcut, clearSpamTracker } = await import('../pre-agent-state-router.service');
+    const userId = 'spam-test-user-3';
+    clearSpamTracker(userId);
+
+    const input = {
+      message: 'halo', userId, traceId: 't1',
+      startTime: Date.now(), hasActiveState: false,
+    };
+    // First 2 are normal greetings
+    expect(tryHandleGreetingShortcut(input)?.response).toMatch(/selamat datang/i);
+    expect(tryHandleGreetingShortcut(input)?.response).toMatch(/selamat datang/i);
+    // 3rd triggers spam guard
+    const spamResult = tryHandleGreetingShortcut(input);
+    expect(spamResult?.response).toMatch(/terkirim beberapa kali/i);
+
+    clearSpamTracker(userId);
+  });
+});

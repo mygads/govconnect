@@ -1844,6 +1844,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     if (sideEffectMode !== 'knowledge_test') {
       const greetingShortcut = tryHandleGreetingShortcut({
         message: workingMessage,
+        userId,
         userName: null,
         villageName: null,
         traceId,

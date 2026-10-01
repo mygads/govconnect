@@ -1217,11 +1217,62 @@ const THANKS_ONLY_PATTERN = /^(terima\s*kasih|makasih|maksih|mksh|thx|thanks?|tq
 
 interface GreetingShortcutInput {
   message: string;
+  userId?: string;
   userName?: string | null;
   villageName?: string | null;
   traceId: string;
   startTime: number;
   hasActiveState: boolean;
+}
+
+/**
+ * [P1-4 FIX] Spam guard: lacak pesan identik berulang dari user yang sama.
+ * Jika user mengirim pesan yang sama 3+ kali dalam 60 detik, anggap spam
+ * dan berikan respons yang meminta klarifikasi (bukan mengulang template).
+ */
+interface SpamTrackerEntry {
+  lastMessage: string;
+  count: number;
+  firstSeen: number;
+  warned: boolean;
+}
+
+const spamTracker = new Map<string, SpamTrackerEntry>();
+const SPAM_WINDOW_MS = 60_000; // 60 detik
+const SPAM_THRESHOLD = 3; // 3x pesan identik = spam
+
+function normalizeForSpam(text: string): string {
+  return (text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function checkSpamGuard(userId: string, message: string): { isSpam: boolean; count: number } {
+  if (!userId || !message) return { isSpam: false, count: 0 };
+
+  const normalized = normalizeForSpam(message);
+  // Hanya lacak pesan pendek (sapaan, dll). Pesan panjang tidak dianggap spam.
+  if (normalized.length > 40) return { isSpam: false, count: 0 };
+
+  const now = Date.now();
+  const key = `${userId}`;
+  const entry = spamTracker.get(key);
+
+  if (!entry || entry.lastMessage !== normalized || (now - entry.firstSeen) > SPAM_WINDOW_MS) {
+    // Pesan baru atau window expired, reset
+    spamTracker.set(key, { lastMessage: normalized, count: 1, firstSeen: now, warned: false });
+    return { isSpam: false, count: 1 };
+  }
+
+  entry.count += 1;
+  const isSpam = entry.count >= SPAM_THRESHOLD;
+  return { isSpam, count: entry.count };
+}
+
+export function clearSpamTracker(userId?: string): void {
+  if (userId) {
+    spamTracker.delete(userId);
+  } else {
+    spamTracker.clear();
+  }
 }
 
 /**
@@ -1236,6 +1287,26 @@ export function tryHandleGreetingShortcut(
   if (input.hasActiveState) return null;
   const normalized = (input.message || '').trim().toLowerCase();
   if (!normalized || normalized.length > 40) return null;
+
+  // [P1-4 FIX] Spam guard: jika pesan identik 3+ kali dalam 60 detik,
+  // jangan ulangi template, minta klarifikasi kebutuhan
+  if (input.userId) {
+    const spamCheck = checkSpamGuard(input.userId, input.message);
+    if (spamCheck.isSpam) {
+      return buildGuardResult({
+        startTime: input.startTime,
+        traceId: input.traceId,
+        response: 'Sepertinya pesannya terkirim beberapa kali, Pak/Bu. Ada yang bisa saya bantu? Silakan tulis kebutuhan Anda, misalnya "mau bikin KTP" atau "lapor jalan rusak".',
+        intent: 'GREETING',
+        guardrail: {
+          stage: 'pre_agent_shortcut',
+          type: 'spam_guard',
+          action: 'deflect',
+          reason: `repeated_message_${spamCheck.count}x`,
+        },
+      });
+    }
+  }
 
   const isGreeting = GREETING_ONLY_PATTERN.test(normalized);
   const isThanks = THANKS_ONLY_PATTERN.test(normalized);
