@@ -1084,3 +1084,26 @@ model pipeline_ingress_quarantine {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   @@schema("ai")
 }
+
+// ==================== W15: MEDIA INTAKE REGISTRY ====================
+// DB-backed SHA-256/pHash dedup for incoming images. Dedup rule: same
+// (village_id, user_id, sha256) within 24h => duplicate. Survives restarts.
+
+model media_registry {
+  id            String   @id @default(cuid())
+  village_id    String
+  user_id       String
+  sha256        String
+  phash         String?
+  message_id    String?
+  media_kind    String   @default("unknown") // 'photo' | 'document' | 'unknown'
+  bytes         BigInt?
+  exif_stripped Boolean  @default(false)
+  redaction     String   @default("degraded") // 'done' | 'degraded' | 'not_applicable'
+  admin_only    Boolean  @default(false)      // KTP/identity docs: admin eyes only
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([village_id, user_id, sha256, created_at])
+  @@index([village_id, user_id, phash])
+  @@schema("ai")
+}

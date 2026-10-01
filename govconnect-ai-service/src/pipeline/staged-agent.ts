@@ -532,6 +532,45 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
       }
       // Default: mint the pending mutation (so the next turn's confirm_send
       // click can bind to it) and show the deterministic summary again.
+      // P1-11: anaphoric question during VERIFY (decision.hints.verifyQuestion,
+      // set by process-message-v2 when the assessor judges the message a
+      // question about the pending item, e.g. "kapan selesainya?").
+      // Answer WITH the pending mutation as context, KEEP the mutation,
+      // stay in VERIFY, and re-show the deterministic summary + confirm
+      // prompt. Never executes, never drops the mutation.
+      if (input.decision.hints?.verifyQuestion === true) {
+        const qMutation = buildPendingMutation(intent, strSlots);
+        if (!qMutation) {
+          return failover('verify_missing_mutation_data', 'slots incomplete at verify');
+        }
+        input.ctx.slots.pendingTool = qMutation;
+        const pendingSummary = renderVerifySummary(intent, strSlots);
+        const qaFacts = [
+          '[SISTEM] Warga sedang memverifikasi laporan/permohonan di bawah ini (BELUM dikonfirmasi, BELUM tercatat di sistem). ' +
+          'Pertanyaan warga merujuk ke laporan/permohonan ini — jawab dengan konteks tersebut. ' +
+          'JANGAN mengklaim laporan sudah dibuat, terkirim, atau sedang diproses. ' +
+          'Untuk estimasi waktu penyelesaian, beri perkiraan umum yang jujur dan sarankan konfirmasi ke petugas desa untuk kepastian.',
+          pendingSummary,
+        ];
+        const infoTools = AGENT_TOOLS.filter((t) =>
+          (STAGE_TOOL_ALLOWLIST['INFORMATION'] ?? new Set<AgentToolName>()).has(t.function.name as AgentToolName),
+        );
+        const qa = await runBoundedLoop(
+          { ...input, facts: [...(input.facts ?? []), ...qaFacts] },
+          'INFORMATION',
+          infoTools,
+        );
+        const answer = qa.text.trim();
+        // Never silent: if the Q&A loop yields nothing, the deterministic
+        // summary alone still goes out (the question is implicitly deferred
+        // to the human-readable summary + confirm prompt).
+        const combined = answer ? `${answer}\n\n${pendingSummary}` : pendingSummary;
+        const { text: verified } = verifyAnswer(combined, qa.traces);
+        return finish({
+          terminalState: 'SUCCEEDED', response: verified, stage, intent: 'verify_question',
+          toolsUsed: qa.toolsUsed, toolTrace: qa.traces, degraded: false,
+        });
+      }
       const mutation = buildPendingMutation(intent, strSlots);
       if (!mutation) {
         return failover('verify_missing_mutation_data', 'slots incomplete at verify');

@@ -137,6 +137,30 @@ export async function moderateImage(buf: Buffer): Promise<ModerationResult> {
 }
 
 /**
+ * Strip ALL metadata (EXIF, XMP, ICC, GPS, device info) by re-encoding the
+ * image. sharp drops every metadata chunk on output unless .withMetadata()
+ * is called, so a plain re-encode is a reliable EXIF stripper for every
+ * format sharp can decode (JPEG, PNG, WebP, …) — unlike the pure-TS
+ * JPEG-APPn stripper in media-pipeline.ts which only handles JPEG.
+ *
+ * Returns the re-encoded buffer, or null when sharp is unavailable or
+ * decoding fails (caller falls back to the JPEG segment stripper).
+ */
+export async function stripExifMetadata(buf: Buffer): Promise<Buffer | null> {
+  if (!sharp) return null;
+  try {
+    // No .withMetadata() → all EXIF/XMP/GPS dropped. rotate() also applies
+    // the EXIF orientation so the pixels stay visually correct afterwards.
+    return await sharp(buf).rotate().toBuffer();
+  } catch (err) {
+    logger.debug('[media-perceptual] exif strip failed', {
+      error: String((err as Error)?.message ?? err).slice(0, 100),
+    });
+    return null;
+  }
+}
+
+/**
  * Blur an image buffer (for face/plate redaction regions in future, or
  * whole-image fallback). Returns the blurred buffer, or null when sharp
  * is unavailable / decoding fails.

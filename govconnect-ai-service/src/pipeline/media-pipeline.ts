@@ -4,19 +4,26 @@
  * Design (arsitektur-final §5.7, v5 multimodal):
  * - Vision is an ASSISTANT SIGNAL only: raw pixels are never forwarded to
  *   the LLM until faces/license-plates are destructively redacted.
- * - Mandatory steps per image: (1) SHA-256 for dedup, (2) EXIF strip,
- *   (3) face/plate redaction.
- * - Graceful degradation (honest): this environment has no image library
- *   (sharp) and no detection model, so redaction CANNOT be performed.
- *   In that case redaction='degraded' and the image is NEVER forwarded —
- *   only signal metadata reaches the agent. No capability is fabricated.
+ * - Mandatory steps per image: (1) SHA-256 for dedup (+ pHash near-dup),
+ *   (2) EXIF strip, (3) face/plate redaction.
+ * - W15 (2026-10-01): dedup is DB-backed (ai.media_registry) — same
+ *   (village_id, user_id, sha256) within 24h => duplicate; survives restarts
+ *   and works across replicas. In-process Maps are L1 only.
+ * - W15: EXIF strip uses sharp re-encode when available (drops ALL metadata
+ *   for every decodable format), falling back to the pure-TS JPEG APPn
+ *   segment stripper. Non-JPEG without sharp is marked exifStripped:false.
+ * - W15: KTP/identity documents are NEVER blurred (admin manual verification
+ *   needs them intact) and are flagged adminOnly — never forwarded to any LLM.
+ * - Targeted face/plate blur is a documented TODO: no detection model is
+ *   available in this environment. General photos use whole-image blur
+ *   (MEDIA_REDACT_MODE=blur) or are never forwarded (default 'degraded').
  *
  * EXIF: best-effort pure-TS JPEG APPn-segment stripper (covers EXIF/XMP in
- * JPEG). Non-JPEG input is marked exifStripped:false (degraded).
+ * JPEG). Non-JPEG input without sharp is marked exifStripped:false (degraded).
  */
 
-import { createHash } from 'crypto';
-import { appendAudit } from './pipeline-store';
+import { createHash, randomUUID } from 'crypto';
+import { appendAudit, getDb } from './pipeline-store';
 import logger from '../utils/logger';
 import { isOcrConfigured } from './ocr-ktp';
 import {
@@ -24,9 +31,90 @@ import {
   hammingDistance,
   moderateImage,
   blurImage,
+  stripExifMetadata,
   isSharpAvailable,
   PHASH_NEAR_DUP_THRESHOLD,
 } from './media-perceptual';
+
+/**
+ * W15 — DB-backed media registry (ai.media_registry).
+ * Dedup rule: same (village_id, user_id, sha256) within the last 24h
+ * => duplicate. Survives process restarts; works across replicas.
+ * In-process Maps remain as an L1 fast path; the DB is authoritative.
+ */
+const DEDUP_WINDOW_HOURS = Number(process.env.MEDIA_DEDUP_WINDOW_HOURS ?? 24);
+
+interface DbDuplicateHit {
+  message_id: string | null;
+  created_at: Date;
+}
+
+async function findRecentDbDuplicate(
+  villageId: string,
+  userId: string,
+  sha256: string,
+): Promise<DbDuplicateHit | null> {
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const rows = (await db.$queryRawUnsafe(
+      `SELECT message_id, created_at FROM ai.media_registry
+       WHERE village_id = $1 AND user_id = $2 AND sha256 = $3
+         AND created_at > NOW() - ($4 || ' hours')::interval
+       ORDER BY created_at DESC LIMIT 1`,
+      villageId,
+      userId,
+      sha256,
+      String(DEDUP_WINDOW_HOURS),
+    )) as Array<{ message_id: string | null; created_at: Date }>;
+    return rows[0] ?? null;
+  } catch (err) {
+    logger.debug('[media-pipeline] db dedup lookup failed (degraded to L1)', {
+      error: String((err as Error)?.message ?? err).slice(0, 120),
+    });
+    return null;
+  }
+}
+
+async function recordMediaIntake(input: {
+  villageId: string;
+  userId: string;
+  sha256: string;
+  phash?: string;
+  messageId?: string;
+  mediaKind: string;
+  bytes: number;
+  exifStripped: boolean;
+  redaction: string;
+  adminOnly: boolean;
+}): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    await db.$executeRawUnsafe(
+      `INSERT INTO ai.media_registry
+         (id, village_id, user_id, sha256, phash, message_id, media_kind, bytes,
+          exif_stripped, redaction, admin_only)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      randomUUID(),
+      input.villageId,
+      input.userId,
+      input.sha256,
+      input.phash ?? null,
+      input.messageId ?? null,
+      input.mediaKind,
+      String(input.bytes),
+      input.exifStripped,
+      input.redaction,
+      input.adminOnly,
+    );
+  } catch (err) {
+    // Best-effort: intake must never fail because the registry write failed.
+    logger.debug('[media-pipeline] media registry insert failed', {
+      error: String((err as Error)?.message ?? err).slice(0, 120),
+    });
+  }
+}
 
 export interface MediaSignal {
   hasImage: boolean;
@@ -61,6 +149,13 @@ export interface MediaSignal {
    * bytes are dropped after hashing. NEVER forwarded to any LLM.
    */
   retainedBytes?: Buffer;
+  /**
+   * W15: KTP / identity documents must NEVER be blurred (needed for manual
+   * admin verification) and are admin-eyes-only: never forwarded to any LLM,
+   * never shown to other users. Set when retainBytes is requested (KTP
+   * verification intake) or the media kind is 'document'.
+   */
+  adminOnly?: boolean;
   /** System fact injected into the agent prompt. */
   promptFact?: string;
 }
@@ -110,17 +205,15 @@ export function stripJpegAppSegments(buf: Buffer): Buffer | null {
   if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
   const out: Buffer[] = [buf.subarray(0, 2)]; // SOI
   let i = 2;
-  while (i + 4 <= buf.length) {
+  while (i + 2 <= buf.length) {
     if (buf[i] !== 0xff) break; // not a marker — stop, keep rest as-is
-    const marker = buf[i + 1];
-    if (marker === 0xd8 || marker === 0xd9) {
-      // SOI (dup) / EOI
+    const marker = buf[i + 1]!;
+    if (marker === 0xd9) {
+      // EOI — always preserved (may be the final 2 bytes)
       out.push(buf.subarray(i, i + 2));
-      i += 2;
-      if (marker === 0xd9) break;
-      continue;
+      break;
     }
-    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
       out.push(buf.subarray(i, i + 2)); // standalone markers
       i += 2;
       continue;
@@ -333,6 +426,30 @@ export async function processImageMedia(input: {
   }
 
   const hash = sha256Hex(bytes);
+
+  // W15: DB-backed dedup (authoritative) — same user + same SHA-256 within
+  // the last DEDUP_WINDOW_HOURS (default 24h) => duplicate. This survives
+  // restarts and works across replicas; the in-process Maps below are L1.
+  const dbDup = await findRecentDbDuplicate(tenantId, userId, hash);
+  if (dbDup && dbDup.message_id !== input.messageId) {
+    await appendAudit({
+      tenantId, traceId, userId, channel, stage: 'INGRESS', event: 'media_duplicate',
+      payload: {
+        sha256: hash.slice(0, 16) + '…', duplicateOf: dbDup.message_id,
+        duplicateKind: 'exact', source: 'db_registry',
+      },
+    }).catch(() => undefined);
+    return {
+      hasImage: true, sha256: hash, duplicate: true, duplicateKind: 'exact',
+      duplicateOfMessageId: dbDup.message_id ?? undefined,
+      exifStripped: false, redaction: 'degraded', forwardToLlm: false,
+      estimatedKind: 'unknown', bytes: bytes.length,
+      fraudSignals: ['duplicate_image'],
+      promptFact: '[SINYAL MEDIA] Foto ini sudah pernah dikirim sebelumnya (duplikat). ' +
+        'Jangan meminta ulang; perlakukan sebagai bukti yang sama.',
+    };
+  }
+
   const dupOf = seenHashes.get(hash);
   if (dupOf && dupOf !== input.messageId) {
     await appendAudit({
@@ -344,7 +461,7 @@ export async function processImageMedia(input: {
       exifStripped: false, redaction: 'degraded', forwardToLlm: false,
       estimatedKind: 'unknown', bytes: bytes.length,
       fraudSignals: ['duplicate_image'],
-      promptFact: '[SINYAL MEDIA] Gambar yang dilampirkan identik dengan gambar yang sudah dikirim sebelumnya. ' +
+      promptFact: '[SINYAL MEDIA] Foto ini sudah pernah dikirim sebelumnya (duplikat). ' +
         'Jangan meminta ulang; perlakukan sebagai bukti yang sama.',
     };
   }
@@ -382,14 +499,23 @@ export async function processImageMedia(input: {
   // W15: moderation (heuristic, review-oriented — never auto-rejects).
   const moderation = await moderateImage(bytes);
 
-  // EXIF strip (best-effort, JPEG only).
+  // W15: EXIF strip — strip ALL metadata (EXIF, XMP, ICC, GPS, device info)
+  // before any storage/forwarding.
+  // 1. Preferred: sharp re-encode (drops every metadata chunk on output for
+  //    all decodable formats — JPEG, PNG, WebP, …) via stripExifMetadata().
+  // 2. Fallback: pure-TS JPEG APPn segment stripper (JPEG only).
   let exifStripped = false;
-  if (looksLikeJpeg(bytes)) {
+  const sharpStripped = await stripExifMetadata(bytes);
+  if (sharpStripped) {
+    exifStripped = sharpStripped.length <= bytes.length; // re-encode always drops metadata
+  } else if (looksLikeJpeg(bytes)) {
     const stripped = stripJpegAppSegments(bytes);
     exifStripped = stripped !== null && stripped.length < bytes.length;
     if (stripped === null) {
       logger.debug('[media-pipeline] JPEG APP strip failed → degraded', { traceId });
     }
+  } else {
+    logger.debug('[media-pipeline] EXIF strip unavailable for non-JPEG without sharp → degraded', { traceId });
   }
 
   // Face/plate redaction: env-driven (MEDIA_REDACT_MODE).
@@ -433,11 +559,41 @@ export async function processImageMedia(input: {
     ? ` Sinyal pemeriksaan bukti (heuristik, perlu review petugas): ${fraudSignals.join(', ')}.`
     : '';
 
+  // W15: KTP / identity documents are NEVER blurred (needed for manual admin
+  // verification) and are admin-eyes-only. General report photos keep the
+  // env-driven redaction behavior above.
+  // TODO(W15-face): targeted face/license-plate blur. No face/plate detection
+  // model is available in this environment (no on-prem detector, no budget
+  // for a vision-LLM detect-then-blur round-trip per image). Options evaluated:
+  //   (a) @xenova/transformers face-detection model — needs ~100MB+ model
+  //       download at runtime; blocked by egress proxy policy here.
+  //   (b) Vision-LLM bounding-box detection — 1 extra LLM call per image;
+  //       cost/latency not approved for the MVP path.
+  // Until one lands, general photos use whole-image blur (MEDIA_REDACT_MODE=blur)
+  // or are never forwarded to the LLM (default 'degraded'). This is an honest
+  // limitation, not a silent gap: redaction:'degraded' is audited per intake.
+  const adminOnly = input.retainBytes === true || kind === 'document';
+
+  // W15: persist intake to the DB registry (best-effort; never fails intake).
+  await recordMediaIntake({
+    villageId: tenantId,
+    userId,
+    sha256: hash,
+    phash: phash ?? undefined,
+    messageId: input.messageId,
+    mediaKind: kind,
+    bytes: bytes.length,
+    exifStripped,
+    redaction: effectiveRedaction,
+    adminOnly,
+  });
+
   return {
     hasImage: true, sha256: hash, phash: phash ?? undefined, duplicate: false,
     exifStripped, redaction: effectiveRedaction, forwardToLlm: false,
     estimatedKind: kind, bytes: bytes.length,
     fraudSignals,
+    adminOnly,
     bytesForOcr: isOcrConfigured() ? bytes : undefined,
     retainedBytes: input.retainBytes ? (redactedBytes ?? bytes) : undefined,
     promptFact:

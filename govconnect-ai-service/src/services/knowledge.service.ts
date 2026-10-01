@@ -8,7 +8,7 @@ import {
   classifyQueryIntent,
 } from './rag.service';
 import { searchKnowledgeByKeywordsDirect, countKnowledgeDocs } from './vector-db.service';
-import { RAGContext } from '../types/embedding.types';
+import { RAGContext, RAGQualityAssessment } from '../types/embedding.types';
 import { classifyProfileQuery } from './micro-llm-matcher.service';
 
 interface SearchContext {
@@ -59,6 +59,14 @@ interface KnowledgeSearchResult {
   avgTopScore?: number | null;
   sourceTitles?: string[];
   candidateDebug?: NonNullable<RAGContext['retrievalDebug']>['candidates'];
+  /**
+   * W6: true when the post-retrieval fail-closed assertion discarded the
+   * results (top score below trust threshold). Treat as "no relevant
+   * knowledge" — do NOT let the LLM answer from these results.
+   */
+  ragUnreliable?: boolean;
+  /** W9: live quality-gate assessment for this retrieval. */
+  ragQuality?: RAGQualityAssessment;
 }
 
 function resolveKnowledgeRetrievalMode(
@@ -497,6 +505,10 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
       data: [],
       total: 0,
       context: '',
+      // W6: propagate fail-closed flag so callers know this is "unreliable",
+      // not merely "no results".
+      ragUnreliable: ragContext.ragUnreliable,
+      ragQuality: ragContext.ragQuality,
     };
   }
 
@@ -529,6 +541,8 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
     avgTopScore: calculateAverageTopScore(ragContext),
     sourceTitles: items.map((item) => item.title).filter(Boolean).slice(0, 5),
     candidateDebug: ragContext.retrievalDebug?.candidates,
+    ragUnreliable: ragContext.ragUnreliable,
+    ragQuality: ragContext.ragQuality,
   };
 }
 

@@ -22,12 +22,15 @@ TAHAP KANDIDAT (pilih tepat satu dari daftar ini):
 
 PESAN WARGA: "{message}"
 TAHAP SAAT INI: {fromStage}
-
+{verifyNote}
 ATURAN:
 - COLLECT: warga sedang melapor/mengadu atau mengurus surat/layanan (butuh data lanjutan).
 - INFORMATION: warga bertanya info (jadwal, syarat, biaya, profil desa).
 - STATUS_CHECK: warga menanyakan status laporan/permohonan yang sudah ada.
 - HANDOFF: warga minta manusia/admin, frustrasi, atau topik sensitif.
+- VERIFY: warga bertanya/menanggapi tentang laporan/permohonan yang SEDANG diverifikasi
+  (mis. "kapan selesainya?", "berapa lama prosesnya?", "siapa yang menangani?") → tetap VERIFY.
+  Ia butuh jawaban SEBELUM memutuskan konfirmasi, bukan topik baru.
 - Jika ragu, pilih tahap yang paling aman (INFORMATION untuk pertanyaan, COLLECT untuk keluhan).
 
 OUTPUT (JSON saja): {"stage": "<salah satu kandidat>", "confidence": 0.0-1.0, "reason": "<singkat>"}`;
@@ -55,10 +58,20 @@ export function installMicroAssessor(): void {
         buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabledAsync,
       } = await import('../services/ai-gateway.service');
       if (!(await isAIGatewayEnabledAsync('llm', null))) return null;
+      // P1-11: when the previous turn left a pending mutation at VERIFY,
+      // tell the assessor so a question about the item under verification
+      // stays in VERIFY (answered with context) instead of being misread
+      // as a fresh information/status request.
+      const verifyNote = input.verifyPending
+        ? 'KONTEKS VERIFIKASI: warga sedang di tahap VERIFIKASI — ringkasan laporan/permohonan sudah ditampilkan dan sistem menunggu konfirmasi (YA untuk lanjut, BATAL untuk batal). ' +
+          'Jika pesan adalah PERTANYAAN atau tanggapan tentang laporan/permohonan tersebut, pilih VERIFY. ' +
+          'Hanya pilih tahap lain jika warga JELAS memulai topik/permintaan yang sama sekali baru dan tidak terkait.'
+        : '';
       const prompt = ASSESSOR_PROMPT
         .replace('{candidates}', candidates.join(', '))
         .replace('{message}', input.message.slice(0, 500))
-        .replace('{fromStage}', input.fromStage);
+        .replace('{fromStage}', input.fromStage)
+        .replace('{verifyNote}', verifyNote);
       const res = await callAIGatewayPrompt({
         lane: 'llm',
         modelPriority: [],

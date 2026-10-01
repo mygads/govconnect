@@ -134,6 +134,39 @@ export interface VectorSearchOptions {
 }
 
 /**
+ * W9: Live RAG quality gate assessment.
+ * Computed on every retrieval from raw similarity scores.
+ */
+export type RAGQualityLevel = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface RAGQualityAssessment {
+  /** Quality classification: HIGH (top1>=0.85), MEDIUM (0.65-0.85), LOW (top1<0.65 or gap<0.05) */
+  level: RAGQualityLevel;
+  /** Highest similarity score among results (0 if no results) */
+  top1Score: number;
+  /** Second-highest similarity score, null when <2 results */
+  top2Score: number | null;
+  /** top1Score - top2Score (0 when <2 results) */
+  scoreGap: number;
+  /** Number of results evaluated */
+  resultCount: number;
+  /** Mean score across evaluated results (0 when empty) */
+  avgScore: number;
+  /** Human-readable reasons for the classification */
+  reasons: string[];
+}
+
+/**
+ * W6: Post-retrieval fail-closed decision.
+ */
+export interface RAGFailClosedDecision {
+  /** True when retrieval must be discarded (scores too low to trust) */
+  unreliable: boolean;
+  /** Human-readable reason */
+  reason: string;
+}
+
+/**
  * RAG context result
  */
 export interface RAGContext {
@@ -144,6 +177,15 @@ export interface RAGContext {
   confidence?: RAGConfidence; // Confidence scoring for the result
   /** Detected conflicts between RAG sources (if any) */
   conflicts?: RAGConflictInfo[];
+  /**
+   * W6: true when post-retrieval fail-closed assertion discarded the results
+   * because the top similarity score was below the trust threshold.
+   * Callers must NOT use relevantChunks/contextString when true — treat as
+   * "no relevant knowledge" and answer honestly instead of hallucinating.
+   */
+  ragUnreliable?: boolean;
+  /** W9: live quality-gate assessment for this retrieval (always set on success path) */
+  ragQuality?: RAGQualityAssessment;
   retrievalDebug?: {
     hybridUsed: boolean;
     retrievalMode?: RetrievalMode;
