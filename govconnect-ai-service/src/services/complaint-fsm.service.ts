@@ -19,6 +19,7 @@
  */
 
 import logger from '../utils/logger';
+import { assertNotAborted } from '../pipeline/abort-guard';
 import { rememberMemoryEvent } from './hybrid-memory.service';
 import {
   setPendingAddressRequest,
@@ -327,7 +328,7 @@ export async function submitComplaintDraft(input: {
   userId: string;
   draft: ComplaintDraft;
   channel: ChannelType;
-}): Promise<{ ok: boolean; reference?: string; reason?: string }> {
+}, opts?: { signal?: AbortSignal }): Promise<{ ok: boolean; reference?: string; reason?: string }> {
   const categoryConfig = input.draft.kategori
     ? await resolveComplaintTypeConfig(input.draft.kategori, input.draft.village_id)
     : null;
@@ -337,6 +338,8 @@ export async function submitComplaintDraft(input: {
   }
 
   try {
+    // P1-5: fail-closed — no write after the turn was aborted.
+    assertNotAborted(opts?.signal, 'create_complaint');
     const { createComplaint } = await import('./case-client.service');
     const profile = await getAutoFillSuggestionsWithFallback(input.userId, input.draft.village_id); // W5: village-scoped
 

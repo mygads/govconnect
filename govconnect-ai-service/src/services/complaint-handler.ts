@@ -5,6 +5,7 @@
 
 import logger from '../utils/logger';
 import axios from 'axios';
+import { assertNotAborted } from '../pipeline/abort-guard';
 import { config } from '../config/env';
 import {
   createComplaint,
@@ -139,7 +140,8 @@ export async function handleComplaintCreation(
   channel: ChannelType,
   llmResponse: any,
   currentMessage: string,
-  mediaUrl?: string
+  mediaUrl?: string,
+  opts?: { signal?: AbortSignal }
 ): Promise<HandlerResult> {  const { kategori, rt_rw } = llmResponse.fields || {};
   let { alamat, deskripsi } = llmResponse.fields || {};
   const villageId = llmResponse.fields?.village_id;
@@ -300,6 +302,8 @@ export async function handleComplaintCreation(
 
   const combinedFotoUrl = consumePendingPhotos(userId, mediaUrl);
 
+  // P1-5: fail-closed — no write after the turn was aborted.
+  assertNotAborted(opts?.signal, 'create_complaint');
   const complaintId = await createComplaint({
     wa_user_id: isWebchatChannel ? undefined : userId,
     channel: isWebchatChannel ? 'WEBCHAT' : 'WHATSAPP',
@@ -387,7 +391,7 @@ export async function handleComplaintCreation(
 /**
  * Handle complaint update by user
  */
-export async function handleComplaintUpdate(userId: string, channel: ChannelType, llmResponse: any, currentMessage: string = ''): Promise<string> {
+export async function handleComplaintUpdate(userId: string, channel: ChannelType, llmResponse: any, currentMessage: string = '', opts?: { signal?: AbortSignal }): Promise<string> {
   const { complaint_id, alamat, deskripsi, rt_rw } = llmResponse.fields || {};
 
   if (!complaint_id) {
@@ -419,6 +423,8 @@ export async function handleComplaintUpdate(userId: string, channel: ChannelType
     mergedDeskripsi = `[Update] ${deskripsi}`;
   }
 
+  // P1-5: fail-closed — no write after the turn was aborted.
+  assertNotAborted(opts?.signal, 'update_complaint');
   const result = await updateComplaintByUser(complaint_id, buildChannelParams(channel, userId), { alamat, deskripsi: mergedDeskripsi, rt_rw });
 
   if (!result.success) {
@@ -507,7 +513,8 @@ export async function handlePendingAddressConfirmation(
   message: string,
   pendingConfirm: { alamat: string; kategori: string; deskripsi: string; village_id?: string; timestamp: number; foto_url?: string },
   channel: 'whatsapp' | 'webchat',
-  mediaUrl?: string
+  mediaUrl?: string,
+  opts?: { signal?: AbortSignal }
 ): Promise<string | null> {
   // Use micro LLM for confirmation classification
   let addrDecision: string;
@@ -530,6 +537,8 @@ export async function handlePendingAddressConfirmation(
     const isEmergency = typeof complaintTypeConfig?.is_urgent === 'boolean' ? complaintTypeConfig.is_urgent : false;
     const userProfile = getProfile(userId, pendingConfirm.village_id); // W5: village-scoped
 
+    // P1-5: fail-closed — no write after the turn was aborted.
+    assertNotAborted(opts?.signal, 'create_complaint');
     const complaintId = await createComplaint({
       wa_user_id: channel === 'webchat' ? undefined : userId,
       channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
@@ -602,6 +611,8 @@ export async function handlePendingAddressConfirmation(
     const isUrgent = typeof typeConfig?.is_urgent === 'boolean' ? typeConfig.is_urgent : false;
     const profile = getProfile(userId, pendingConfirm.village_id); // W5: village-scoped
 
+    // P1-5: fail-closed — no write after the turn was aborted.
+    assertNotAborted(opts?.signal, 'create_complaint');
     const complaintId = await createComplaint({
       wa_user_id: channel === 'webchat' ? undefined : userId,
       channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
