@@ -461,6 +461,11 @@ CONTOH:
 - "ada orang sakit keras butuh bantuan cepat" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "emergency_contact", routing_confidence: 0.9
 - "minta nomor damkar sekarang" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "contact_lookup", routing_confidence: 0.85
 - "sampah menumpuk di jalan" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "air pam mati dari pagi" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "tetangga hajatan sound system kenceng banget" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "saya dimintain uang sama oknum pas ngurus surat" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
+- "kambing tetangga lepas masuk kebun saya" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "ngurus surat 2 minggu nggak jadi-jadi, petugas susah ditemui" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
 - "saya mau buat laporan tadi ada kecelakaan" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
 - "mau lapor kebakaran di kampung" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
 - "tolong ada kebakaran cepat" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "emergency_contact", routing_confidence: 0.92
