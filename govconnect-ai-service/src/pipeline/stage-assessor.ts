@@ -138,6 +138,21 @@ function assessDeterministic(input: AssessorInput, candidates: Stage[]): StageDe
 }
 
 export async function assessStage(input: AssessorInput): Promise<StageDecision> {
+  if (isExplicitHandoffRequest(input.message)) {
+    const { isAllowedTransition } = await import('./stage-graph');
+    if (isAllowedTransition(input.fromStage, 'HANDOFF')) {
+      return {
+        stage: 'HANDOFF',
+        source: 'deterministic',
+        confidence: 0.95,
+        reasons: ['explicit_handoff_request'],
+      };
+    }
+    logger.warn('[assessor] Explicit handoff request but no HANDOFF transition', {
+      fromStage: input.fromStage,
+    });
+  }
+
   const candidates = transitionsFrom(input.fromStage)
     .filter((t) => t.kind === 'fuzzy')
     .map((t) => t.to);
@@ -202,4 +217,20 @@ export async function assessStage(input: AssessorInput): Promise<StageDecision> 
 export function shouldSuggestHandoff(confidences: number[]): boolean {
   const last2 = confidences.slice(-2);
   return last2.length === 2 && last2.every((c) => c < 0.4);
+}
+
+/**
+ * P0-1 (2026-10-02): Deterministic explicit handoff request detector.
+ */
+const EXPLICIT_HANDOFF_PATTERNS: RegExp[] = [
+  /\b(mau|ingin|minta|mohon|tolong)\b.{0,20}\b(bicara|berbicara|ngomong|ngobrol|ketemu)\b.{0,20}\b(sama|dengan|ke)\b.{0,20}\b(orang|manusia|petugas|admin|operator|cs|kepala desa|perangkat)\w*/i,
+  /\b(panggilkan|panggil|hubungi)\b.{0,20}\b(petugas|admin|operator|cs|orang|manusia|kepala desa)\w*/i,
+  /\b(ngomong|bicara)\b.{0,15}\bsama\b.{0,15}\borang\b/i,
+  /\b(kesal|kecewa|frustrasi|ribet|nggak jelas|tidak jelas|bodoh|lemot)\b.{0,30}\b(orang|manusia|petugas|admin)\w*/i,
+];
+
+export function isExplicitHandoffRequest(message: string): boolean {
+  const text = message.trim();
+  if (text.length < 5) return false;
+  return EXPLICIT_HANDOFF_PATTERNS.some((re) => re.test(text));
 }
