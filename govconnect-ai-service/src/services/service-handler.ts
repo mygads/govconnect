@@ -69,6 +69,45 @@ export async function buildServiceCatalogText(villageId?: string): Promise<strin
 
 // ==================== SERVICE SLUG RESOLUTION ====================
 
+/**
+ * [P2-2 FIX] Filter alternatif layanan berdasarkan relevansi dengan query.
+ * Menghapus alternatif yang tidak memiliki token overlap sama sekali dengan query,
+ * misalnya "Izin Keramaian" untuk query "ktp".
+ */
+function filterRelevantAlternatives(
+  query: string,
+  alternatives: Array<{ slug: string; name: string }>,
+): Array<{ slug: string; name: string }> {
+  if (!alternatives || alternatives.length <= 1) return alternatives;
+
+  const queryTokens = query.toLowerCase()
+    .split(/\s+/)
+    .filter(t => t.length >= 2)
+    .map(t => t.replace(/[^a-z0-9]/g, ''))
+    .filter(Boolean);
+  if (queryTokens.length === 0) return alternatives;
+
+  // Skor setiap alternatif berdasarkan token overlap
+  const scored = alternatives.map(alt => {
+    const nameLower = (alt.name || '').toLowerCase();
+    const slugLower = (alt.slug || '').toLowerCase().replace(/-/g, ' ');
+    let score = 0;
+    for (const token of queryTokens) {
+      if (nameLower.includes(token) || slugLower.includes(token)) score += 2;
+      // Partial match (mis. "ktp" di "ktp-baru")
+      else if (token.length >= 3 && (nameLower.includes(token.slice(0, 3)))) score += 1;
+    }
+    return { alt, score };
+  });
+
+  // Pertahankan yang punya skor > 0, atau jika semua 0, pertahankan 2 teratas asli
+  const relevant = scored.filter(s => s.score > 0);
+  if (relevant.length === 0) return alternatives.slice(0, 2);
+  // Urutkan berdasarkan skor
+  relevant.sort((a, b) => b.score - a.score);
+  return relevant.map(s => s.alt);
+}
+
 export async function resolveServiceSlugFromSearch(query: string, villageId?: string): Promise<{ slug: string; name?: string; alternatives?: Array<{ slug: string; name: string }> } | null> {
   const trimmedQuery = (query || '').trim();
   if (!trimmedQuery) return null;
@@ -125,10 +164,12 @@ export async function resolveServiceSlugFromSearch(query: string, villageId?: st
       }
 
       if (matched && result.confidence >= 0.5) {
-        const alternatives = [
+        const rawAlternatives = [
           { slug: String(matched.slug), name: String(matched.name || '') },
           ...(result.alternatives || []).filter((alternative) => alternative.slug !== matched.slug),
         ].slice(0, 4);
+        // [P2-2 FIX] Filter alternatif tidak relevan
+        const alternatives = filterRelevantAlternatives(searchQuery, rawAlternatives);
         logger.info('resolveServiceSlugFromSearch: Low-confidence match, asking confirmation', {
           query: searchQuery,
           matched_slug: result.matched_slug,
@@ -142,11 +183,13 @@ export async function resolveServiceSlugFromSearch(query: string, villageId?: st
 
     // If ambiguous, return with alternatives
     if (!result?.matched_slug && result?.alternatives && result.alternatives.length > 1) {
+      // [P2-2 FIX] Filter alternatif tidak relevan
+      const filteredAlternatives = filterRelevantAlternatives(searchQuery, result.alternatives);
       logger.info('resolveServiceSlugFromSearch: Ambiguous match, returning alternatives', {
         query: searchQuery,
-        alternatives: result.alternatives,
+        alternatives: filteredAlternatives,
       });
-      return { slug: '', name: '', alternatives: result.alternatives };
+      return { slug: '', name: '', alternatives: filteredAlternatives };
     }
 
     const fuzzyMatches = services
