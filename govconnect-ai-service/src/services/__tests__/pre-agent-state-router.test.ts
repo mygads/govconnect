@@ -245,3 +245,34 @@ describe('tryHandleServiceListingShortcut', () => {
     expect(result?.response).toMatch(/belum ada layanan/i);
   });
 });
+
+describe('[P1-2] govt service out-of-scope redirects', () => {
+  it('rejects SIM renewal with honest redirect', async () => {
+    const { buildGovtServiceRedirect, tryHandleOutOfScopeGuard } = await import('../pre-agent-state-router.service');
+    const redirect = buildGovtServiceRedirect('di desa bisa perpanjang SIM nggak?');
+    expect(redirect).not.toBeNull();
+    expect(redirect).toMatch(/SIM/i);
+    expect(redirect).toMatch(/Polres|Samsat/i);
+
+    const result = tryHandleOutOfScopeGuard({
+      message: 'di desa bisa perpanjang SIM nggak?',
+      traceId: 't1', startTime: Date.now(),
+    });
+    expect(result).not.toBeNull();
+    expect(result?.response).toMatch(/SIM/i);
+  });
+
+  it('rejects passport/STNK/BPJS/NPWP', async () => {
+    const { buildGovtServiceRedirect } = await import('../pre-agent-state-router.service');
+    expect(buildGovtServiceRedirect('mau bikin paspor')).toMatch(/Imigrasi/i);
+    expect(buildGovtServiceRedirect('perpanjang STNK')).toMatch(/Samsat/i);
+    expect(buildGovtServiceRedirect('daftar BPJS')).toMatch(/BPJS/i);
+    expect(buildGovtServiceRedirect('bikin NPWP')).toMatch(/Pajak/i);
+  });
+
+  it('returns null for in-scope services', async () => {
+    const { buildGovtServiceRedirect } = await import('../pre-agent-state-router.service');
+    expect(buildGovtServiceRedirect('mau bikin KTP')).toBeNull();
+    expect(buildGovtServiceRedirect('syarat KK')).toBeNull();
+  });
+});

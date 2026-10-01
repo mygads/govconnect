@@ -330,6 +330,14 @@ const OUT_OF_SCOPE_STRONG_SIGNALS = [
   // Math tutoring explicit
   /\b(kerjain|bantu|tolong)\s+(soal|pr|tugas)\s+(matematika|fisika|kimia)\b/i,
   /^\s*\d+\s*[+\-*/x]\s*\d+\s*(?:=\s*)?\s*(?:\?|berapa|hasil|sama dengan|result|ya)?[\s?.]*$/i,
+  // [P1-2 FIX] Layanan pemerintah pusat - BUKAN wewenang desa
+  /\b(perpanjang|bikin|buat|urus|pengajuan)\s+(sim|surat\s+izin\s+mengemudi)\b/i,
+  /\bsim\b.*\b(bisa|dapat|diurus|dibuat|nggak|ngga|tidak)\b/i,
+  /\b(paspor|passport)\b/i,
+  /\b(stnk|bpkb)\b/i,
+  /\bbpjs\b/i,
+  /\b(npwp)\b/i,
+  /\bsertifikat\s+(tanah|rumah)\b/i,
 ];
 const SERVICE_INFORMATIONAL_LINK_PATTERN = /\b(ada\s+(link|tautan|form|formulir)(?:nya)?|(link|tautan|form|formulir)(?:nya)?\s+ada|link\s+online|form\s+online|tautan\s+online)\b/i;
 const SERVICE_EXPLICIT_ACTION_PATTERN = /\b((kirim(?:kan)?|tolong kirim|minta|mana)\s+(link|tautan|form|formulir)(?:nya)?|(link|tautan|form|formulir)(?:nya)?\s+(mana|sekarang|saja)|lanjut(?:kan)?\s+(ajukan|pengajuan|permohonan)|ajukan(?:kan)?\s+(layanan|permohonan|pengajuan)|buat(?:kan)?\s+(pengajuan|permohonan)|isi\s+formulir)\b/i;
@@ -775,6 +783,44 @@ function buildOutOfScopeRedirect(): string {
   return 'Maaf Pak/Bu, saya fokus membantu layanan desa dan penggunaan GovConnect. Kalau ada pertanyaan soal administrasi desa, pengaduan, status layanan, atau cara pakai GovConnect, saya bantu ya.';
 }
 
+/**
+ * [P1-2 FIX] Penolakan jujur dan spesifik untuk layanan pemerintah pusat.
+ */
+const GOVT_SERVICE_REDIRECTS: Array<{ pattern: RegExp; response: string }> = [
+  {
+    pattern: /\bsim\b|surat\s+izin\s+mengemudi/i,
+    response: 'Maaf Pak/Bu, perpanjangan/pembuatan SIM bukan wewenang desa. Silakan urus di Polres terdekat atau layanan SIM Keliling/Samsat.',
+  },
+  {
+    pattern: /\bpaspor|passport\b/i,
+    response: 'Maaf Pak/Bu, pembuatan paspor bukan wewenang desa. Silakan urus di Kantor Imigrasi terdekat atau via aplikasi M-Paspor.',
+  },
+  {
+    pattern: /\bstnk|bpkb\b/i,
+    response: 'Maaf Pak/Bu, pengurusan STNK/BPKB bukan wewenang desa. Silakan urus di Samsat terdekat.',
+  },
+  {
+    pattern: /\bbpjs\b/i,
+    response: 'Maaf Pak/Bu, pengurusan BPJS bukan wewenang desa. Silakan hubungi kantor BPJS terdekat atau via aplikasi Mobile JKN.',
+  },
+  {
+    pattern: /\bnpwp\b/i,
+    response: 'Maaf Pak/Bu, pengurusan NPWP bukan wewenang desa. Silakan urus di Kantor Pelayanan Pajak (KPP) terdekat.',
+  },
+  {
+    pattern: /\bsertifikat\s+(tanah|rumah)\b/i,
+    response: 'Maaf Pak/Bu, penerbitan sertifikat tanah bukan wewenang desa (wewenang BPN/ATR). Desa bisa membantu surat keterangan kepemilikan tanah sebagai dokumen pendukung.',
+  },
+];
+
+export function buildGovtServiceRedirect(message: string): string | null {
+  const text = message || '';
+  for (const { pattern, response } of GOVT_SERVICE_REDIRECTS) {
+    if (pattern.test(text)) return response;
+  }
+  return null;
+}
+
 interface PendingServiceInfoReplyContext {
   response: string;
   activeService: ActiveServiceInfoState;
@@ -1027,14 +1073,58 @@ export function tryHandleOutOfScopeGuard(input: {
   startTime: number;
 }): ProcessMessageResult | null {
   if (isOutOfScopeGeneralQuestion(input.message)) {
+    // [P1-2 FIX] Cek layanan pemerintah pusat spesifik dulu
+    const govtRedirect = buildGovtServiceRedirect(input.message);
     return buildGuardResult({
       startTime: input.startTime,
       traceId: input.traceId,
-      response: buildOutOfScopeRedirect(),
+      response: govtRedirect || buildOutOfScopeRedirect(),
       intent: 'QUESTION',
     });
   }
 
+  return null;
+}
+
+/**
+ * P1-4: NIK format validation guard.
+ *
+ * When a user provides a NIK (e.g. "NIK saya 12345"), validate that it is
+ * exactly 16 numeric digits. If invalid, respond with a correction request
+ * instead of letting the message fall through to complaint classification.
+ *
+ * Returns a guard result if the message contains an invalid NIK, null otherwise.
+ */
+export function tryHandleNikValidation(input: {
+  message: string;
+  traceId: string;
+  startTime: number;
+}): ProcessMessageResult | null {
+  const message = input.message || '';
+
+  // Detect NIK mention: "nik", "nomor induk kependudukan", "no ktp", etc.
+  const nikMentionPattern = /\b(nik|nomor\s+induk\s+kependudukan|no\.?\s*ktp|nomor\s+ktp)\b/i;
+  if (!nikMentionPattern.test(message)) return null;
+
+  // Extract all digits from the message
+  const digitsOnly = (message.match(/\d/g) || []).join('');
+
+  // If no digits found, let it fall through (user might be asking about NIK)
+  if (!digitsOnly) return null;
+
+  // Validate: must be exactly 16 digits
+  const isValidNik = /^\d{16}$/.test(digitsOnly);
+
+  if (!isValidNik) {
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response: 'Mohon maaf Pak/Bu, NIK yang Anda masukkan tidak valid. NIK harus terdiri dari 16 digit angka.\n\nSilakan periksa kembali dan kirim ulang NIK Anda.',
+      intent: 'IDENTITY_CHECK',
+    });
+  }
+
+  // Valid NIK format — let it proceed to normal handling
   return null;
 }
 
