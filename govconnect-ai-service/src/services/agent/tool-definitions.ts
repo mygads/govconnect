@@ -43,6 +43,9 @@ export const AGENT_TOOLS: ToolDefinition[] = [
         'Detail layanan administrasi: daftar layanan aktif, persyaratan, dan mode layanan. ' +
         'Gunakan untuk menjelaskan syarat dan kesiapan layanan sebelum mengirim link formulir. ' +
         'Gunakan untuk pertanyaan syarat, biaya, proses, dokumen, surat, atau layanan kependudukan. ' +
+        'Singkatan umum juga layanan desa: SKU = Surat Keterangan Usaha, SKTM = Surat Keterangan Tidak Mampu, ' +
+        'SKD/suket domisili = Surat Keterangan Domisili, akte = Akta Kelahiran. ' +
+        'Jika user menyebut singkatan tersebut, panggil tool ini dengan nama lengkapnya. ' +
         'Jika service_name kosong, tool boleh dipakai untuk menampilkan layanan aktif yang tersedia. ' +
         'Jika tidak ada layanan yang cocok di database, gunakan search_knowledge sebagai fallback — ' +
         'dokumen KB mungkin memuat informasi yang dibutuhkan.',

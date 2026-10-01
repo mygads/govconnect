@@ -837,6 +837,9 @@ export function decideFastIntent(input: {
     mixedSignals,
     stateAffinity: stateActive ? 'unclear' : undefined,
     reasons: input.unified?.reason ? [`classifier:${input.unified.reason}`] : ['no_hard_route'],
+    // Hint saja, bukan pengganti klasifikasi: bila pesan menyebut kata kunci layanan
+    // (mis. SKU/SKTM), beri tahu agent agar mempertimbangkan get_service_info.
+    allowedToolHints: serviceSignal ? ['get_service_info', 'search_knowledge'] : undefined,
   });
 }
 
