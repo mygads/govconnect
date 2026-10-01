@@ -2820,7 +2820,9 @@ async function resolveServiceFromName(
   service: ServiceCatalogItem | null;
   alternatives?: Array<{ slug: string; name: string }>;
 }> {
-  const normalized = serviceName.trim().toLowerCase();
+  // [P2-1 FIX] Expand alias dulu — "SKU" → "surat keterangan usaha"
+  const expandedName = canonicalizeServiceName(serviceName);
+  const normalized = expandedName.trim().toLowerCase();
   if (!normalized) {
     return { service: null };
   }
