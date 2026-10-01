@@ -1131,66 +1131,6 @@ export async function tryHandleServiceListingShortcut(input: {
   }
 }
 
-/**
- * [T-22 FIX] Jalur DARURAT pre-agent sesuai arsitektur final:
- * bypass langsung eskalasi + info kontak darurat (stage DARURAT).
- * Tidak menanyakan nama/formulir dulu — keselamatan yang utama.
- */
-export async function tryHandleEmergencyShortcut(input: {
-  message: string;
-  villageId?: string;
-  traceId: string;
-  startTime: number;
-  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
-}): Promise<ProcessMessageResult | null> {
-  if (!input.villageId) {
-    return null;
-  }
-  if (!matchesActiveEmergency((input.message || '').toLowerCase())) {
-    return null;
-  }
-
-  try {
-    const lookup = await lookupImportantContacts('kontak darurat desa', input.villageId, {
-      limit: 8,
-      categoryHint: 'emergency',
-    });
-    const contacts = shouldAttachEmergencyLookupContacts(lookup)
-      ? lookup.matches.map((match) => match.contact)
-      : [];
-
-    const contactLines = contacts.length > 0
-      ? contacts.map((contact) => `- ${contact.name}: ${contact.phone}`).join('\n')
-      : '- Kontak darurat desa belum tercatat di sistem.';
-    const response =
-      '🚨 Mohon tetap tenang ya Pak/Bu. Keselamatan yang utama:\n' +
-      '• Segera pindah ke tempat yang lebih tinggi dan aman.\n' +
-      '• Matikan listrik di rumah, jangan lewati air yang deras.\n' +
-      '• Kalau butuh bantuan segera, hubungi kontak darurat ini:\n' +
-      contactLines +
-      '\n\nSetelah aman, boleh beri tahu saya lokasi pastinya supaya saya bantu catatkan laporan untuk petugas desa?';
-
-    return buildGuardResult({
-      startTime: input.startTime,
-      traceId: input.traceId,
-      response,
-      intent: 'EMERGENCY_CONTACTS',
-      hasKnowledge: contacts.length > 0,
-      guardrail: {
-        stage: 'pre_agent_emergency',
-        type: 'emergency_shortcut',
-        action: 'handled',
-        reason: 'active_emergency_bypass',
-        details: {
-          totalContacts: contacts.length,
-        },
-      },
-    });
-  } catch {
-    return null;
-  }
-}
-
 export function tryHandleOutOfScopeGuard(input: {
   message: string;
   traceId: string;
@@ -2611,7 +2551,9 @@ export async function tryHandleLatePreAgentState(
     !!villageId
     && EMERGENCY_PATTERN.test(message)
     && !EXPLICIT_REPORT_PATTERN.test(message)
-    && !isLocationRichComplaintIncident
+    // [T-22 FIX] Darurat aktif (mis. "banjir ... tolong!") tetap jalur DARURAT
+    // walau pesannya kaya lokasi ("di rt 09") — keselamatan dulu, bukan form.
+    && (!isLocationRichComplaintIncident || matchesActiveEmergency(message.toLowerCase()))
     && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)
     && !isContactDirectoryLookup(message);
 
