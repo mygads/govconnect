@@ -474,15 +474,34 @@ function isClearlyDifferentIntent(message: string): boolean {
   if (VILLAGE_PROFILE_TOPIC_PATTERN.test(normalized)) return true;
   if (isNonOfficeLocalKnowledgeQuery(message)) return true;
   if (STATUS_CANCEL_EDIT_TOPIC_PATTERN.test(normalized)) return true;
-  // "maksudnya X" where X is complaint/service-related is a CORRECTION to the
-  // pending draft, not a topic shift. Only treat as topic shift if the
-  // correction target is unrelated to village services.
-  // (Fix E4: "eh maksudnya jembatan rusak" was abandoning the complaint draft.)
+  // [P1-5 FIX] "maksudnya X" / "bukan, maksudnya Y":
+  // - Jika X/Y adalah layanan yang BERBEDA dari yang sedang dibahas -> TOPIC SHIFT (clear state)
+  // - Jika X/Y adalah detail tambahan untuk topik yang sama -> CORRECTION (pertahankan state)
+  // Deteksi: jika pesan menyebut nama layanan spesifik yang berbeda, anggap topic shift.
+  // (Fix E4 dipertahankan: "eh maksudnya jembatan rusak" saat lapor jalan = koreksi lokasi,
+  //  bukan ganti topik, karena keduanya complaint infrastruktur.)
   if (CORRECTION_TOPIC_SHIFT_PATTERN.test(normalized)) {
-    const complaintKeywords = /\b(jalan|jembatan|rusak|lampu|mati|air|sampah|banjir|drainase|got|selokan|posyandu|ktp|kk|surat|domisili|bansos|pkh|blt)\b/i;
+    // Ekstrak layanan yang disebut dalam koreksi
+    const serviceMentions = normalized.match(/\b(ktp|kk|kartu keluarga|sktm|surat keterangan usaha|sku|domisili|surat domisili|akta kelahiran|surat pindah|izin keramaian|surat kematian|pengantar skck)\b/gi) || [];
+    // Jika menyebut layanan spesifik, kemungkinan besar ingin ganti topik
+    // (kecuali keduanya complaint infrastruktur yang mirip)
+    if (serviceMentions.length > 0) {
+      // Cek apakah ini complaint-to-complaint (jalan -> jembatan) = koreksi
+      const isComplaintCorrection = /\b(jalan|jembatan|rusak|lampu|mati|air|sampah|banjir|drainase|got|selokan)\b/i.test(normalized)
+        && !/\b(ktp|kk|surat|sktm|domisili|akta)\b/i.test(normalized);
+      if (isComplaintCorrection) return false;
+      // Service-to-service yang berbeda = topic shift
+      return true;
+    }
+    const complaintKeywords = /\b(jalan|jembatan|rusak|lampu|mati|air|sampah|banjir|drainase|got|selokan|posyandu|bansos|pkh|blt)\b/i;
     if (complaintKeywords.test(normalized)) return false;
     return true;
   }
+  // [P1-5 FIX] "kalau X?" / "bagaimana dengan X?" / "kalo X gimana?" setelah bahas topik lain
+  // = user ingin ganti topik ke X. Deteksi jika X adalah layanan spesifik.
+  const topicSwitchPattern = /\b(kalau|kalo|bagaimana dengan|gimana dengan|terus kalau)\s+(surat|ktp|kk|sktm|domisili|akta|izin|pengantar)\b/i;
+  if (topicSwitchPattern.test(normalized)) return true;
+
   return /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|lapor jalan|lampu mati|sampah|darurat|kebakaran|kecelaka+an|pohon tumbang)\b/i.test(normalized);
 }
 
