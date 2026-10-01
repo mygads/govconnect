@@ -58,6 +58,8 @@ import {
 } from './ump-utils';
 import { getAutoFillSuggestionsWithFallback, updateProfile } from './user-profile.service';
 import {
+  getImportantContacts,
+  type ImportantContact,
   isConfidentContactLookupResult as isConfidentContactLookupResultFromLookup,
   isContactDirectoryLookup,
   lookupImportantContacts,
@@ -2614,12 +2616,31 @@ export async function tryHandleLatePreAgentState(
   }
 
   if (isEmergencyShortcut) {
-    const emergencyLookup = await lookupImportantContacts(message, villageId, {
-      limit: 3,
-      categoryHint: 'emergency',
-    });
-    const canAttachContacts = shouldAttachEmergencyShortcutContacts(emergencyLookup);
-    const contacts = canAttachContacts ? emergencyLookup.matches.map((match) => match.contact) : [];
+    // [T-22 FIX] Darurat aktif: ambil langsung kontak kategori Darurat agar tidak
+    // kalah skor dari kontak lain (mis. Ketua RT) oleh fuzzy query. Fallback ke
+    // lookup fuzzy bila kategori Darurat kosong.
+    let daruratContacts: ImportantContact[] = [];
+    try {
+      daruratContacts = await getImportantContacts(villageId, 'Darurat');
+    } catch {
+      daruratContacts = [];
+    }
+    const emergencyLookup = daruratContacts.length > 0
+      ? null
+      : await lookupImportantContacts(message, villageId, {
+        limit: 3,
+        categoryHint: 'emergency',
+      });
+    const canAttachContacts = daruratContacts.length > 0
+      ? true
+      : emergencyLookup
+        ? shouldAttachEmergencyShortcutContacts(emergencyLookup)
+        : false;
+    const contacts = daruratContacts.length > 0
+      ? daruratContacts
+      : canAttachContacts && emergencyLookup
+        ? emergencyLookup.matches.map((match) => match.contact)
+        : [];
     const contactsMessage = buildImportantContactsMessage(contacts, channel);
     const vcardContacts = canAttachContacts
       ? toVCardContacts(
@@ -2645,7 +2666,7 @@ export async function tryHandleLatePreAgentState(
       traceId,
       response: contacts.length > 0
         ? `Situasi ini darurat, mohon segera hubungi sekarang juga.${contactsMessage}\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.`
-        : emergencyLookup.matches.length > 0
+        : emergencyLookup && emergencyLookup.matches.length > 0
           ? 'Situasi ini darurat. Saya belum bisa memastikan kontak darurat desa yang paling tepat dari pesan ini. Mohon segera hubungi pihak darurat atau medis terdekat di lokasi Bapak/Ibu.\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.'
           : 'Situasi ini darurat. Saya belum menemukan kontak darurat desa yang tercatat saat ini. Mohon segera hubungi pihak darurat atau medis terdekat di lokasi Bapak/Ibu.\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.',
       contacts: vcardContacts,
