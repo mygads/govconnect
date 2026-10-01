@@ -2360,6 +2360,63 @@ export async function tryHandleLatePreAgentState(
           });
         }
       }
+    } else if (identityDecision.action === 'confirm') {
+      // VERIFY stage (§4 arsitektur): user merespons konfirmasi laporan
+      const resolution = identityDecision.resolution;
+      if (resolution === 'execute') {
+        clearPendingComplaintData(userId);
+        const complaintResult = await handleComplaintCreation(userId, pendingComplaint.channel, {
+          fields: {
+            village_id: pendingComplaint.village_id,
+            kategori: pendingComplaint.kategori,
+            deskripsi: pendingComplaint.deskripsi,
+            alamat: pendingComplaint.alamat,
+            rt_rw: pendingComplaint.rt_rw,
+          },
+        }, message, undefined, { signal });
+        const normalized = normalizeHandlerResult(complaintResult);
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: normalized.replyText,
+          contacts: normalized.contacts,
+          intent: 'CREATE_COMPLAINT',
+        });
+      } else if (resolution === 'cancel') {
+        clearPendingComplaintData(userId);
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: 'Baik, laporan dibatalkan. Ada lagi yang bisa saya bantu?',
+          intent: 'CREATE_COMPLAINT',
+        });
+      } else if (resolution === 'edit') {
+        setPendingComplaintData(userId, {
+          ...pendingComplaint,
+          waitingFor: 'nama',
+          timestamp: Date.now(),
+        });
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: 'Baik, bagian mana yang ingin diubah? Silakan sebutkan nama, kategori, deskripsi, atau lokasi yang baru.',
+          intent: 'CREATE_COMPLAINT',
+        });
+      } else {
+        const { buildConfirmationSummary } = await import('./complaint-fsm.service');
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: buildConfirmationSummary({
+            kategori: pendingComplaint.kategori,
+            deskripsi: pendingComplaint.deskripsi,
+            alamat: pendingComplaint.alamat,
+            reporter_name: pendingComplaint.reporter_name,
+            reporter_phone: pendingComplaint.reporter_phone,
+          }),
+          intent: 'CREATE_COMPLAINT',
+        });
+      }
     } else {
       const userProfile = await getAutoFillSuggestionsWithFallback(userId, villageId); // W5: village-scoped
 
@@ -2383,22 +2440,24 @@ export async function tryHandleLatePreAgentState(
             });
           }
 
-          clearPendingComplaintData(userId);
-          const complaintResult = await handleComplaintCreation(userId, pendingComplaint.channel, {
-            fields: {
-              village_id: pendingComplaint.village_id,
-              kategori: pendingComplaint.kategori,
-              deskripsi: pendingComplaint.deskripsi,
-              alamat: pendingComplaint.alamat,
-              rt_rw: pendingComplaint.rt_rw,
-            },
-          }, message, undefined, { signal });
-          const normalized = normalizeHandlerResult(complaintResult);
+          // VERIFY stage (§4): tampilkan ringkasan untuk konfirmasi, jangan langsung buat tiket
+          const { buildConfirmationSummary } = await import('./complaint-fsm.service');
+          setPendingComplaintData(userId, {
+            ...pendingComplaint,
+            reporter_name: extractedName,
+            waitingFor: 'konfirmasi',
+            timestamp: Date.now(),
+          });
           return buildGuardResult({
             startTime,
             traceId,
-            response: normalized.replyText,
-            contacts: normalized.contacts,
+            response: buildConfirmationSummary({
+              kategori: pendingComplaint.kategori,
+              deskripsi: pendingComplaint.deskripsi,
+              alamat: pendingComplaint.alamat,
+              reporter_name: extractedName,
+              reporter_phone: userProfile.no_hp,
+            }),
             intent: 'CREATE_COMPLAINT',
           });
         }
@@ -2418,22 +2477,25 @@ export async function tryHandleLatePreAgentState(
         updateConversationUserProfile(userId, { user_phone: phone }, pendingComplaint.village_id, channelUpper)
           .catch(() => {});
 
-        clearPendingComplaintData(userId);
-        const complaintResult = await handleComplaintCreation(userId, pendingComplaint.channel, {
-          fields: {
-            village_id: pendingComplaint.village_id,
-            kategori: pendingComplaint.kategori,
-            deskripsi: pendingComplaint.deskripsi,
-            alamat: pendingComplaint.alamat,
-            rt_rw: pendingComplaint.rt_rw,
-          },
-        }, message, undefined, { signal });
-        const normalized = normalizeHandlerResult(complaintResult);
+        // VERIFY stage (§4): tampilkan ringkasan untuk konfirmasi, jangan langsung buat tiket
+        const { buildConfirmationSummary: buildSummary2 } = await import('./complaint-fsm.service');
+        const reporterName = pendingComplaint.reporter_name;
+        setPendingComplaintData(userId, {
+          ...pendingComplaint,
+          reporter_phone: phone,
+          waitingFor: 'konfirmasi',
+          timestamp: Date.now(),
+        });
         return buildGuardResult({
           startTime,
           traceId,
-          response: normalized.replyText,
-          contacts: normalized.contacts,
+          response: buildSummary2({
+            kategori: pendingComplaint.kategori,
+            deskripsi: pendingComplaint.deskripsi,
+            alamat: pendingComplaint.alamat,
+            reporter_name: reporterName,
+            reporter_phone: phone,
+          }),
           intent: 'CREATE_COMPLAINT',
         });
       }
