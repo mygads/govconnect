@@ -230,7 +230,32 @@ export async function getComplaintTypes(villageId: string): Promise<ComplaintTyp
     });
 
     if (resilientHttp.isFallbackResponse(response)) return [];
-    return response.data.data || [];
+    const types = response.data.data || [];
+
+    // [P2-4 FIX] Fallback: jika complaint_types kosong tapi categories ada,
+    // gunakan categories sebagai types agar daftar tidak kosong.
+    // Admin desa mengisi categories; types adalah detail opsional.
+    if (types.length === 0) {
+      const categories = await getComplaintCategories(villageId);
+      if (categories.length > 0) {
+        logger.info('getComplaintTypes: types empty, falling back to categories', {
+          villageId,
+          categoriesCount: categories.length,
+        });
+        return categories.map((cat) => ({
+          id: cat.id,
+          name: cat.name,
+          description: cat.description,
+          category_id: cat.id,
+          is_urgent: false,
+          require_address: false,
+          send_important_contacts: false,
+          important_contact_category: null,
+        } as ComplaintTypeInfo));
+      }
+    }
+
+    return types;
   } catch (error: any) {
     logger.warn('Failed to fetch complaint types', {
       error: error.message,
