@@ -21,7 +21,7 @@ import logger from '../../utils/logger';
 import { callAIGatewayPrompt, type GatewayChatMessage } from '../ai-gateway.service';
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
 import { resolveLearnedToolPolicy } from './tool-policy.service';
-import { executeToolCall, type ToolCallResult, type ToolExecutionTrace, type ToolTrustLevel } from './tool-executor';
+import { executeToolCall, executeToolCalls, type ToolCallResult, type ToolExecutionTrace, type ToolTrustLevel, type ExecutedToolCall } from './tool-executor';
 import { buildAgentSystemPrompt, buildAgentDynamicContext, type AgentPromptContext } from './agent-prompt';
 import { isContactDirectoryLookup } from '../important-contacts.service';
 
@@ -948,7 +948,10 @@ export async function runAgent(
 
   const toolsUsed: string[] = [];
   const toolTrace: ToolExecutionTrace[] = [];
-  const executedToolSignatures = new Set<string>();
+  // P1-4: per-turn dedup map shared by every tool execution in this turn
+  // (see executeToolCall/executeToolCalls). Identical normalized tool+args
+  // execute once; duplicates share the real result.
+  const executedTools = new Map<string, Promise<ExecutedToolCall>>();
   const preferredToolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }> = [];
   let totalTokens = 0;
   let iterations = 0;
@@ -1018,12 +1021,14 @@ export async function runAgent(
         content: string;
       }> = [];
 
-      // Tool execution strategy:
-      // - Parse + dedup all tool calls first into a plan.
-      // - Read-only tools (no side effects on DB/case) run in parallel.
-      // - Mutation tools (create/update/cancel, service form link) run
-      //   sequentially in the order the model emitted them so ordering
-      //   semantics stay intact.
+      // Tool execution strategy (P1-4):
+      // - Parse all tool calls first into a plan.
+      // - executeToolCalls handles the rest: normalized per-turn dedup
+      //   (identical tool+args execute once, the real result is shared with
+      //   every duplicate instead of a synthetic "cached" message),
+      //   dependency-aware waves for independent reads with a bounded
+      //   concurrency pool, and strictly sequential mutations in
+      //   model-emission order.
       type ExecutableTask = {
         tc: ToolCall;
         toolName: AgentToolName;
@@ -1031,8 +1036,8 @@ export async function runAgent(
         kind: 'read' | 'mutation';
       };
 
-      const parallelTasks: ExecutableTask[] = [];
-      const serialTasks: ExecutableTask[] = [];
+      const readTasks: ExecutableTask[] = [];
+      const mutationTasks: ExecutableTask[] = [];
 
       for (const tc of assistantMsg.tool_calls as ToolCall[]) {
         const toolName = tc.function.name as AgentToolName;
@@ -1065,64 +1070,37 @@ export async function runAgent(
           continue;
         }
 
-        const toolSignature = `${toolName}:${JSON.stringify(args)}`;
-        if (executedToolSignatures.has(toolSignature)) {
-          logger.info('Skipping duplicate tool call', { toolName, args, iteration: i + 1 });
-          toolResults.push({
-            toolName,
-            result: {
-              success: true,
-              data: { cached: true, message: 'Tool already executed with same arguments' },
-              meta: { trustLevel: 'action_result', sourceKind: 'tool_deduplication' },
-            },
-            role: 'tool',
-            tool_call_id: tc.id,
-            name: toolName,
-            content: JSON.stringify({ success: true, cached: true }),
-          });
-          continue;
-        }
-        executedToolSignatures.add(toolSignature);
-        toolsUsed.push(toolName);
-
         const kind: 'read' | 'mutation' = READ_ONLY_TOOLS.has(toolName) ? 'read' : 'mutation';
-        (kind === 'read' ? parallelTasks : serialTasks).push({ tc, toolName, args, kind });
+        (kind === 'read' ? readTasks : mutationTasks).push({ tc, toolName, args, kind });
       }
 
-      // Run read-only tools in parallel.
-      const parallelResults = await Promise.all(
-        parallelTasks.map((task) =>
-          executeToolCall(task.toolName, task.args, { ...toolCtx, userMessage }),
-        ),
+      // Reads before mutations (same relative ordering as before); inside
+      // the batch, reads run in dependency-aware parallel waves and
+      // mutations run strictly sequentially.
+      const batchResults = await executeToolCalls(
+        [...readTasks, ...mutationTasks].map((task) => ({
+          id: task.tc.id,
+          tool: task.toolName,
+          args: task.args,
+        })),
+        { ...toolCtx, userMessage, executedTools },
       );
-      for (let pIdx = 0; pIdx < parallelTasks.length; pIdx += 1) {
-        const task = parallelTasks[pIdx];
-        const result = parallelResults[pIdx];
-        toolTrace.push(result.trace);
+      for (const batchResult of batchResults) {
+        const { call, executed, deduped } = batchResult;
+        // Preserve the old toolsUsed accounting: a call served from the
+        // per-turn dedup cache does not count as an additional tool use
+        // (billing/telemetry stay single-counted).
+        if (!deduped) toolsUsed.push(call.tool);
+        toolTrace.push(executed.trace);
         toolResults.push({
-          toolName: task.toolName,
-          result: result.result,
+          toolName: call.tool,
+          result: executed.result,
           role: 'tool',
-          tool_call_id: task.tc.id,
-          name: task.toolName,
-          content: result.content,
+          tool_call_id: call.id,
+          name: call.tool,
+          content: executed.content,
         });
       }
-
-      // Run mutation tools sequentially to preserve ordering semantics.
-      for (const task of serialTasks) {
-        const result = await executeToolCall(task.toolName, task.args, { ...toolCtx, userMessage });
-        toolTrace.push(result.trace);
-        toolResults.push({
-          toolName: task.toolName,
-          result: result.result,
-          role: 'tool',
-          tool_call_id: task.tc.id,
-          name: task.toolName,
-          content: result.content,
-        });
-      }
-
 
       preferredToolResults.push(...toolResults.map(({ toolName, result }) => ({ toolName, result })));
       const preferredFromTools = derivePreferredToolReply(preferredToolResults);
@@ -1244,7 +1222,9 @@ export async function runAgent(
         });
 
         toolsUsed.push(textToolCall.toolName);
-        const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage });
+        // P1-4: share the per-turn dedup map so a text-fallback call that
+        // repeats an earlier tool+args reuses the real result.
+        const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage, executedTools });
         result.trace = {
           ...result.trace,
           sourceKind: result.trace.sourceKind

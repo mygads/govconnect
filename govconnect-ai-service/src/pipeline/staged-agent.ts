@@ -14,7 +14,7 @@
 
 import { callAIGatewayPrompt, type GatewayChatMessage, type GatewayPromptResult } from '../services/ai-gateway.service';
 import { AGENT_TOOLS, type AgentToolName } from '../services/agent/tool-definitions';
-import type { ToolCallResult } from '../services/agent/tool-executor';
+import type { ToolCallResult, ExecutedToolCall } from '../services/agent/tool-executor';
 import { gatewayExecute, type GatewayContext } from '../gateway/tool-gateway';
 import {
   INTENT_SLOT_KEY, nextMissingSlot, isCollectComplete, renderVerifySummary,
@@ -27,7 +27,7 @@ import {
   precedenceOf, assertTenant, detectPrecedenceConflict,
   PRECEDENCE_LABEL, type EvidenceEntry,
 } from './kb-precedence';
-import { STAGE_TOOL_ALLOWLIST, isParallelizable } from '../gateway/tool-policy';
+import { STAGE_TOOL_ALLOWLIST, isParallelizable, TOOL_PARALLEL_LIMIT, runWithConcurrencyLimit } from '../gateway/tool-policy';
 import { DETERMINISTIC_ONLY_STAGES } from './stage-graph';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
 import { identityDenialCopy } from './identity-ladder';
@@ -92,7 +92,12 @@ export interface StagedAgentInput {
   identity?: VillageIdentity;
 }
 
-function toGatewayContext(input: StagedAgentInput, stage: Stage, signal?: AbortSignal): GatewayContext {
+function toGatewayContext(
+  input: StagedAgentInput,
+  stage: Stage,
+  signal?: AbortSignal,
+  dedupCache?: Map<string, Promise<ExecutedToolCall>>,
+): GatewayContext {
   return {
     userId: input.ctx.userId,
     tenantId: input.ctx.tenantId,
@@ -106,6 +111,11 @@ function toGatewayContext(input: StagedAgentInput, stage: Stage, signal?: AbortS
     recentSignatures: [],
     identityLevel: input.ctx.identityLevel,
     signal,
+    // P1-4: one dedup map per turn — shared by every tool call in this turn,
+    // including concurrent ones in a parallel batch. Callers that run
+    // several bounded loops per turn pass the same map so duplicates are
+    // caught turn-wide, not just per loop.
+    dedupCache: dedupCache ?? new Map(),
   };
 }
 
@@ -201,13 +211,19 @@ async function runBoundedLoop(
   stage: Stage,
   tools: typeof AGENT_TOOLS,
   signal?: AbortSignal,
+  /**
+   * P1-4: per-turn dedup map shared across every gatewayExecute in the
+   * turn (threaded from runStagedTurn). Defaults to a fresh map when the
+   * caller doesn't share one.
+   */
+  dedupCache?: Map<string, Promise<ExecutedToolCall>>,
 ): Promise<{ text: string; traces: ToolTraceEntry[]; toolsUsed: string[]; model: string; evidence: string[] }> {
   const traces: ToolTraceEntry[] = [];
   const toolsUsed: string[] = [];
   const evidence: string[] = [];
   const evidenceEntries: EvidenceEntry[] = [];
   let conflictInjected = false;
-  const gw = toGatewayContext(input, stage, signal);
+  const gw = toGatewayContext(input, stage, signal, dedupCache);
 
   const { system, dynamicContext } = await buildPrompt({
     villageName: input.villageName,
@@ -318,24 +334,37 @@ async function runBoundedLoop(
       break;
     }
 
-    // Execute: reads may parallelize, writes always serial, all via gateway.
+    // Execute: reads may parallelize (bounded pool, P1-4), writes always
+    // serial, all via gateway.
     messages.push({ role: 'assistant', content: result.text ?? null, tool_calls: result.message?.tool_calls });
     const reads = calls.filter((c) => isParallelizable(c.name as AgentToolName));
     const writes = calls.filter((c) => !isParallelizable(c.name as AgentToolName));
 
-    const execOne = async (c: ParsedToolCall) => {
+    // P1-4: execOne is side-effect-free w.r.t. shared turn state — it
+    // returns a per-call output and the caller applies outputs in original
+    // call order. This keeps traces/evidence/messages deterministic even
+    // though the reads run concurrently in a bounded pool.
+    interface PerCallOutput {
+      call: ParsedToolCall;
+      trace: ToolTraceEntry;
+      toolsUsedAdd: boolean;
+      dbReadHitAdd: boolean;
+      ragAfterDbHit: boolean;
+      identityDenialCopy?: string;
+      evidenceEntry?: EvidenceEntry;
+      toolContent: string;
+    }
+
+    const execOne = async (c: ParsedToolCall): Promise<PerCallOutput> => {
       const r = await gatewayExecute(c.name as AgentToolName, c.args, gw);
-      traces.push(r.trace);
-      if (!r.blocked && r.ok) toolsUsed.push(c.name);
-      // R8: track DB hits and RAG-after-DB-hit for skip-rule telemetry.
-      if (!r.blocked && r.ok && DB_READ_TOOLS.has(c.name)) {
-        dbReadHit = true;
-      }
-      if (RAG_TOOLS.has(c.name) && dbReadHit) {
-        logger.info('[staged-agent] rag_after_db_hit', {
-          traceId: input.ctx.traceId, tool: c.name, stage,
-        });
-      }
+      const out: PerCallOutput = {
+        call: c,
+        trace: r.trace,
+        toolsUsedAdd: !r.blocked && r.ok,
+        dbReadHitAdd: !r.blocked && r.ok && DB_READ_TOOLS.has(c.name),
+        ragAfterDbHit: false,
+        toolContent: '',
+      };
       let content = r.ok
         ? resultToText(r.result)
         : JSON.stringify({ success: false, error: r.error, errorKind: r.errorKind });
@@ -347,10 +376,7 @@ async function runBoundedLoop(
           success: false, error: 'identity_verification_required',
           errorKind: 'POLICY', detail: copy,
         });
-        if (!identityNoteInjected) {
-          identityNoteInjected = true;
-          messages.push({ role: 'system', content: `[SISTEM] ${copy}` });
-        }
+        out.identityDenialCopy = copy;
       }
       if (r.ok) {
         // Tenant assertion (fail-closed) + precedence labeling on retrieval.
@@ -363,15 +389,45 @@ async function runBoundedLoop(
         } else {
           const p = precedenceOf(c.name);
           content = `${PRECEDENCE_LABEL[p]} (sumber: ${c.name})\n${content}`;
-          evidence.push(content);
-          evidenceEntries.push({ tool: c.name, precedence: p, text: content, tenantCheck: check });
+          out.evidenceEntry = { tool: c.name, precedence: p, text: content, tenantCheck: check };
         }
       }
-      messages.push({ role: 'tool', tool_call_id: c.id, name: c.name, content });
+      out.toolContent = content;
+      return out;
     };
 
-    await Promise.all(reads.map(execOne));
-    for (const c of writes) await execOne(c);
+    // P1-4: bounded parallel pool for independent reads (default 5 in
+    // flight) instead of an unbounded Promise.all — one chatty turn can no
+    // longer stampede downstream services. Writes stay strictly serial.
+    const readOutputs = await runWithConcurrencyLimit(
+      reads.map((c) => () => execOne(c)),
+      TOOL_PARALLEL_LIMIT,
+    );
+    const writeOutputs: PerCallOutput[] = [];
+    for (const c of writes) writeOutputs.push(await execOne(c));
+
+    // Apply in original call order so traces, evidence, tool messages and
+    // telemetry stay deterministic regardless of completion order.
+    for (const out of [...readOutputs, ...writeOutputs]) {
+      traces.push(out.trace);
+      if (out.toolsUsedAdd) toolsUsed.push(out.call.name);
+      // R8: track DB hits and RAG-after-DB-hit for skip-rule telemetry.
+      if (out.dbReadHitAdd) dbReadHit = true;
+      if (RAG_TOOLS.has(out.call.name) && dbReadHit) {
+        logger.info('[staged-agent] rag_after_db_hit', {
+          traceId: input.ctx.traceId, tool: out.call.name, stage,
+        });
+      }
+      if (out.identityDenialCopy && !identityNoteInjected) {
+        identityNoteInjected = true;
+        messages.push({ role: 'system', content: `[SISTEM] ${out.identityDenialCopy}` });
+      }
+      if (out.evidenceEntry) {
+        evidence.push(out.evidenceEntry.text);
+        evidenceEntries.push(out.evidenceEntry);
+      }
+      messages.push({ role: 'tool', tool_call_id: out.call.id, name: out.call.name, content: out.toolContent });
+    }
 
     // P0-vs-document conflict: surface the resolution rule to the model
     // before it writes the final answer.
@@ -413,14 +469,23 @@ async function executeConfirmed(
   });
 }
 
-function gwFor(input: StagedAgentInput, stage: Stage, signal?: AbortSignal): GatewayContext {
-  return toGatewayContext(input, stage, signal);
+function gwFor(
+  input: StagedAgentInput,
+  stage: Stage,
+  signal?: AbortSignal,
+  dedupCache?: Map<string, Promise<ExecutedToolCall>>,
+): GatewayContext {
+  return toGatewayContext(input, stage, signal, dedupCache);
 }
 
 /** Main entry: run one turn of the staged agent for the routed stage. */
 export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult> {
   const started = Date.now();
   const stage = input.decision.stage;
+  // P1-4: one dedup map for the whole turn, shared by every bounded loop
+  // and the deterministic execute path below, so an identical tool+args
+  // pair runs once per turn no matter which stage issued it.
+  const turnDedupCache = new Map<string, Promise<ExecutedToolCall>>();
 
   const finish = (partial: Omit<TurnResult, 'durationMs' | 'assessorCalls'>): TurnResult => ({
     ...partial,
@@ -551,7 +616,7 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
         // gateway so an aborted turn refuses the mutation outright.
         const turnAbort = createTurnAbortController(Math.max(1000, remainingMs(input.ctx)));
         try {
-          const res = await executeConfirmed(input, gwFor(input, 'EXECUTE', turnAbort.signal), bound, finish, failover, turnAbort.signal);
+          const res = await executeConfirmed(input, gwFor(input, 'EXECUTE', turnAbort.signal, turnDedupCache), bound, finish, failover, turnAbort.signal);
           return res;
         } finally {
           turnAbort.dispose();
@@ -587,6 +652,8 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
           { ...input, facts: [...(input.facts ?? []), ...qaFacts] },
           'INFORMATION',
           infoTools,
+          undefined,
+          turnDedupCache,
         );
         const answer = qa.text.trim();
         // Never silent: if the Q&A loop yields nothing, the deterministic
@@ -633,7 +700,7 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
       // the mutation outright (fail-closed).
       const turnAbort = createTurnAbortController(Math.max(1000, remainingMs(input.ctx)));
       try {
-        const execRes = await executeConfirmed(input, gwFor(input, 'EXECUTE', turnAbort.signal), mutation, finish, failover, turnAbort.signal);
+        const execRes = await executeConfirmed(input, gwFor(input, 'EXECUTE', turnAbort.signal, turnDedupCache), mutation, finish, failover, turnAbort.signal);
         return execRes;
       } finally {
         turnAbort.dispose();
@@ -661,7 +728,7 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
     // (The in-flight tool call itself cannot be hard-cancelled; P1-3(a)
     // idempotency makes its retry safe.)
     const controller = new AbortController();
-    const runPromise = runBoundedLoop(input, stage, tools, controller.signal);
+    const runPromise = runBoundedLoop(input, stage, tools, controller.signal, turnDedupCache);
     let timer: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {

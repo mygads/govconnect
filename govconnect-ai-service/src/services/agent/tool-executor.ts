@@ -121,9 +121,13 @@ interface ToolContext {
   userMessage?: string;
   activeServiceSlug?: string;
   activeServiceName?: string;
-  // P1-4: Per-turn tool dedup cache. Key: toolName + stable args JSON.
-  // Prevents agent from re-calling identical tool+args 2-3x per turn.
-  executedTools?: Map<string, ExecutedToolCall>;
+  // P1-4: Per-turn tool dedup cache. Key: toolName + normalized args JSON
+  // (see buildToolDedupKey). The value is a PROMISE so that two identical
+  // calls launched concurrently in one parallel batch share a single
+  // in-flight execution instead of both missing the cache and running twice.
+  // Only successful executions stay cached; failures are evicted so a later
+  // retry in the same turn can re-attempt the tool.
+  executedTools?: Map<string, Promise<ExecutedToolCall>>;
   // P1-5: Abort signal for turn budget. If aborted, don't start new tools
   // and don't use results from tools that completed after abort.
   abortSignal?: AbortSignal;
@@ -230,16 +234,157 @@ function buildServiceEditGuidanceText(editUrl: string): string {
 }
 
 /**
- * P1-4: Build a stable dedup key for tool+args.
- * Sorts keys to ensure identical args produce identical keys regardless of order.
+ * P1-4 (dedup): argument keys whose value identifies a *service name* rather
+ * than free text. Their values go through canonicalizeServiceName() so that
+ * near-duplicates like "KTP" vs "pendaftaran KTP" share one dedup key.
+ * Comparison is case-insensitive on the key name.
  */
-function buildToolDedupKey(toolName: string, args: Record<string, unknown>): string {
-  const sortedKeys = Object.keys(args).sort();
-  const sortedArgs: Record<string, unknown> = {};
-  for (const k of sortedKeys) {
-    sortedArgs[k] = args[k];
+const SERVICE_NAME_ARG_KEYS = new Set([
+  'service_name',
+  'servicename',
+  'service',
+  'layanan',
+  'nama_layanan',
+]);
+
+/**
+ * Generic Indonesian request/action words stripped from the FRONT of a
+ * service-name argument during dedup canonicalization. Deliberately small
+ * and deterministic — no giant regex. "surat" is intentionally NOT in this
+ * list: "surat domisili" / "surat keterangan" are real service-name cores,
+ * not request verbs.
+ */
+const GENERIC_SERVICE_PREFIXES = [
+  'syarat',
+  'cara',
+  'info',
+  'informasi',
+  'tentang',
+  'pengajuan',
+  'mengajukan',
+  'permohonan',
+  'pendaftaran',
+  'mendaftar',
+  'pembuatan',
+  'membuat',
+  'pengurusan',
+  'mengurus',
+  'pengambilan',
+  'mengambil',
+  'perpanjangan',
+  'memperpanjang',
+  'bikin',
+  'buat',
+  'daftar',
+  'urus',
+  'ambil',
+  'layanan',
+  'program',
+  'bantuan',
+  'apa',
+  'bagaimana',
+  'gimana',
+  'berapa',
+];
+
+/**
+ * Tiny explicit alias map for service names. Only near-certain equivalences
+ * are listed here; anything not listed is left as-is (documented limitation:
+ * "surat domisili" vs "keterangan domisili" still execute twice).
+ */
+const SERVICE_NAME_ALIASES: Record<string, string> = {
+  'kartu tanda penduduk': 'ktp',
+  'ktp elektronik': 'ktp',
+  'ktp el': 'ktp',
+  'e ktp': 'ktp',
+  'kartu keluarga': 'kk',
+};
+
+/**
+ * P1-4: canonicalize a service-name-like argument for DEDUP KEY purposes
+ * only. The real args passed to the tool are untouched — this only decides
+ * whether two calls are "the same lookup".
+ *
+ * Examples: "KTP" → "ktp"; "pendaftaran KTP" → "ktp";
+ * "syarat bikin KTP" → "ktp"; "Kartu Tanda Penduduk" → "ktp".
+ *
+ * Honest limits (by design, deterministic & cheap — no LLM):
+ * - Only strips leading generic request verbs + the small alias map above.
+ * - Wording differences NOT covered still miss: "surat domisili" vs
+ *   "keterangan domisili", typos ("KTPp"), or paraphrases ("dokumen identitas").
+ * - Applied ONLY to service-name-like arg keys of get_service_info; every
+ *   other arg uses plain normalization (trim/collapse-whitespace/lowercase).
+ */
+export function canonicalizeServiceName(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  let s = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  let stripped = true;
+  while (stripped && s) {
+    stripped = false;
+    for (const prefix of GENERIC_SERVICE_PREFIXES) {
+      if (s === prefix) {
+        s = '';
+        stripped = true;
+        break;
+      }
+      if (s.startsWith(`${prefix} `)) {
+        s = s.slice(prefix.length + 1);
+        stripped = true;
+        break;
+      }
+    }
   }
-  return `${toolName}:${JSON.stringify(sortedArgs)}`;
+  s = s.trim();
+  return SERVICE_NAME_ALIASES[s] ?? s;
+}
+
+/** Normalize one arg value for dedup-key purposes (recursive, key-sorted). */
+function normalizeArgValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeArgValue);
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value).sort()) {
+      out[k] = normalizeArgValue((value as Record<string, unknown>)[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * P1-4: Build a stable, NORMALIZED dedup key for tool+args.
+ * - Keys sorted; null/undefined/empty-string values dropped (they are
+ *   semantically "absent" for every tool here).
+ * - String values: trim + collapse inner whitespace + lowercase.
+ * - Service-name-like args of get_service_info additionally go through
+ *   canonicalizeServiceName() (near-duplicate collapsing, e.g. "KTP" vs
+ *   "pendaftaran KTP").
+ * Identical normalized keys ⇒ one execution per turn, result shared.
+ */
+export function buildToolDedupKey(toolName: string, args: Record<string, unknown>): string {
+  const normalized: Record<string, unknown> = {};
+  for (const key of Object.keys(args || {}).sort()) {
+    const rawValue = (args as Record<string, unknown>)[key];
+    if (rawValue === null || rawValue === undefined) continue;
+    let value: unknown;
+    if (toolName === 'get_service_info' && SERVICE_NAME_ARG_KEYS.has(key.toLowerCase())) {
+      value = canonicalizeServiceName(rawValue);
+    } else {
+      value = normalizeArgValue(rawValue);
+    }
+    if (value === '') continue;
+    normalized[key] = value;
+  }
+  return `${toolName}:${JSON.stringify(normalized)}`;
 }
 
 export async function executeToolCall(
@@ -247,17 +392,46 @@ export async function executeToolCall(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ExecutedToolCall> {
-  const startTime = Date.now();
-
-  // P1-4: Per-turn dedup — if identical tool+args already executed this turn, return cached result.
-  // Prevents agent from wasting 14-27s re-calling get_service_info 2-3x with same args.
+  // P1-4: Per-turn dedup with in-flight sharing. Identical (normalized)
+  // tool+args within one turn execute ONCE; duplicates launched
+  // concurrently in the same parallel batch share the in-flight promise
+  // instead of both missing the cache. Callers map the shared result back
+  // to their own tool_call_id.
   if (ctx.executedTools) {
     const dedupKey = buildToolDedupKey(toolName, args);
-    const cached = ctx.executedTools.get(dedupKey);
-    if (cached) {
-      return cached;
-    }
+    const inFlight = ctx.executedTools.get(dedupKey);
+    if (inFlight) return inFlight;
+    const pending = runExecuteToolCall(toolName, args, ctx).then(
+      (executed) => {
+        // Cache only successes: a failed read may succeed on retry, and a
+        // failed mutation must never be silently replayed as "done".
+        if (!executed.result.success) ctx.executedTools?.delete(dedupKey);
+        return executed;
+      },
+      (err) => {
+        ctx.executedTools?.delete(dedupKey);
+        throw err;
+      },
+    );
+    // Registered synchronously, before any await, so a duplicate launched
+    // in the same tick still sees this entry.
+    ctx.executedTools.set(dedupKey, pending);
+    return pending;
   }
+  return runExecuteToolCall(toolName, args, ctx);
+}
+
+/**
+ * One actual execution of a single tool call (no dedup layer).
+ * Never throws except on P1-5 abort; tool failures are returned as
+ * failure results so one bad tool never kills its batch siblings.
+ */
+async function runExecuteToolCall(
+  toolName: AgentToolName,
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ExecutedToolCall> {
+  const startTime = Date.now();
 
   if (ctx.sideEffectMode && ctx.sideEffectMode !== 'production' && MUTATION_TOOLS.has(toolName)) {
     return {
@@ -329,11 +503,6 @@ export async function executeToolCall(
       result,
     };
 
-    // P1-4: Cache successful result for per-turn dedup
-    if (ctx.executedTools) {
-      ctx.executedTools.set(buildToolDedupKey(toolName, args), executed);
-    }
-
     return executed;
   } catch (error: any) {
     const durationMs = Date.now() - startTime;
@@ -379,6 +548,212 @@ export async function executeToolCall(
       },
     };
   }
+}
+
+import { TOOL_PARALLEL_LIMIT, runWithConcurrencyLimit } from '../../gateway/tool-policy';
+/**
+ * P1-4: max concurrent tool executions inside one parallel wave, plus the
+ * bounded pool runner. Re-exported from the PURE tool-policy module (no
+ * service imports) so pipeline stages can use the concurrency bound
+ * without pulling the heavy tool-executor dependency graph at
+ * module-evaluation time.
+ */
+export { TOOL_PARALLEL_LIMIT, runWithConcurrencyLimit };
+
+export interface BatchToolCall {
+  /**
+   * Caller correlation id (e.g. the LLM's tool_call_id). Every input call
+   * gets exactly one result, in input order, so the caller can map each
+   * result back to the right tool_call_id.
+   */
+  id: string;
+  tool: AgentToolName;
+  args: Record<string, unknown>;
+}
+
+export interface BatchToolCallResult {
+  call: BatchToolCall;
+  executed: ExecutedToolCall;
+  /**
+   * True when this call was served from the per-turn dedup cache — i.e. an
+   * identical (normalized) call already ran this turn and this result is
+   * the shared one. Callers that count "tools used" (billing/telemetry)
+   * should skip deduped entries to avoid double counting.
+   */
+  deduped: boolean;
+}
+
+export interface ExecuteToolCallsOptions {
+  /** Max concurrent executions per parallel wave. Defaults to TOOL_PARALLEL_LIMIT. */
+  concurrency?: number;
+}
+
+/** Deep-collect every string value inside tool args. */
+function collectStringArgValues(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) collectStringArgValues(v, out);
+    return;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const v of Object.values(value as Record<string, unknown>)) collectStringArgValues(v, out);
+  }
+}
+
+/**
+ * P1-4: dependency detection between tool calls of the same turn.
+ * A call depends on a sibling when one of its string args references that
+ * sibling — either via a {{template}} placeholder (the only cross-call
+ * reference convention the prompts allow) or by embedding the sibling's
+ * call id verbatim. Dependent calls run in a LATER wave, sequentially in
+ * original order, so tool B can consume tool A's real output.
+ *
+ * Honest limit: if the model expresses a dependency in any other free-form
+ * way ("use the ticket from the previous call"), we cannot see it and the
+ * calls run in the same wave. Mutations are always sequential regardless.
+ */
+function callDependsOnSiblings(call: BatchToolCall, siblingIds: Set<string>): boolean {
+  if (siblingIds.size === 0) return false;
+  const strings: string[] = [];
+  collectStringArgValues(call.args, strings);
+  for (const s of strings) {
+    if (/\{\{[^}]*\}\}/.test(s)) return true;
+    const lower = s.toLowerCase();
+    for (const siblingId of siblingIds) {
+      if (siblingId.length >= 4 && lower.includes(siblingId.toLowerCase())) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Split non-mutation calls into execution waves: each wave holds the
+ * maximal subset with no dependency on still-pending siblings. A wave with
+ * an unresolvable cycle falls back to running its first call alone
+ * (progress is always guaranteed; waves ≤ number of calls).
+ */
+function planExecutionWaves(calls: BatchToolCall[]): BatchToolCall[][] {
+  const waves: BatchToolCall[][] = [];
+  let pending = [...calls];
+  while (pending.length > 0) {
+    const ready = pending.filter((call) => {
+      const siblings = new Set(pending.map((c) => c.id));
+      siblings.delete(call.id);
+      return !callDependsOnSiblings(call, siblings);
+    });
+    const wave = ready.length > 0 ? ready : [pending[0]];
+    waves.push(wave);
+    const waveIds = new Set(wave.map((c) => c.id));
+    pending = pending.filter((c) => !waveIds.has(c.id));
+  }
+  return waves;
+}
+
+function abortedToolResult(tool: AgentToolName): ExecutedToolCall {
+  const result: ToolCallResult = {
+    success: false,
+    error: 'turn_aborted_before_tool_start',
+    meta: { trustLevel: 'action_result', sourceKind: 'turn_aborted' },
+  };
+  return {
+    content: JSON.stringify(result),
+    trace: { tool, success: false, durationMs: 0, trustLevel: 'action_result', sourceKind: 'turn_aborted' },
+    result,
+  };
+}
+
+/**
+ * P1-4: execute a batch of tool calls for one turn.
+ *
+ * - DEDUP: identical (normalized) tool+args execute once per turn; the
+ *   result is shared across every duplicate call (each still mapped to its
+ *   own `id`). Near-duplicates on service-name args are collapsed via
+ *   canonicalizeServiceName() — see its docblock for honest limits.
+ * - PARALLEL: independent non-mutation calls run in waves with a bounded
+ *   concurrency pool (default 5). Calls that depend on a sibling's output
+ *   ({{placeholder}} or embedded call id) run in a later wave.
+ * - SAFETY: mutation tools (G2/G3) ALWAYS run sequentially, after all
+ *   reads, in original order. The P1-5 abort guard is checked before every
+ *   wave; an aborted turn stops launching new tools.
+ * - ISOLATION: one tool's failure never fails its independent siblings —
+ *   each call gets its own failure result, mapped to its own `id`.
+ *
+ * Returns one result per input call, in input order.
+ */
+export async function executeToolCalls(
+  calls: BatchToolCall[],
+  ctx: ToolContext,
+  opts?: ExecuteToolCallsOptions,
+): Promise<BatchToolCallResult[]> {
+  const concurrency = Math.max(1, opts?.concurrency ?? TOOL_PARALLEL_LIMIT);
+  // A per-turn dedup map is required for the batch to share executions;
+  // reuse the caller's map when provided so dedup spans the whole turn.
+  const batchCtx: ToolContext = ctx.executedTools
+    ? ctx
+    : { ...ctx, executedTools: new Map<string, Promise<ExecutedToolCall>>() };
+  const dedupMap = batchCtx.executedTools as Map<string, Promise<ExecutedToolCall>>;
+
+  const results = new Array<BatchToolCallResult>(calls.length);
+  const indexById = new Map(calls.map((c, i) => [c.id, i]));
+
+  const runOne = async (call: BatchToolCall): Promise<BatchToolCallResult> => {
+    const dedupKey = buildToolDedupKey(call.tool, call.args);
+    const deduped = dedupMap.has(dedupKey);
+    try {
+      const executed = await executeToolCall(call.tool, call.args, batchCtx);
+      return { call, executed, deduped };
+    } catch (err) {
+      // executeToolCall only throws on P1-5 abort; anything else here is
+      // belt-and-braces so one tool can never kill its batch siblings.
+      logger.error('[tool-executor] batch tool threw; isolating', {
+        tool: call.tool,
+        error: (err as Error)?.message,
+        userId: ctx.userId,
+      });
+      return { call, executed: abortedToolResult(call.tool), deduped };
+    }
+  };
+
+  const reads = calls.filter((c) => !MUTATION_TOOLS.has(c.tool));
+  const mutations = calls.filter((c) => MUTATION_TOOLS.has(c.tool));
+
+  // Reads: wave-based parallel (dependency-aware), bounded concurrency.
+  for (const wave of planExecutionWaves(reads)) {
+    // P1-5: never start a new wave once the turn budget is exhausted.
+    if (ctx.abortSignal?.aborted) {
+      for (const call of wave) {
+        results[indexById.get(call.id) as number] = { call, executed: abortedToolResult(call.tool), deduped: false };
+      }
+      // Mutations after an abort are skipped as well — fail closed.
+      for (const call of mutations) {
+        if (results[indexById.get(call.id) as number] === undefined) {
+          results[indexById.get(call.id) as number] = { call, executed: abortedToolResult(call.tool), deduped: false };
+        }
+      }
+      return results;
+    }
+    const waveResults = await runWithConcurrencyLimit(
+      wave.map((call) => () => runOne(call)),
+      concurrency,
+    );
+    for (const r of waveResults) {
+      results[indexById.get(r.call.id) as number] = r;
+    }
+  }
+
+  // Mutations: strictly sequential, original order, after all reads.
+  for (const call of mutations) {
+    if (ctx.abortSignal?.aborted) {
+      results[indexById.get(call.id) as number] = { call, executed: abortedToolResult(call.tool), deduped: false };
+      continue;
+    }
+    results[indexById.get(call.id) as number] = await runOne(call);
+  }
+
+  return results;
 }
 
 function buildUserFacingToolError(
