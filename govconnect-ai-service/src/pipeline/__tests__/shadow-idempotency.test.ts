@@ -15,6 +15,9 @@ vi.mock('../../gateway/tool-gateway', () => ({
 }));
 vi.mock('../../services/ai-gateway.service', () => ({
   callAIGatewayPrompt: vi.fn(),
+  // The staged-agent → tool-executor → knowledge.service → rag.service chain
+  // (static since the P1-4 dedup-cache change) needs this named export.
+  getDefaultRAGRewriteModels: () => [],
 }));
 vi.mock('../pipeline-store', () => ({
   appendAudit: vi.fn(async () => true),
@@ -40,6 +43,7 @@ vi.mock('../identity-ladder', () => ({
 vi.mock('../semantic-cache', () => ({
   semanticCacheLookup: vi.fn(async () => null),
   semanticCacheStore: vi.fn(async () => undefined),
+  docVersion: () => 'v1',
 }));
 vi.mock('../memory-policy', () => ({
   applyMemoryPolicy: vi.fn(async () => undefined),
@@ -77,6 +81,7 @@ import { applyMemoryPolicy } from '../memory-policy';
 import { persistFallbackTicket } from '../fallback-policy';
 import { enqueueComplaintToLapor } from '../lapor-bridge';
 import { semanticCacheStore } from '../semantic-cache';
+import { runStagedTurn } from '../staged-agent';
 import { processMessageV2, buildIdempotencyKey } from '../process-message-v2';
 import type { ProcessMessageInput } from '../../services/ump-types';
 
@@ -135,7 +140,24 @@ describe('P1-1: shadow mode performs no production writes', () => {
   });
 
   it('production mode still writes normally', async () => {
-    const result = await processMessageV2(baseInput());
+    // Use a cacheable FAQ-style question that deterministically routes to
+    // INFORMATION (no COLLECT keywords) so the FAQ cache store path is hit.
+    vi.mocked(runStagedTurn).mockResolvedValueOnce({
+      terminalState: 'SUCCEEDED',
+      stage: 'INFORMATION',
+      response: 'Kantor desa buka Senin sampai Jumat pukul 08.00 sampai 14.00.',
+      guidanceText: undefined,
+      intent: 'faq',
+      fields: {},
+      toolsUsed: [],
+      toolTrace: [],
+      degraded: false,
+      durationMs: 0,
+      assessorCalls: 0,
+    });
+    const result = await processMessageV2(
+      baseInput({ message: 'jam berapa kantor desa buka?' }),
+    );
     expect(result.success).toBe(true);
     expect(mockIdempotencyCheck).toHaveBeenCalled();
     expect(mockIdempotencyStore).toHaveBeenCalled();

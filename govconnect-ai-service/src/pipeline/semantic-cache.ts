@@ -54,10 +54,11 @@ export async function semanticCacheLookup(
 
 export async function semanticCacheStore(
   tenantId: string, question: string, answer: string, stage: string,
+  ttlMs: number = CACHE_TTL_MS,
 ): Promise<void> {
   if (!isCacheable(stage, question, answer)) return;
   await semanticCachePut(
     cacheKeyFor(tenantId, question), tenantId, docVersion(),
-    normalizeQuestion(question), answer, CACHE_TTL_MS,
+    normalizeQuestion(question), answer, ttlMs,
   );
 }
