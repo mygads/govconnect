@@ -130,6 +130,7 @@ export interface VectorSearchOptions {
   retrievalMode?: RetrievalMode;
   useHybridSearch?: boolean;
   useQueryExpansion?: boolean;
+  precomputedIntent?: any;  // Pre-computed query intent to skip NLU LLM call (perf optimization)
 }
 
 /**

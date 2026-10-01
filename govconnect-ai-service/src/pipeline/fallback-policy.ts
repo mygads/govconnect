@@ -60,9 +60,14 @@ export function buildFallback(
   // row is actually in the DB. When unpersisted (DB down / no tenant),
   // say so plainly and tell the citizen what to do instead.
   const persisted = opts.persisted ?? true;
-  const second = persisted
-    ? `Nomor referensi sementara Anda: *${ticket}*. Simpan nomor ini — laporan Anda sudah tercatat dan petugas desa akan menindaklanjuti.`
-    : `Nomor referensi sementara Anda: *${ticket}*. Karena gangguan ini, laporan Anda BELUM tersimpan — mohon kirim ulang beberapa saat lagi. Jika mendesak, hubungi langsung kantor desa; petugas desa akan menindaklanjuti setelah laporan Anda diterima.`;
+  const isInformation = (input.intentHint ?? '') === 'information';
+  // P1-6: For pure INFORMATION questions, don't claim "laporan tercatat" - it's misleading.
+  // A question is not a report.
+  const second = isInformation
+    ? `Mohon coba kirim ulang pertanyaan Anda beberapa saat lagi.`
+    : persisted
+      ? `Nomor referensi sementara Anda: *${ticket}*. Simpan nomor ini — laporan Anda sudah tercatat dan petugas desa akan menindaklanjuti.`
+      : `Nomor referensi sementara Anda: *${ticket}*. Karena gangguan ini, laporan Anda BELUM tersimpan — mohon kirim ulang beberapa saat lagi. Jika mendesak, hubungi langsung kantor desa; petugas desa akan menindaklanjuti setelah laporan Anda diterima.`;
 
   const response = [
     first,

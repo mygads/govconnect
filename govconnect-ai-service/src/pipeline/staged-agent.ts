@@ -111,6 +111,11 @@ function toGatewayContext(input: StagedAgentInput, stage: Stage, signal?: AbortS
 function resultToText(result: ToolCallResult | undefined): string {
   if (!result) return '{}';
   if (result.suggested_response) return result.suggested_response;
+  // P0-3 FIX: Check for nested suggested_response in data (e.g., toolGetEmergencyContacts)
+  if (result.data && typeof result.data === 'object' && 'suggested_response' in result.data) {
+    const nested = (result.data as { suggested_response?: unknown }).suggested_response;
+    if (typeof nested === 'string' && nested) return nested;
+  }
   if (result.data !== undefined) {
     return typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
   }

@@ -38,6 +38,7 @@ export const STAGE_TRANSITIONS: StageTransition[] = [
   { from: 'TRIAGE', to: 'INFORMATION', kind: 'fuzzy', rule: 'assessor: ini pertanyaan informasi, bukan aksi' },
   { from: 'TRIAGE', to: 'STATUS_CHECK', kind: 'fuzzy', rule: 'assessor: ini cek status tiket' },
   { from: 'TRIAGE', to: 'HANDOFF', kind: 'fuzzy', rule: 'assessor: butuh manusia (frustrasi + blocker, topik sensitif)' },
+  { from: 'TRIAGE', to: 'EMERGENCY', kind: 'fuzzy', rule: 'assessor: darurat nyata' },
 
   { from: 'COLLECT', to: 'VERIFY', kind: 'deterministic', rule: 'semua slot wajib terisi → verifikasi' },
   { from: 'COLLECT', to: 'COLLECT', kind: 'deterministic', rule: 'slot kurang → minta lagi (maks 2x, lalu handoff)' },

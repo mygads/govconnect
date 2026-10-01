@@ -685,3 +685,24 @@ export async function searchKnowledgeByKeywordsDirect(
     return [];
   }
 }
+
+/**
+ * Count KB documents for a village (for early-exit optimization).
+ * Returns 0 if village has no KB docs, avoiding expensive RAG retries.
+ */
+export async function countKnowledgeDocs(villageId?: string): Promise<number> {
+  try {
+    const tenantScopeFilter = villageId
+      ? Prisma.sql`((village_id = ${villageId} AND scope = 'village' AND is_global = FALSE) OR (scope = 'global' AND is_global = TRUE))`
+      : Prisma.sql`(scope = 'global' AND is_global = TRUE)`;
+    const result = await prisma.$queryRaw<{count: bigint}[]>`
+      SELECT COUNT(*) as count
+      FROM ai.knowledge_vectors
+      WHERE ${tenantScopeFilter}
+    `;
+    return Number(result[0]?.count || 0);
+  } catch (error: any) {
+    logger.error('KB doc count failed', { error: error.message });
+    return -1; // Unknown, do not early-exit
+  }
+}
