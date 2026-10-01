@@ -32,6 +32,11 @@ const OPERATIONAL_MEMORY_TYPES = new Set([
   'service_edit',
   'status_lookup',
   'cancellation',
+  // session_summary: ringkasan sesi terakhir ("interaksi terakhir") — harus
+  // ikut terambil oleh getLastInteraction()/buildLastInteractionContext().
+  // Tanpa ini, saveSessionSummary() tidak pernah bisa dibaca kembali
+  // (filter memory_type di searchUserMemories mengecualikannya).
+  'session_summary',
 ]);
 
 type MemoryEntryRow = {
