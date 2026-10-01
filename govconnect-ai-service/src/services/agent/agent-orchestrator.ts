@@ -2252,4 +2252,5 @@ export const __test_only__ = {
   getUncoveredMixedIntentFamilies,
   shouldForceMixedIntentContinuation,
   buildMixedIntentLoopExhaustedReply,
+  buildAgentFallbackReply,
 };

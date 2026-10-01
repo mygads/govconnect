@@ -20,10 +20,11 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  buildAgentFallbackReply,
-  buildMixedIntentLoopExhaustedReply,
+  __test_only__ as agentOrchestratorTestOnly,
   EMPTY_LLM_FALLBACK_COPY,
 } from '../agent-orchestrator';
+
+const { buildAgentFallbackReply, buildMixedIntentLoopExhaustedReply } = agentOrchestratorTestOnly;
 import { shouldEnqueueFullLoopRetry } from '../full-loop-retry-guard';
 import { isProcessingFailure } from '../../unified-message-processor.service';
 import type { ProcessMessageResult } from '../../ump-types';
