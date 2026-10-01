@@ -54,6 +54,8 @@ export {
 } from './unified-message-processor.service';
 
 import { processUnifiedMessage, isProcessingFailure } from './unified-message-processor.service';
+import { EMPTY_LLM_FALLBACK_COPY } from './agent/agent-orchestrator';
+import { shouldEnqueueFullLoopRetry } from './agent/full-loop-retry-guard';
 
 // v2 staged-agent pipeline (strangler pattern: off/shadow/on per tenant).
 // Default 'off' → zero behavior change to the v1 path.
@@ -344,6 +346,12 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     //
     // v2 ('on') is exempt: the staged-agent pipeline carries the never-silent
     // guarantee, so its degraded result is SENT, not swallowed.
+    //
+    // P1-9: the full-loop retry re-runs the ENTIRE agent tool loop from
+    // scratch. It must NEVER be enqueued when the failed turn already
+    // executed a mutation — the retry fires ~10 minutes later, after the
+    // gateway idempotency TTL (5 min) expired, so the mutation would execute
+    // twice. In that case the graceful fallback is sent instead.
     if (isProcessingFailure(result) && pipelineMode !== 'on') {
       logger.warn('🤐 WhatsApp message processing failed — staying silent + enqueuing retry', {
         wa_user_id,
@@ -359,6 +367,25 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
             wa_user_id, message_id, error: typingError?.message || String(typingError),
           });
         }
+      }
+      if (!shouldEnqueueFullLoopRetry(result, pipelineMode)) {
+        // P1-9: a mutation already ran this turn — do NOT enqueue the full
+        // re-processing retry (double-execution risk). Deliver the graceful
+        // fallback copy instead (never-silent).
+        logger.warn('🤐 P1-9: mutation already executed — skipping full-loop retry, sending graceful fallback', {
+          wa_user_id,
+          message_id,
+          toolsUsed: result.metadata?.toolsUsed,
+        });
+        await publishAIReply({
+          village_id,
+          wa_user_id,
+          reply_text: EMPTY_LLM_FALLBACK_COPY,
+          message_id: message_id,
+          batched_message_ids: [message_id],
+        });
+        completeProcessing(village_id, wa_user_id, message_id);
+        return;
       }
       completeProcessing(village_id, wa_user_id, message_id);
       addToAIRetryQueue(event, result.error || 'processing_failed');
