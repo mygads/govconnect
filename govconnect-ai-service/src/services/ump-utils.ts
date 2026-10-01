@@ -261,6 +261,12 @@ export async function extractAddressFromMessage(currentMessage: string, userId: 
 
 // ==================== COMPLAINT TYPE RESOLUTION ====================
 
+/**
+ * P1-12 — Village scoping rule: complaint types are always per-village (see
+ * getComplaintTypes in case-client.service.ts). There are no global types.
+ * A call without village_id returns [] immediately (fail-closed) — it never
+ * queries or caches unscoped data.
+ */
 export async function getCachedComplaintTypes(villageId?: string): Promise<any[]> {
   if (!villageId) return [];
 

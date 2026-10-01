@@ -199,16 +199,33 @@ export interface ComplaintTypeInfo {
   };
 }
 
-export async function getComplaintTypes(villageId?: string): Promise<ComplaintTypeInfo[]> {
+/**
+ * P1-12 — Village scoping rule (explicit, fail-closed):
+ *
+ * - Complaint categories & types are ALWAYS per-village. There are NO global
+ *   categories: `complaint_categories.village_id` is NOT NULL in the schema,
+ *   and `complaint_types` inherit their village through their category
+ *   (`category.village_id`). An unscoped query would return another village's
+ *   categories — a cross-tenant leak.
+ * - `villageId` is REQUIRED. A call without village_id never reaches the
+ *   network: it returns [] immediately (fail-closed) instead of relying on
+ *   the server to reject an unscoped request.
+ */
+export async function getComplaintTypes(villageId: string): Promise<ComplaintTypeInfo[]> {
+  if (!villageId) {
+    logger.warn('getComplaintTypes called without villageId — refusing unscoped query (fail-closed)');
+    return [];
+  }
   try {
     const url = `${config.caseServiceUrl}/complaints/types`;
     const response = await resilientHttp.get<{ data: ComplaintTypeInfo[] }>(url, {
       headers: {
         'x-internal-api-key': config.internalApiKey,
         'Content-Type': 'application/json',
-        ...(villageId ? { 'x-admin-role': 'village_admin', 'x-village-id': villageId } : {}),
+        'x-admin-role': 'village_admin',
+        'x-village-id': villageId,
       },
-      params: villageId ? { village_id: villageId } : undefined,
+      params: { village_id: villageId },
       timeout: 10000,
     });
 
