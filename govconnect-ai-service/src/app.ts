@@ -1882,6 +1882,11 @@ app.use('/api/identity', identityRoutes);
 app.use('/api/ktp-verifications', ktpVerificationsRoutes);
 app.use('/api/media-signals', mediaSignalsRoutes);
 app.use('/api/webchat', webchatRoutes);
+// Presentation-layer alias: exposes POST /api/chat/stream (SSE streaming)
+// through the exact same webchat handlers/validation. The pipeline is
+// untouched; streaming is only a response presentation format (webchat only,
+// WhatsApp does not support streaming).
+app.use('/api/chat', webchatRoutes);
 app.use('/api/status', internalAuthMiddleware, statusRoutes);
 app.use('/api/testing', testingRoutes);
 app.use('/api/handoffs', handoffsRoutes);
@@ -3040,6 +3045,7 @@ app.get('/admin/routes', internalAuthMiddleware, async (req: Request, res: Respo
       vectorSearch: '/api/search',
       documentUpload: '/api/upload',
       webchat: '/api/webchat',
+      chatStream: '/api/chat/stream',
       processingStatus: '/api/status/:userId',
       processingStatusSummary: '/api/status/summary',
       processingStatusActive: '/api/status/active',

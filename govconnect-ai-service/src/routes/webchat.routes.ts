@@ -35,6 +35,11 @@ import {
 } from '../services/webchat-batcher.service';
 import { getParam, getQuery } from '../utils/http';
 import { internalApiKeyMatches } from '../utils/internal-auth';
+import {
+  streamAgentTurn,
+  type StreamProcessorInput,
+} from '../services/sse-stream.service';
+import { isAborted } from '../pipeline/abort-guard';
 
 // Using same unified processor as WhatsApp for consistency
 logger.info('🏗️ Webchat architecture: Unified Processor (same as WhatsApp)');
@@ -77,6 +82,8 @@ async function processWebchatMessage(params: {
   village_id?: string;
   messageId?: string;
   batchedMessageIds?: string[];
+  /** Optional stage callback — used by the SSE streaming endpoint to show progress. */
+  onStageChange?: (stage: string, progress: number) => void;
 }): Promise<ProcessMessageResult> {
   logger.debug('Processing webchat with pipeline-aware processor (same as WhatsApp)', {
     userId: params.userId,
@@ -92,6 +99,7 @@ async function processWebchatMessage(params: {
     villageId: params.village_id,
     messageId: params.messageId,
     batchedMessageIds: params.batchedMessageIds,
+    onStageChange: params.onStageChange,
   };
   if (getPipelineMode(params.village_id) === 'on') {
     return processMessageV2(umpInput);
@@ -620,6 +628,270 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       code: 'PROCESSING_ERROR',
       metadata: { session_id: statusSessionId, processingTimeMs: Date.now() - startTime },
     });
+  }
+});
+
+/**
+ * SSE streaming webchat response
+ * POST /api/chat/stream  (alias of POST /api/webchat/stream — see app.ts mount)
+ *
+ * PRESENTATION LAYER ONLY: runs the exact same synchronous pipeline as POST /
+ * (processWebchatMessage → v1/v2 per PIPELINE_MODE) and replays the turn as
+ * Server-Sent Events, so the webchat UI renders progressively instead of
+ * waiting ~30s for one JSON blob.
+ *
+ * Event protocol:
+ *   status   — turn lifecycle ({ stage: 'start' })
+ *   stage    — pipeline progress ({ stage, message: Indonesian copy, progress })
+ *   chunk    — answer fragment ({ index, total, kind: answer|guidance|fallback, text })
+ *   done     — complete answer ({ fullText, guidanceText, intent, degraded, metadata })
+ *   held     — wallet exhausted; message held for later flush
+ *   error    — processing failed ({ code, message })
+ *
+ * Guards: every chunk passes sanitizeOutboundText (P0-3); client disconnect
+ * aborts the turn and skips all persistence (P1-5: no write after abort).
+ *
+ * Deliberate differences vs POST /:
+ * - No message batching: each stream request is its own turn (SSE clients get
+ *   per-message progressive streams).
+ * - The OUT reply is persisted to Channel Service AFTER the stream completes,
+ *   so an aborted stream leaves no half-answer in the dashboard history.
+ */
+router.post('/stream', webchatRateLimit, async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  const { session_id, message } = req.body;
+  const village_id: string | undefined = req.body.village_id || req.body.villageId;
+
+  if (!session_id || !message) {
+    res.status(400).json({ success: false, error: 'session_id dan message diperlukan' });
+    return;
+  }
+  if (!village_id) {
+    res.status(400).json({ success: false, error: 'village_id diperlukan' });
+    return;
+  }
+  if (!session_id.startsWith('web_')) {
+    res.status(400).json({ success: false, error: 'Format session_id tidak valid' });
+    return;
+  }
+
+  const webchatEnabled = await isWebchatEnabled(village_id);
+  if (!webchatEnabled) {
+    res.json({
+      success: true,
+      response: 'Maaf, webchat saat ini dinonaktifkan oleh admin desa. Silakan hubungi kembali nanti.',
+      intent: 'CHANNEL_DISABLED',
+      processing_time_ms: Date.now() - startTime,
+    });
+    return;
+  }
+
+  // Admin takeover: no AI turn — same contract as the sync endpoint.
+  const takeoverStatus = await checkWebchatTakeover(session_id, village_id);
+  if (takeoverStatus.is_takeover) {
+    await saveWebchatMessage({
+      session_id,
+      village_id,
+      message,
+      direction: 'IN',
+      source: 'USER',
+    });
+    res.json({
+      success: true,
+      response: '',
+      intent: 'TAKEOVER',
+      metadata: {
+        session_id,
+        is_takeover: true,
+        admin_name: takeoverStatus.admin_name,
+      },
+    });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const controller = new AbortController();
+  let finished = false;
+  let heartbeat: NodeJS.Timeout | undefined;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    if (heartbeat) clearInterval(heartbeat);
+    if (!res.writableEnded) {
+      try { res.end(); } catch { /* noop */ }
+    }
+  };
+  // P1-5: client disconnect → abort the turn. streamAgentTurn stops emitting
+  // and the handler below skips all persistence (no write after abort).
+  req.on('close', () => {
+    if (!finished) {
+      logger.info('[webchat-stream] client disconnected, aborting turn', { session_id });
+    }
+    controller.abort();
+    finish();
+  });
+  const signal = controller.signal;
+
+  const send = (event: string, data: unknown) => {
+    if (finished || res.writableEnded || res.destroyed) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch (err: any) {
+      logger.warn('[webchat-stream] write failed', { session_id, error: err?.message });
+    }
+  };
+
+  heartbeat = setInterval(() => {
+    if (!finished && !res.writableEnded) {
+      try { res.write(': ping\n\n'); } catch { /* noop */ }
+    }
+  }, 25000);
+
+  try {
+    logger.info('🌊 Web chat stream started', {
+      session_id,
+      village_id,
+      messageLength: (message as string).length,
+    });
+
+    const sourceMessageId = `webmsg:${session_id}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+
+    // Persist the inbound message first (same as the sync endpoint).
+    await saveWebchatMessage({
+      session_id,
+      village_id,
+      message,
+      direction: 'IN',
+      source: 'USER',
+      message_id: sourceMessageId,
+    });
+
+    if (!isAborted(signal)) {
+      await updateWebchatAIStatus({
+        session_id,
+        village_id,
+        action: 'processing',
+        message_id: sourceMessageId,
+      }).catch(() => {});
+    }
+
+    const historyMessages = await fetchWebchatHistory({ session_id, village_id, limit: 30 });
+
+    const streamInput: StreamProcessorInput = {
+      userId: session_id,
+      message,
+      conversationHistory: [...historyMessages, { role: 'user', content: message, timestamp: new Date() }].map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content,
+      })),
+      village_id,
+      messageId: sourceMessageId,
+    };
+
+    const summary = await streamAgentTurn({
+      input: streamInput,
+      processor: (inp) => processWebchatMessage(inp),
+      emit: send,
+      signal,
+      chunkDelayMs: 25,
+    });
+
+    // P1-5: client disconnected mid-turn → no persistence at all.
+    if (summary.outcome === 'aborted' || isAborted(signal)) {
+      logger.info('[webchat-stream] turn aborted by client, skipping persistence', { session_id });
+      finish();
+      return;
+    }
+
+    const result = summary.result;
+
+    if (summary.outcome === 'held') {
+      await updateWebchatAIStatus({
+        session_id,
+        village_id,
+        action: 'pending_balance',
+        message_id: sourceMessageId,
+      }).catch(() => {});
+      logger.info('🪙 Webchat stream message held for wallet topup', { session_id, village_id });
+      finish();
+      return;
+    }
+
+    if (summary.outcome === 'error' || !result) {
+      await updateWebchatAIStatus({
+        session_id,
+        village_id,
+        action: 'error',
+        message_id: sourceMessageId,
+        error_message: 'Pemrosesan webchat stream gagal.',
+      }).catch(() => {});
+      finish();
+      return;
+    }
+
+    // Persist the streamed reply (done/degraded) to Channel Service for the
+    // Live Chat dashboard history, then clear the AI status.
+    const replyText = summary.fullText ?? result.response;
+    const replySynced = await saveWebchatMessage({
+      session_id,
+      village_id,
+      message: replyText,
+      direction: 'OUT',
+      source: 'AI',
+    });
+
+    let guidanceSynced = true;
+    if (summary.guidanceText) {
+      guidanceSynced = await saveWebchatMessage({
+        session_id,
+        village_id,
+        message: summary.guidanceText,
+        direction: 'OUT',
+        source: 'AI',
+      });
+    }
+
+    const nextAIStatus = resolveWebchatAIStatusAfterReply({
+      intent: result.intent,
+      replySynced,
+      hasGuidance: !!summary.guidanceText,
+      guidanceSynced,
+    });
+
+    await updateWebchatAIStatus({
+      session_id,
+      village_id,
+      action: nextAIStatus.action,
+      message_id: nextAIStatus.action === 'clear' ? undefined : sourceMessageId,
+      error_message: nextAIStatus.error_message,
+    }).catch(() => {});
+
+    logger.info('🌊 Web chat stream completed', {
+      session_id,
+      intent: result.intent,
+      outcome: summary.outcome,
+      responseLength: replyText.length,
+      processingTimeMs: Date.now() - startTime,
+    });
+    finish();
+  } catch (error: any) {
+    logger.error('❌ Web chat stream error', {
+      error: error.message,
+      stack: error.stack,
+    });
+    if (!isAborted(signal)) {
+      send('error', {
+        code: 'PROCESSING_ERROR',
+        message: 'Maaf, terjadi kendala saat memproses pesan Anda. Silakan coba lagi.',
+        at: Date.now(),
+      });
+    }
+    finish();
   }
 });
 
