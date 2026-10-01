@@ -50,6 +50,7 @@ import mediaSignalsRoutes from './routes/media-signals.routes';
 import webchatRoutes from './routes/webchat.routes';
 import statusRoutes from './routes/status.routes';
 import testingRoutes from './routes/testing.routes';
+import compatibilityRoutes from './routes/compatibility.routes';
 import handoffsRoutes from './routes/handoffs.routes';
 import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
@@ -1889,6 +1890,7 @@ app.use('/api/webchat', webchatRoutes);
 app.use('/api/chat', webchatRoutes);
 app.use('/api/status', internalAuthMiddleware, statusRoutes);
 app.use('/api/testing', testingRoutes);
+app.use('/api/testing', compatibilityRoutes);
 app.use('/api/handoffs', handoffsRoutes);
 
 /**

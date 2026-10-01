@@ -954,6 +954,16 @@ export const ai = {
     });
   },
 
+  /** Model Compatibility Test: 11 capability tests (5 basic + 6 GovConnect smartness). Timeout panjang karena 11 panggilan LLM. */
+  async testModelCompatibility(payload: { model_id: string } | { draft: Record<string, any> } | { manual: { base_url: string; api_key: string; model_name: string } }) {
+    return apiFetch('/api/superadmin/ai-models/test-compatibility', {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(payload),
+      timeout: 300000,
+    });
+  },
+
   async listAILaneAssignments() {
     return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-lane-assignments'), {
       headers: getHeaders(),

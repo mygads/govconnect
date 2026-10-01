@@ -32,6 +32,7 @@ import {
   Megaphone,
   Lightbulb,
   Star,
+  FlaskConical,
 } from "lucide-react"
 
 import {
@@ -349,6 +350,12 @@ export function GovConnectSidebar() {
           title: "Cek Koneksi LLM",
           url: "/dashboard/superadmin/llm-check",
           icon: Plug,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Test Kompatibilitas Model",
+          url: "/dashboard/superadmin/model-test",
+          icon: FlaskConical,
           roles: ["superadmin"],
         },
         {
