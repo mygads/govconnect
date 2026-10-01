@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Brain, Database, Loader2, Save, Search, Waypoints } from "lucide-react"
+import { Brain, Database, Loader2, Save } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
@@ -49,7 +49,7 @@ interface AssignmentRow {
   fallback_model?: ModelRow | null
 }
 
-const lanes = ["llm", "embed", "rewrite", "rerank"]
+const lanes = ["llm", "embed"]
 const noFallbackValue = "__none__"
 
 type ConfirmAction = {
@@ -63,10 +63,6 @@ function laneIcon(lane: string) {
   switch (lane) {
     case "embed":
       return <Database className="h-5 w-5" />
-    case "rewrite":
-      return <Search className="h-5 w-5" />
-    case "rerank":
-      return <Waypoints className="h-5 w-5" />
     default:
       return <Brain className="h-5 w-5" />
   }
