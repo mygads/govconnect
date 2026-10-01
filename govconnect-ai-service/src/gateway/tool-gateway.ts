@@ -24,6 +24,7 @@ import type { IdentityLevel } from '../pipeline/identity-ladder';
 import { piiInbound, redactForLog } from './pii-gateway';
 import { idempotencyCheck, idempotencyStore } from '../pipeline/pipeline-store';
 import type { Stage, ToolErrorKind, ToolTraceEntry } from '../pipeline/stage-types';
+import type { QueryRewriteContext } from '../services/query-rewrite.service';
 import crypto from 'crypto';
 import logger from '../utils/logger';
 
@@ -52,6 +53,12 @@ export interface GatewayContext {
   recentSignatures: string[];
   /** Identity ladder level (L0/L1/L2) resolved at ingress. */
   identityLevel?: IdentityLevel;
+  /**
+   * Konteks percakapan untuk query rewriting sebelum RAG retrieval
+   * (query-rewrite.service.ts). Diteruskan ke tool search_knowledge /
+   * search_documents agar query anaforis di-rewrite sebelum embedding.
+   */
+  rewriteContext?: QueryRewriteContext;
   /**
    * P1-4: per-turn tool dedup cache, shared across every gatewayExecute in
    * the turn (including parallel batches). Created once per turn by the
@@ -196,6 +203,7 @@ export async function gatewayExecute(
         isEvaluation: ctx.isEvaluation,
         sideEffectMode: ctx.sideEffectMode,
         abortSignal: ctx.signal,
+        rewriteContext: ctx.rewriteContext,
         // P1-4: per-turn dedup across the whole turn (shared with parallel
         // batches so concurrent identical calls execute once).
         executedTools: ctx.dedupCache,

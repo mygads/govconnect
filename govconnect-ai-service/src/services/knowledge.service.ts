@@ -11,12 +11,18 @@ import { searchKnowledgeByKeywordsDirect, countKnowledgeDocs } from './vector-db
 import { perfSpan, perfMeasure, perfCount } from '../pipeline/perf-timer';
 import { RAGContext, RAGQualityAssessment } from '../types/embedding.types';
 import { classifyProfileQuery } from './micro-llm-matcher.service';
+import type { QueryRewriteContext } from './query-rewrite.service';
 
 interface SearchContext {
   villageId?: string;
   waUserId?: string;
   sessionId?: string;
   channel?: string;
+  /**
+   * Konteks percakapan untuk query rewriting sebelum RAG retrieval
+   * (query-rewrite.service.ts). Opsional — tanpa ini rewrite tidak jalan.
+   */
+  rewriteContext?: QueryRewriteContext;
 }
 
 function normalizeSearchContext(
@@ -29,6 +35,7 @@ function normalizeSearchContext(
       waUserId: villageOrContext.waUserId,
       sessionId: villageOrContext.sessionId,
       channel: villageOrContext.channel || channel,
+      rewriteContext: villageOrContext.rewriteContext,
     };
   }
 
@@ -232,6 +239,7 @@ export async function searchDocuments(
       waUserId: searchContext.waUserId,
       sessionId: searchContext.sessionId,
       channel: searchContext.channel,
+      queryRewriteContext: searchContext.rewriteContext,
     });
 
     if (ragContext.totalResults === 0) {
@@ -475,6 +483,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
     sessionId: searchContext.sessionId,
     channel: searchContext.channel,
     precomputedIntent,
+    queryRewriteContext: searchContext.rewriteContext,
     useQueryExpansion: false,  // Perf: skip LLM query expansion for fallback searches
     useHybridSearch: false,    // Perf: skip hybrid rerank for fallback searches
   }));
@@ -637,6 +646,7 @@ export async function getRAGContext(query: string, categories?: string[], villag
     categories: effectiveCategories,
     sourceTypes: ['knowledge'],
     villageId,
+    queryRewriteContext: searchContext.rewriteContext,
   });
 
   // Track whether DB data was injected for auto-resolution

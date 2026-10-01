@@ -28,6 +28,7 @@ import { searchVectors, recordBatchRetrievals } from './vector-db.service';
 import { hybridSearch, HybridSearchResult } from './hybrid-search.service';
 import { evaluateRAGQuality, recordRAGQualityMetrics } from './rag-quality-gate.service';
 import { perfSpan, perfMeasure, perfCount } from '../pipeline/perf-timer';
+import { rewriteQueryForRAG } from './query-rewrite.service';
 import {
   buildPromptMessages,
   callAIGatewayPrompt,
@@ -711,7 +712,24 @@ export async function retrieveContext(
   } = options as VectorSearchOptions & { useQueryExpansion?: boolean; useHybridSearch?: boolean };
   const retrievalMode = resolveRetrievalMode(requestedRetrievalMode);
 
-  const retrievalCacheKey = getRetrievalCacheKey(query, {
+  // Step -1: Query rewriting SEBELUM retrieval (deterministik, tanpa LLM).
+  // Pertanyaan anaforis/pendek ("kapan selesainya?") digabung dengan konteks
+  // percakapan terakhir (topik aktif + entitas) menjadi query lengkap agar
+  // embedding-nya kaya konteks. Tanpa queryRewriteContext, atau bila query
+  // sudah lengkap, query diteruskan apa adanya (hemat).
+  // Cache key memakai effectiveQuery: konteks berbeda -> kunci berbeda.
+  const rewriteOutcome = rewriteQueryForRAG(query, options.queryRewriteContext);
+  const effectiveQuery = rewriteOutcome.rewritten;
+  if (rewriteOutcome.didRewrite) {
+    logger.info('RAG query rewritten before retrieval', {
+      original: query.substring(0, 80),
+      rewritten: effectiveQuery.substring(0, 120),
+      reason: rewriteOutcome.reason,
+      villageId,
+    });
+  }
+
+  const retrievalCacheKey = getRetrievalCacheKey(effectiveQuery, {
     topK,
     minScore,
     categories,
@@ -725,7 +743,7 @@ export async function retrieveContext(
   const cachedRetrieval = getCachedRetrieval(retrievalCacheKey);
   if (cachedRetrieval) {
     logger.debug('RAG retrieval cache hit', {
-      query: query.substring(0, 40),
+      query: effectiveQuery.substring(0, 40),
       villageId,
     });
     return cachedRetrieval;
@@ -744,12 +762,17 @@ export async function retrieveContext(
     session_id: sessionId,
     channel,
   };
-  const precomputedIntent = (options as any).precomputedIntent as QueryIntentResult | undefined;
-  const fastIntent = precomputedIntent ?? fastClassifyQueryIntent(query);
+  // Bila query di-rewrite, intent dihitung ulang dari effectiveQuery — intent
+  // yang dihitung dari query asli (tanpa konteks) bisa salah untuk query
+  // anaforis. Pre-filter sync ini murah (tanpa I/O).
+  const precomputedIntent = (rewriteOutcome.didRewrite
+    ? undefined
+    : (options as any).precomputedIntent) as QueryIntentResult | undefined;
+  const fastIntent = precomputedIntent ?? fastClassifyQueryIntent(effectiveQuery);
   if (fastIntent && fastIntent.intent === 'skip') {
     endIntent();
     logger.debug('Skipping RAG for simple query', {
-      query: query.substring(0, 30),
+      query: effectiveQuery.substring(0, 30),
       intent: fastIntent.intent
     });
     return {
@@ -763,7 +786,7 @@ export async function retrieveContext(
   const intentPromise = (async (): Promise<QueryIntentResult> => {
     try {
       return precomputedIntent
-        ?? await perfMeasure('rag.intent_llm', () => classifyQueryIntentAsync(query, intentContext));
+        ?? await perfMeasure('rag.intent_llm', () => classifyQueryIntentAsync(effectiveQuery, intentContext));
     } finally {
       endIntent();
     }
@@ -782,8 +805,8 @@ export async function retrieveContext(
   const [queryIntentResult, expandedQuery] = await Promise.all([
     intentPromise,
     useQueryExpansion
-      ? perfMeasure('rag.query_expansion', () => expandQuery(query, expansionContext))
-      : Promise.resolve(query),
+      ? perfMeasure('rag.query_expansion', () => expandQuery(effectiveQuery, expansionContext))
+      : Promise.resolve(effectiveQuery),
   ]);
   const queryIntent = queryIntentResult.intent;
 
@@ -792,7 +815,7 @@ export async function retrieveContext(
   // result is simply discarded).
   if (queryIntent === 'skip') {
     logger.debug('Skipping RAG per async intent classification', {
-      query: query.substring(0, 30),
+      query: effectiveQuery.substring(0, 30),
     });
     return {
       relevantChunks: [],
@@ -816,8 +839,9 @@ export async function retrieveContext(
       : undefined;
 
   logger.info('Starting RAG retrieval', {
-    queryLength: query.length,
+    queryLength: effectiveQuery.length,
     queryIntent,
+    rewroteQuery: rewriteOutcome.didRewrite,
     topK,
     minScore: adjustedMinScore,
     categories: effectiveCategories,
@@ -854,10 +878,13 @@ export async function retrieveContext(
         expansionContext,
       ));
       filteredResults = rerankOutcome.results;
-      retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults, rerankOutcome.appliedMode);
+      retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults, rerankOutcome.appliedMode, {
+        didRewrite: rewriteOutcome.didRewrite,
+        rewrittenQuery: effectiveQuery,
+      });
 
       logger.debug('Hybrid search completed', {
-        query: query.substring(0, 50),
+        query: effectiveQuery.substring(0, 50),
         resultCount: hybridResults.length,
         retrievalMode: rerankOutcome.appliedMode,
         matchTypes: hybridResults.map(r => (r as HybridSearchResult).matchType),
@@ -886,8 +913,8 @@ export async function retrieveContext(
         // Fase 1.8: Structured "why retrieval failed" trace
         logger.warn('RAG vector-only search returned 0 results — failure trace', {
           trace: 'rag_retrieval_failed',
-          query: query.substring(0, 100),
-          expandedQuery: expandedQuery !== query ? expandedQuery.substring(0, 150) : undefined,
+          query: effectiveQuery.substring(0, 100),
+          expandedQuery: expandedQuery !== effectiveQuery ? expandedQuery.substring(0, 150) : undefined,
           queryIntent,
           adjustedMinScore: adjustedMinScore * 0.8,
           topK: rerankCandidateCount,
@@ -914,15 +941,18 @@ export async function retrieveContext(
         expansionContext,
       ));
       filteredResults = rerankOutcome.results;
-      retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults, rerankOutcome.appliedMode);
+      retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults, rerankOutcome.appliedMode, {
+        didRewrite: rewriteOutcome.didRewrite,
+        rewrittenQuery: effectiveQuery,
+      });
     }
 
     if (filteredResults.length === 0) {
       // Fase 1.8: Structured "why retrieval failed" trace for diagnostics
       logger.warn('RAG retrieval returned 0 results — failure trace', {
         trace: 'rag_retrieval_failed',
-        query: query.substring(0, 100),
-        expandedQuery: expandedQuery !== query ? expandedQuery.substring(0, 150) : undefined,
+        query: effectiveQuery.substring(0, 100),
+        expandedQuery: expandedQuery !== effectiveQuery ? expandedQuery.substring(0, 150) : undefined,
         queryIntent,
         adjustedMinScore,
         topK,
@@ -946,7 +976,7 @@ export async function retrieveContext(
     if (ragQuality.level === 'LOW') {
       logger.warn('RAG quality gate: LOW quality retrieval', {
         trace: 'rag_quality_low',
-        query: query.substring(0, 100),
+        query: effectiveQuery.substring(0, 100),
         villageId,
         top1Score: ragQuality.top1Score,
         top2Score: ragQuality.top2Score,
@@ -960,7 +990,7 @@ export async function retrieveContext(
     void recordRAGQualityMetrics({
       villageId,
       channel,
-      queryPreview: query.substring(0, 200),
+      queryPreview: effectiveQuery.substring(0, 200),
       assessment: ragQuality,
     });
 
@@ -972,7 +1002,7 @@ export async function retrieveContext(
     if (failClosed.unreliable) {
       logger.warn('RAG fail-closed: discarding unreliable retrieval', {
         trace: 'rag_fail_closed',
-        query: query.substring(0, 100),
+        query: effectiveQuery.substring(0, 100),
         villageId,
         reason: failClosed.reason,
         discardedCount: filteredResults.length,
@@ -1009,14 +1039,15 @@ export async function retrieveContext(
     const { context: contextString, conflicts } = buildContextString(filteredResults);
 
     // Step 7: Calculate confidence score
-    const confidence = calculateConfidence(filteredResults, query);
+    const confidence = calculateConfidence(filteredResults, effectiveQuery);
 
     const endTime = Date.now();
 
     logger.info('RAG retrieval completed', {
-      query: query.substring(0, 50),
+      query: effectiveQuery.substring(0, 50),
       intent: queryIntent,
-      expanded: expandedQuery !== query,
+      rewroteQuery: rewriteOutcome.didRewrite,
+      expanded: expandedQuery !== effectiveQuery,
       hybrid: useHybridSearch,
       retrievalMode: retrievalDebug?.retrievalMode || retrievalMode,
       totalResults: filteredResults.length,
@@ -1042,7 +1073,7 @@ export async function retrieveContext(
     return response;
   } catch (error: any) {
     logger.error('RAG retrieval failed', {
-      query: query.substring(0, 50),
+      query: effectiveQuery.substring(0, 50),
       error: error.message,
     });
 
@@ -1065,6 +1096,7 @@ function buildHybridRetrievalDebug(
   candidates: HybridSearchResult[],
   selectedResults: VectorSearchResult[],
   retrievalMode: RetrievalMode,
+  rewrite?: { didRewrite: boolean; rewrittenQuery: string },
 ): RAGContext['retrievalDebug'] {
   const selectedById = new Map(
     selectedResults.map((result) => [
@@ -1100,12 +1132,15 @@ function buildVectorRetrievalDebug(
   candidates: VectorSearchResult[],
   selectedResults: VectorSearchResult[],
   retrievalMode: RetrievalMode,
+  rewrite?: { didRewrite: boolean; rewrittenQuery: string },
 ): RAGContext['retrievalDebug'] {
   const selectedIds = new Set(selectedResults.map((result) => result.id));
 
   return {
     hybridUsed: false,
     retrievalMode,
+    rewroteQuery: rewrite?.didRewrite,
+    rewrittenQuery: rewrite?.rewrittenQuery,
     candidates: candidates.slice(0, 10).map((candidate, index) => ({
       id: candidate.id,
       title: candidate.source,
