@@ -18,7 +18,7 @@ import type { ToolCallResult, ExecutedToolCall } from '../services/agent/tool-ex
 import { gatewayExecute, type GatewayContext } from '../gateway/tool-gateway';
 import {
   INTENT_SLOT_KEY, nextMissingSlot, isCollectComplete, renderVerifySummary,
-  isCancellation, isCorrectionRequest,
+  isCancellation, isCorrectionRequest, extractSlotsDeterministic, mergeSlots,
   buildPendingMutation, type SlotIntent, type Slots,
 } from './slot-fsm';
 import { isPendingMutation, type PendingMutation } from './confirmation';
@@ -30,6 +30,7 @@ import {
 import { STAGE_TOOL_ALLOWLIST, isParallelizable, TOOL_PARALLEL_LIMIT, runWithConcurrencyLimit } from '../gateway/tool-policy';
 import { DETERMINISTIC_ONLY_STAGES } from './stage-graph';
 import { piiInbound, piiOutbound, redactForLog } from '../gateway/pii-gateway';
+import { recordHandoffFailure } from '../services/improvement-loop.service';
 import { identityDenialCopy } from './identity-ladder';
 import { buildPrompt } from './prompt-builder';
 import { DEFAULT_IDENTITY, type VillageIdentity } from '../services/village-identity.service';
@@ -590,10 +591,38 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
           toolsUsed: [], toolTrace: [], degraded: false,
         });
       }
+      // P1-10: apply the stated correction in the SAME turn. The old code
+      // only asked "bagian mana?" and DROPPED the new value the citizen had
+      // already given ("salah, lokasinya di jalan sudirman" → the new
+      // location was lost). Now the FSM extracts deterministically and
+      // merges — the correction always lands on the right slot (explicit
+      // mention wins; filled unrelated slots are never clobbered), then:
+      // complete → re-mint the pending mutation on corrected data and
+      // re-show the deterministic VERIFY summary; still missing → COLLECT.
       if (isCorrectionRequest(input.message)) {
+        const corrected = extractSlotsDeterministic(input.message, intent, null, strSlots);
+        const { slots: mergedSlots, errors: mergeErrors } = mergeSlots(intent, strSlots, corrected);
+        if (mergeErrors.length > 0) {
+          logger.warn('[staged-agent] correction values rejected by slot validation', {
+            traceId: input.ctx.traceId, errors: mergeErrors,
+          });
+        }
+        input.ctx.slots = { ...mergedSlots, [INTENT_SLOT_KEY]: intent };
+        const merged = input.ctx.slots as unknown as Slots;
+        const stillMissing = nextMissingSlot(intent, merged);
+        if (!stillMissing) {
+          const mutation = buildPendingMutation(intent, merged);
+          if (mutation) input.ctx.slots.pendingTool = mutation;
+          const { text: verified } = verifyAnswer(renderVerifySummary(intent, merged), []);
+          return finish({
+            terminalState: 'SUCCEEDED', response: verified,
+            stage: 'VERIFY', intent: 'correction_applied',
+            toolsUsed: [], toolTrace: [], degraded: false,
+          });
+        }
         return finish({
           terminalState: 'SUCCEEDED',
-          response: 'Baik, bagian mana yang ingin diperbaiki? Sebutkan saja, misalnya lokasinya atau deskripsinya.',
+          response: `Baik, perbaikannya sudah saya catat. Masih kurang satu info: ${stillMissing.prompt}`,
           guidanceText: 'Menunggu koreksi warga.',
           stage: 'COLLECT', intent: 'correction',
           toolsUsed: [], toolTrace: [], degraded: false,

@@ -72,6 +72,11 @@ import { canProcessVillageAI } from './ai-wallet.service';
 import { holdMessageForWallet } from './held-message-client.service';
 import { finishAiBillingTurn, startAiBillingTurn, type AiBillingTurnHandle } from './ai-turn-billing.service';
 import { recordResolution, type ResolutionType } from './ai-resolution-billing.service';
+// Cross-session memory: lazy session-end detection → auto-save session summary.
+// Fail-open & never throws; skipped outside production (eval/knowledge_test/shadow).
+import {
+  checkSessionEnd, noteSessionTurn, summarizeTurnForSession, TICKET_REF_RE,
+} from './session-summary.service';
 import { analyzeIncomingMedia } from './media-analysis.service';
 
 // ── Decomposed module imports ──
@@ -1239,6 +1244,15 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
   incrementActiveProcessing();
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange, messageId, batchedMessageIds } = input;
+
+  // Cross-session memory: lazy session-end detection. Bila turn terakhir user
+  // lebih lama dari SESSION_IDLE_TIMEOUT_MS, session lama dianggap berakhir
+  // dan ringkasannya di-save (fail-open, sekali per session). Dijalankan di
+  // bawah user lock (processUnifiedMessage) agar serial per user.
+  const trackSession = !isEvaluation && (sideEffectMode ?? 'production') === 'production';
+  if (trackSession && userId) {
+    checkSessionEnd(userId);
+  }
 
   // F7: Guard untuk pesan kosong/whitespace-only — respons graceful langsung,
   // tidak masuk full agent pipeline yang akan error.
@@ -2728,6 +2742,25 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         userId, villageId, channel, traceId, billingGroupId,
         result: analyticsResult, resolvedMessageId,
       }).catch(() => undefined);
+    }
+    // Cross-session memory: snapshot turn ini untuk auto-save saat session
+    // berakhir (lazy detection di checkSessionEnd pada turn berikutnya).
+    // v1 memakai conversationSummary deterministik dari EnhancedContext
+    // (tanpa transcript mentah); fallback ke ringkasan hasil turn.
+    // Fail-open: tidak pernah melempar ke alur pesan.
+    if (trackSession && analyticsResult) {
+      const ectx = getEnhancedContext(userId);
+      const snapshot = (ectx.conversationSummary ?? '').trim()
+        || summarizeTurnForSession(analyticsResult);
+      noteSessionTurn({
+        userKey: userId,
+        wa_user_id: userId,
+        village_id: villageId ?? undefined,
+        summary: snapshot,
+        appendSummary: false,
+        hasOutcome: ectx.hasCompletedAction
+          || TICKET_REF_RE.test(analyticsResult.response ?? ''),
+      });
     }
     decrementActiveProcessing();
   }

@@ -63,7 +63,7 @@ function interactiveForTurn(turn: {
 import {
   extractSlotsDeterministic, mergeSlots, classifySlotIntent, isServiceConfirmation,
   nextMissingSlot, isCollectComplete, renderVerifySummary, isCancellation,
-  isCorrectionRequest,
+  isCorrectionRequest, isAnaphoricLocation,
   INTENT_SLOT_KEY, COLLECT_ATTEMPTS_KEY, type SlotIntent, type Slots,
 } from './slot-fsm';
 import {
@@ -90,6 +90,11 @@ import {
 import {
   recordResolution, type ResolutionType,
 } from '../services/ai-resolution-billing.service';
+// Cross-session memory: lazy session-end detection → auto-save session summary.
+// Fail-open & never throws; skipped outside production (shadow/eval/knowledge_test).
+import {
+  checkSessionEnd, noteSessionTurn, summarizeTurnForSession, TICKET_REF_RE,
+} from '../services/session-summary.service';
 
 /**
  * Idempotency key (P1-2): scoped per tenant+user+channel, then message
@@ -782,8 +787,14 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
 
       // Tell the extractor which slot we're asking for so free-text answers
       // (e.g. the description) can be captured deterministically.
+      // P1-10: pass the already-recorded slots so the extractor never
+      // clobbers a filled slot with a generic keyword hit from an
+      // unrelated answer (e.g. a description containing "jalan" must not
+      // overwrite the recorded location).
       const expectedSlot = nextMissingSlot(intent, ctx.slots as unknown as Slots)?.name ?? null;
-      const extracted = extractSlotsDeterministic(input.message, intent, expectedSlot);
+      const extracted = extractSlotsDeterministic(
+        input.message, intent, expectedSlot, ctx.slots as unknown as Slots,
+      );
       const { slots, errors } = mergeSlots(intent, ctx.slots as unknown as Slots, extracted);
       ctx.slots = { ...slots, [INTENT_SLOT_KEY]: intent, [COLLECT_ATTEMPTS_KEY]: attempts };
       if (errors.length > 0) {
@@ -933,10 +944,26 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
         const filled = Object.entries(ctx.slots as unknown as Slots)
           .filter(([k]) => !k.startsWith('_'))
           .map(([k, v]) => `${k}=${v}`).join(', ') || '(belum ada)';
+        // P1-10: mark the missing slot as wajib/opsional so the question
+        // copy matches the FSM's required-vs-optional contract.
         turnFacts.push(
           `[Slot status] terisi: ${filled}; ` +
-          (missing ? `yang masih kurang: ${missing.label} — tanyakan: ${missing.prompt}` : 'semua slot wajib terisi'),
+          (missing ? `yang masih kurang: ${missing.label} (${missing.required ? 'wajib' : 'opsional'}) — tanyakan: ${missing.prompt}` : 'semua slot wajib terisi'),
         );
+        // P1-10: anaphoric location ("di sana"/"di situ") can never be
+        // stored — ask for a specific location instead of looping the
+        // generic prompt.
+        if (
+          intent === 'complaint' &&
+          isAnaphoricLocation(input.message) &&
+          !(ctx.slots as unknown as Slots).location
+        ) {
+          turnFacts.push(
+            '[SISTEM] Warga menjawab lokasi dengan kata ganti ("di sana"/"di situ") yang tidak bisa dipetakan — ' +
+            'minta lokasi SPESIFIK: nama jalan/dusun/RT-RW atau patokan (contoh: depan balai desa). ' +
+            'Jangan menyimpan kata ganti tersebut sebagai lokasi.',
+          );
+        }
       }
     }
     // 2b. FAQ cache: informational answers only, lookup before the agent.
@@ -1151,6 +1178,15 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
   // billing state (P1-1).
   const billable = (input.sideEffectMode ?? 'production') === 'production' && !input.isEvaluation;
   const villageId = input.villageId ?? null;
+
+  // Cross-session memory: lazy session-end detection. Bila turn terakhir user
+  // lebih lama dari SESSION_IDLE_TIMEOUT_MS, session lama dianggap berakhir
+  // dan ringkasannya di-save (fail-open, sekali per session).
+  const trackSession = billable;
+  if (trackSession && input.userId) {
+    checkSessionEnd(input.userId);
+  }
+
   const messageId = input.messageId ?? `${input.channel}:${input.userId}:${Date.now().toString(36)}`;
   const billingGroupId = villageId
     ? `msg:${villageId}:${messageId}`
@@ -1168,7 +1204,7 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       })
     : null;
 
-  let result: ProcessMessageResult;
+  let result: ProcessMessageResult | undefined;
   try {
     result = await processMessageV2Inner(input);
 
@@ -1219,6 +1255,23 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     // R9 anomaly detection is wired inside finalizeAiBillingTurn (fire-and-forget).
     if (billingTurn) {
       await finishAiBillingTurn(billingTurn).catch(() => undefined);
+    }
+
+    // Cross-session memory: snapshot turn ini untuk auto-save saat session
+    // berakhir (lazy detection di checkSessionEnd pada turn berikutnya).
+    // Fail-open: tidak pernah melempar ke alur pesan.
+    if (trackSession && result) {
+      const toolsUsed: string[] = result.metadata?.toolsUsed ?? [];
+      noteSessionTurn({
+        userKey: input.userId,
+        wa_user_id: input.userId,
+        village_id: input.villageId ?? undefined,
+        summary: summarizeTurnForSession(result),
+        appendSummary: true,
+        hasOutcome:
+          TICKET_REF_RE.test(result.response ?? '') ||
+          toolsUsed.some((t) => t.startsWith('create_')),
+      });
     }
   }
 
