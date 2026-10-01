@@ -2272,7 +2272,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         : undefined,
     ].filter(Boolean).join('\n\n') || undefined;
 
-    const [savedProfile, memorySummary, sentiment, villageProfile] = await Promise.all([
+    const [savedProfile, memorySummary, sentiment, villageProfile, lastInteractionBlock] = await Promise.all([
       getAutoFillSuggestionsWithFallback(userId, resolvedVillageId), // W5: village-scoped
       sideEffectMode === 'knowledge_test'
         ? Promise.resolve(undefined)
@@ -2291,7 +2291,21 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         channel,
       }),
       resolvedVillageId ? getVillageProfileSummary(resolvedVillageId) : Promise.resolve(null),
+      // Cross-session memory (additive): last interaction summary for personalization.
+      // Never throws; returns undefined when no recent interaction.
+      sideEffectMode === 'knowledge_test'
+        ? Promise.resolve(undefined)
+        : import('../services/last-interaction.service').then(
+            ({ buildLastInteractionContext }) =>
+              buildLastInteractionContext(userId, resolvedVillageId),
+          ).catch(() => undefined),
     ]);
+    // Merge last-interaction block into memory summary (additive).
+    const enrichedMemorySummary = lastInteractionBlock
+      ? memorySummary
+        ? `${memorySummary}\n\n${lastInteractionBlock}`
+        : lastInteractionBlock
+      : memorySummary;
     syncCrossChannelContext(userId, agentChannel, sideEffectMode, !!isEvaluation, savedProfile);
     const sentimentContext = getSentimentContext(sentiment);
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
@@ -2320,7 +2334,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       memorySummary: enrichMemoryWithPromises(
         userId,
         villageId,
-        enrichMemoryWithCrossChannel(userId, memorySummary),
+        enrichMemoryWithCrossChannel(userId, enrichedMemorySummary),
         sanitizedMessage,
       ),
       routingDecision,

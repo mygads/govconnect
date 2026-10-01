@@ -14,6 +14,7 @@
 
 import crypto from 'crypto';
 import { routeMessage } from './stage-router';
+import type { Stage } from './stage-types';
 import { assessStage, shouldSuggestHandoff } from './stage-assessor';
 import { runStagedTurn, createPipelineContext, stripSystemMarkers } from './staged-agent';
 import { normalizeWithGlossary, loadGlossary } from './glossary';
@@ -60,7 +61,8 @@ function interactiveForTurn(turn: {
 }
 import {
   extractSlotsDeterministic, mergeSlots, classifySlotIntent, isServiceConfirmation,
-  nextMissingSlot, isCollectComplete, renderVerifySummary,
+  nextMissingSlot, isCollectComplete, renderVerifySummary, isCancellation,
+  isCorrectionRequest,
   INTENT_SLOT_KEY, COLLECT_ATTEMPTS_KEY, type SlotIntent, type Slots,
 } from './slot-fsm';
 import {
@@ -350,6 +352,35 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       audit('INGRESS', 'turn_state_restored', { stage: prior.stage });
     }
 
+    // Confidence-clarification answer handling (additive): jika turn sebelumnya
+    // meminta klarifikasi, parse jawaban user dan route ke stage yang dipilih.
+    // Jika tidak dikenali, lanjut flow normal (fail-open).
+    let clarificationChosenStage: string | null = null;
+    if (ctx.slots['__clarification_pending'] === true) {
+      const candidates = ctx.slots['__clarification_candidates'] as
+        Array<{ label: string; stage: string }> | undefined;
+      // Bersihkan state klarifikasi agar tidak loop.
+      delete ctx.slots['__clarification_pending'];
+      delete ctx.slots['__clarification_candidates'];
+      if (candidates && candidates.length > 0) {
+        try {
+          const { parseClarificationAnswer } = await import(
+            '../services/confidence-clarification.service'
+          );
+          const chosen = parseClarificationAnswer(input.message, candidates);
+          if (chosen && chosen !== 'OTHER') {
+            audit('TRIAGE', 'clarification_answered', { chosen });
+            clarificationChosenStage = chosen;
+          } else if (chosen === 'OTHER') {
+            audit('TRIAGE', 'clarification_other', {});
+          }
+          // Jika null (tidak dikenali) -> fail-open, lanjut normal.
+        } catch {
+          // Fail-open.
+        }
+      }
+    }
+
     // 0b. R1: Triage list id binding. When the citizen taps a category in the
     // interactive triage list, channel-service forwards the row id as buttonId.
     // Bind it deterministically to the category instead of re-classifying text.
@@ -572,6 +603,17 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
 
     // 1. Deterministic routing.
     let decision = routeMessage({ message: input.message });
+    // Confidence-clarification: jika user menjawab pertanyaan klarifikasi,
+    // route langsung ke stage pilihan (skip assessor).
+    if (clarificationChosenStage) {
+      decision = {
+        stage: clarificationChosenStage as Stage,
+        source: 'deterministic',
+        confidence: 0.95,
+        reasons: ['clarification_answer'],
+        hints: {},
+      };
+    }
     if (confirmation.kind === 'execute') {
       // Bound confirm_send → skip fresh routing, go straight to EXECUTE.
       // For webchat text confirmation, mark confirmed so the EXECUTE stage
@@ -595,10 +637,48 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
         confidence: 1,
         reasons: ['affirmative_text_reconfirm'],
       };
+    } else if (
+      // P1-11: anaphoric question during VERIFY. The prior turn left the
+      // citizen at VERIFY with a minted pending mutation, and this message
+      // is not a button click, explicit confirmation, cancellation, or
+      // correction — most likely a question about the item under
+      // verification ("kapan selesainya?"). The assessor (LLM) decides:
+      // stay in VERIFY (answer with the pending context, mutation kept) or
+      // re-route as a genuinely new topic. Never executes, never drops.
+      prior?.stage === 'VERIFY' &&
+      pendingForConfirm !== null &&
+      !isCancellation(input.message) &&
+      !isCorrectionRequest(input.message)
+    ) {
+      const assessed = await assessStage({
+        message: input.message,
+        fromStage: 'VERIFY',
+        verifyPending: true,
+      });
+      ctx.assessorConfidences.push(assessed.confidence);
+      audit('VERIFY', 'verify_interruption_assessed', {
+        stage: assessed.stage,
+        confidence: assessed.confidence,
+        reasons: assessed.reasons,
+      });
+      if (assessed.stage === 'VERIFY') {
+        decision = {
+          stage: 'VERIFY',
+          source: assessed.source,
+          confidence: assessed.confidence,
+          reasons: assessed.reasons,
+          hints: { verifyQuestion: true },
+        };
+      } else {
+        // Assessor judged it a genuinely new topic: leave `decision` as the
+        // routeMessage verdict (TRIAGE + needsAssessor) so the normal fuzzy
+        // assessment below classifies it into COLLECT / INFORMATION /
+        // STATUS_CHECK / HANDOFF exactly as if VERIFY had never interrupted.
+      }
     }
 
     // 2. Fuzzy transition → assessor (micro-LLM or deterministic fallback).
-    if (decision.hints?.needsAssessor) {
+    if (decision.hints?.needsAssessor && !clarificationChosenStage) {
       const hasFuzzy = transitionsFrom(decision.stage).some((t) => t.kind === 'fuzzy');
       if (hasFuzzy) {
         // Active-COLLECT awareness: if a complaint/service-request is mid-collection
@@ -620,6 +700,54 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
           };
         } else {
           decision = assessed;
+
+          // Confidence-based clarification (additive): jika assessor ragu
+          // (confidence < 0.6 tapi >= 0.3), jangan ngarang — tanya klarifikasi
+          // SPESIFIK dengan opsi konkret. Tidak mengubah flow jika confidence tinggi.
+          // Skip jika: handoff, emergency, atau ada active COLLECT (jangan interupsi).
+          const skipClarify =
+            decision.stage === 'HANDOFF' ||
+            decision.stage === 'EMERGENCY' ||
+            collectActive;
+          if (!skipClarify && decision.stage !== 'TRIAGE') {
+            try {
+              const { shouldClarify } = await import('../services/confidence-clarification.service');
+              const candidates = transitionsFrom(decision.stage)
+                .filter((t) => t.kind === 'fuzzy')
+                .map((t) => t.to)
+                .slice(0, 2);
+              const clar = shouldClarify(assessed.confidence, decision.stage, candidates);
+              if (clar.needed && clar.question && clar.candidates) {
+                // Simpan kandidat di slots agar jawaban user bisa di-parse turn berikutnya.
+                ctx.slots['__clarification_candidates'] = clar.candidates;
+                ctx.slots['__clarification_pending'] = true;
+                // Return early dengan pertanyaan klarifikasi.
+                // Simpan turn state agar kandidat tersedia di turn berikutnya.
+                try {
+                  const { saveTurnState } = await import('./pipeline-store');
+                  await saveTurnState(tenantId, input.userId, {
+                    stage: 'TRIAGE',
+                    slots: ctx.slots,
+                    assessorConfidences: ctx.assessorConfidences,
+                  }, channel);
+                } catch {
+                  // Best effort.
+                }
+                return {
+                  success: true,
+                  response: clar.question,
+                  intent: 'clarification',
+                  metadata: {
+                    processingTimeMs: Date.now() - started,
+                    hasKnowledge: false,
+                    agentMode: 'deterministic_fact_router',
+                  },
+                };
+              }
+            } catch {
+              // Clarification gagal -> lanjut flow normal (fail-open, additive).
+            }
+          }
         }
       }
     }
