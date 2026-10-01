@@ -4,6 +4,7 @@
  */
 
 import logger from '../utils/logger';
+import { assertNotAborted } from '../pipeline/abort-guard';
 import {
   requestServiceRequestEditToken,
   buildServiceInfoContext,
@@ -368,13 +369,16 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
 
 // ==================== SERVICE REQUEST EDIT ====================
 
-export async function handleServiceRequestEditLink(userId: string, channel: ChannelType, llmResponse: any): Promise<HandlerResult> {
+export async function handleServiceRequestEditLink(userId: string, channel: ChannelType, llmResponse: any, opts?: { signal?: AbortSignal }): Promise<HandlerResult> {
   const { request_number } = llmResponse.fields || {};
 
   if (!request_number) {
     return llmResponse.reply_text || 'Baik Pak/Bu, link tersebut sudah tidak berlaku. Apakah Bapak/Ibu ingin kami kirimkan link pembaruan yang baru?';
   }
 
+  // P1-5: fail-closed — no write after the turn was aborted. Minting an
+  // edit token writes a token row in case-service.
+  assertNotAborted(opts?.signal, 'mint_service_request_edit_token');
   const tokenResult = await requestServiceRequestEditToken(request_number, buildChannelParams(channel, userId));
 
   if (!tokenResult.success) {

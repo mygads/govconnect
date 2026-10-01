@@ -19,6 +19,7 @@
  */
 
 import logger from '../utils/logger';
+import { createTurnAbortController } from '../pipeline/abort-guard';
 import { formatVillageDateTimeForPrompt } from '../utils/wib-datetime';
 import { sanitizeUserInput } from './context-builder.service';
 import { getVillageProfileSummary } from './knowledge.service';
@@ -115,6 +116,12 @@ import {
   tryHandleServiceListingShortcut,
   type FastIntentDecision,
 } from './pre-agent-state-router.service';
+
+// P1-5: safety bound for a v1 turn. When exceeded, the turn is marked
+// aborted and every mutation path fails closed (no write). 90s is
+// deliberately generous — normal turns finish in seconds; this only
+// fires on pathological/hung turns.
+const V1_TURN_ABORT_TIMEOUT_MS = 90_000;
 
 // ── Barrel re-exports (backward compatibility) ──
 export type { ChannelType } from './ump-formatters';
@@ -1445,6 +1452,13 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     hasMedia: !!mediaUrl,
   });
   
+  // P1-5: per-turn abort controller for the v1 pipeline. The signal is
+  // threaded into the pre-agent router and mutation handlers; every
+  // mutation path re-checks it immediately before writing and fails
+  // closed (no write) when the turn was aborted. The timer also bounds
+  // pathological turns so a hung turn cannot land writes indefinitely.
+  const turnAbort = createTurnAbortController(V1_TURN_ABORT_TIMEOUT_MS);
+
   try {
     const resolvedVillageId = villageId;
     const agentChannel = channel === 'webchat' ? 'webchat' : 'whatsapp';
@@ -1859,6 +1873,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
           startTime,
           sideEffectMode,
           runWithMicroBudget: withMicroNluBudget,
+          signal: turnAbort.signal,
         });
     if (pendingOfferResult) {
       routingOutcome = {
@@ -1897,6 +1912,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
           runWithMicroBudget: withMicroNluBudget,
           tracker,
           notifyStage,
+          signal: turnAbort.signal,
         });
     if (latePreAgentResult) {
       const guardrail = latePreAgentResult.metadata.guardrail;
@@ -2594,6 +2610,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       error: error.message,
     });
   } finally {
+    turnAbort.dispose();
     const analyticsResult = finalResult as ProcessMessageResult | null;
     if (!isEvaluation && sideEffectMode !== 'knowledge_test' && analyticsResult && analyticsResult.intent !== 'SPAM') {
       await aiAnalyticsService.recordInteractionEvent({

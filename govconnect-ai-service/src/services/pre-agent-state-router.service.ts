@@ -5,6 +5,7 @@ import {
   getUserHistory,
 } from './case-client.service';
 import { updateConversationUserProfile } from './channel-client.service';
+import { assertNotAborted } from '../pipeline/abort-guard';
 import { rememberMemoryEvent } from './hybrid-memory.service';
 import { handleCancellationRequest, handleComplaintCreation, handlePendingAddressConfirmation } from './complaint-handler';
 import { classifyConfirmation } from './confirmation-classifier.service';
@@ -1424,6 +1425,8 @@ interface PendingOfferInput {
   startTime: number;
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   runWithMicroBudget: MicroBudgetRunner;
+  /** P1-5: per-turn abort signal — checked before every mutation write. */
+  signal?: AbortSignal;
 }
 
 export async function tryHandlePendingOffers(
@@ -1438,6 +1441,7 @@ export async function tryHandlePendingOffers(
     startTime,
     sideEffectMode,
     runWithMicroBudget,
+    signal,
   } = input;
 
   const pendingCancel = await getPendingCancelConfirmationWithFallback(userId);
@@ -1462,6 +1466,8 @@ export async function tryHandlePendingOffers(
       setPendingCancelConfirmation(userId, recoveredCancel);
 
       if (recoveredCancel.type === 'laporan') {
+        // P1-5: fail-closed — no write after the turn was aborted.
+        assertNotAborted(signal, 'cancel_complaint');
         const result = await cancelComplaint(
           recoveredCancel.id,
           buildChannelParams(channel, userId),
@@ -1478,6 +1484,8 @@ export async function tryHandlePendingOffers(
         });
       }
 
+      // P1-5: fail-closed — no write after the turn was aborted.
+      assertNotAborted(signal, 'cancel_service_request');
       const serviceResult = await cancelServiceRequest(
         recoveredCancel.id,
         buildChannelParams(channel, userId),
@@ -1653,7 +1661,7 @@ export async function tryHandlePendingOffers(
         ...(pendingEmergency.village_id ? { village_id: pendingEmergency.village_id } : {}),
       },
       reply_text: '',
-    }, message);
+    }, message, undefined, { signal });
     const normalized = normalizeHandlerResult(complaintResult);
     return buildGuardResult({
       startTime,
@@ -1693,6 +1701,8 @@ interface LatePreAgentInput {
   runWithMicroBudget: MicroBudgetRunner;
   tracker: TrackerLike;
   notifyStage: (stage: string, progress: number) => void;
+  /** P1-5: per-turn abort signal — checked before every mutation write. */
+  signal?: AbortSignal;
 }
 
 export async function tryHandleLatePreAgentState(
@@ -1709,6 +1719,7 @@ export async function tryHandleLatePreAgentState(
     runWithMicroBudget,
     tracker,
     notifyStage,
+    signal,
   } = input;
 
   const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
@@ -1830,6 +1841,8 @@ export async function tryHandleLatePreAgentState(
       notifyStage('preparing', 80);
 
       if (recentCode.startsWith('LAP-')) {
+        // P1-5: fail-closed — no write after the turn was aborted.
+        assertNotAborted(signal, 'cancel_complaint');
         const result = await cancelComplaint(recentCode, buildChannelParams(channel, userId), undefined);
         tracker.complete();
         return buildGuardResult({
@@ -1841,6 +1854,8 @@ export async function tryHandleLatePreAgentState(
         });
       }
 
+      // P1-5: fail-closed — no write after the turn was aborted.
+      assertNotAborted(signal, 'cancel_service_request');
       const serviceResult = await cancelServiceRequest(recentCode, buildChannelParams(channel, userId), undefined);
       tracker.complete();
       return buildGuardResult({
@@ -1893,6 +1908,7 @@ export async function tryHandleLatePreAgentState(
       pendingConfirm,
       channel,
       mediaUrl,
+      { signal },
     );
     if (confirmResult) {
       return buildGuardResult({
@@ -1957,7 +1973,7 @@ export async function tryHandleLatePreAgentState(
               deskripsi: pendingAddr.deskripsi,
               alamat: corrected.alamat,
             },
-          }, message);
+          }, message, undefined, { signal });
           const normalized = normalizeHandlerResult(complaintResult);
           return buildGuardResult({
             startTime,
@@ -2000,7 +2016,7 @@ export async function tryHandleLatePreAgentState(
           deskripsi: pendingAddr.deskripsi,
           alamat: decision.alamat,
         },
-      }, message);
+      }, message, undefined, { signal });
       const normalized = normalizeHandlerResult(complaintResult);
       return buildGuardResult({
         startTime,
@@ -2154,7 +2170,7 @@ export async function tryHandleLatePreAgentState(
               alamat: pendingComplaint.alamat,
               rt_rw: pendingComplaint.rt_rw,
             },
-          }, message);
+          }, message, undefined, { signal });
           const normalized = normalizeHandlerResult(complaintResult);
           return buildGuardResult({
             startTime,
@@ -2189,7 +2205,7 @@ export async function tryHandleLatePreAgentState(
             alamat: pendingComplaint.alamat,
             rt_rw: pendingComplaint.rt_rw,
           },
-        }, message);
+        }, message, undefined, { signal });
         const normalized = normalizeHandlerResult(complaintResult);
         return buildGuardResult({
           startTime,
@@ -2496,6 +2512,8 @@ export async function tryHandleLatePreAgentState(
     if (decision === 'yes') {
       clearPendingCancelConfirmation(userId);
       if (pendingCancel.type === 'laporan') {
+        // P1-5: fail-closed — no write after the turn was aborted.
+        assertNotAborted(signal, 'cancel_complaint');
         const result = await cancelComplaint(
           pendingCancel.id,
           buildChannelParams(channel, userId),
@@ -2526,6 +2544,8 @@ export async function tryHandleLatePreAgentState(
         });
       }
 
+      // P1-5: fail-closed — no write after the turn was aborted.
+      assertNotAborted(signal, 'cancel_service_request');
       const serviceResult = await cancelServiceRequest(
         pendingCancel.id,
         buildChannelParams(channel, userId),
@@ -2660,7 +2680,7 @@ export async function tryHandleLatePreAgentState(
       intent: 'EDIT_SERVICE_REQUEST',
       fields: { request_number: code },
       reply_text: '',
-    });
+    }, { signal });
     const normalized = normalizeHandlerResult(editReply);
 
     tracker.complete();
