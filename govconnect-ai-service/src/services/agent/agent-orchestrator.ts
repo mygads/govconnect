@@ -141,9 +141,25 @@ const ACTION_PRIORITY_TOOLS = new Set<AgentToolName>([
   'cancel_request',
 ]);
 
-function isMutationTool(toolName: AgentToolName): boolean {
+export function isMutationTool(toolName: AgentToolName): boolean {
   return !READ_ONLY_TOOLS.has(toolName);
 }
+
+/**
+ * P1-9: graceful copy for turns where the LLM returned empty/null output.
+ *
+ * The turn degrades to this honest, non-empty reply INSTEAD of triggering
+ * a full mutation-loop retry (the AI retry queue re-runs the whole agent
+ * loop; the 10-minute retry interval exceeds the 5-minute idempotency TTL,
+ * so a mutation executed before the empty output could run twice).
+ *
+ * INVARIANT: this copy must NEVER contain any GENERIC_TIMEOUT_PHRASES
+ * (see unified-message-processor.service.ts) — otherwise
+ * isProcessingFailure() would still classify the turn as failed and the
+ * retry would be enqueued anyway.
+ */
+export const EMPTY_LLM_FALLBACK_COPY =
+  'Maaf Pak/Bu, saya tidak bisa memproses pesan Anda saat ini. Silakan coba lagi beberapa saat lagi, atau datang langsung ke kantor desa pada jam kerja.';
 
 const TOOL_REPLY_BASE_PRIORITY: Partial<Record<AgentToolName, number>> = {
   create_service_request: 5000,
@@ -507,7 +523,11 @@ function buildMixedIntentLoopExhaustedReply(
 
   return partialReply
     ? `${partialReply}\n\nMaaf Pak/Bu,${suffix} ${retryHint}`
-    : '';
+    // P1-9: never return empty here. An empty replyText was classified as a
+    // processing failure (isProcessingFailure → AGENT_EMPTY_REPLY) and
+    // triggered a FULL mutation-loop retry via the AI retry queue — risking
+    // double-executed mutations. Degrade gracefully instead.
+    : EMPTY_LLM_FALLBACK_COPY;
 }
 
 function getSufficientServiceInfoStopReason(
@@ -728,11 +748,14 @@ function buildAgentFallbackReply(userMessage: string, toolsUsed: string[] = []):
     return 'Maaf Pak/Bu, informasinya belum berhasil kami temukan sekarang. Untuk sementara, silakan datang ke kantor desa pada jam kerja atau kirim pertanyaan yang lebih spesifik ya.';
   }
 
-  // No grounding tool ran AND no real answer — this is a processing failure
-  // (LLM timeout/down, loop exhausted). Return EMPTY so isProcessingFailure()
-  // in the processor catches it and we stay silent + retry instead of sending
-  // a hollow "sorry, try again" apology to the resident.
-  return '';
+  // P1-9: no grounding tool ran AND no real answer — this is an LLM
+  // empty-output turn (timeout/down, loop exhausted). It must NOT return
+  // EMPTY: an empty replyText is classified as a processing failure and
+  // triggers a FULL mutation-loop retry via the AI retry queue, which can
+  // double-execute mutations (retry interval 10 min > idempotency TTL
+  // 5 min). Degrade gracefully with an honest, non-empty copy instead —
+  // the gateway already performed its one light non-mutating LLM retry.
+  return EMPTY_LLM_FALLBACK_COPY;
 }
 
 function detectAmbiguousIntent(userMessage: string, heuristicTools: AgentToolName[], allowedToolNames: AgentToolName[]): boolean {
