@@ -646,7 +646,8 @@ export async function getRAGContext(query: string, categories?: string[], villag
     categories: effectiveCategories,
     sourceTypes: ['knowledge'],
     villageId,
-    queryRewriteContext: searchContext.rewriteContext,
+    // getRAGContext tidak punya konteks percakapan caller (standalone
+    // convenience fn): rewrite tidak jalan di sini (fail-safe).
   });
 
   // Track whether DB data was injected for auto-resolution

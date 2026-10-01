@@ -70,11 +70,11 @@ const ANAPHORIC_WORDS = /\b(ini|itu|tersebut|dia|beliau|mereka|nya)\b/i;
  * Kata berakhiran "-nya" yang anaforis ("selesainya", "biayanya").
  * Dikecualikan kata yang "-nya"-nya bukan klitika anafora.
  */
-const NYA_EXCLUSIONS = new Set(['punya', 'hanya']);
+const NYA_EXCLUSIONS = new Set(['punya', 'hanya', 'tanya']);
 
 /** Interogatif telanjang (<=3 kata) yang mau tak mau merujuk ke topik aktif. */
 const BARE_INTERROGATIVES =
-  /^(kapan|berapa|gimana|bagaimana|kenapa|mengapa|kok|apakah|dimana|sudah|belum|jadi)\b/i;
+  /^(kapan|berapa|gimana|bagaimana|kenapa|mengapa|kok|apakah|dimana|di mana|sudah|belum|jadi)\b/i;
 const BARE_INTERROGATIVE_MAX_WORDS = 3;
 
 /** Referensi nomor tiket/layanan: LAP-xxx, LAY-xxx, TMP-xxx, SRV-xxx, REQ-xxx. */
