@@ -33,6 +33,7 @@ import { clearRetrievalCache } from '../services/rag.service';
 import { clearKnowledgeDocCountCache } from '../services/knowledge.service';
 import { clearCache, invalidateVillageCache } from '../services/response-cache.service';
 import { semanticCacheInvalidate } from '../pipeline/pipeline-store';
+import { faqCacheInvalidate } from '../services/faq-cache.service';
 import { withAiBillingTurn } from '../services/ai-turn-billing.service';
 
 const router = Router();
@@ -202,6 +203,8 @@ router.post('/', async (req: Request, res: Response) => {
       if (resolvedScope.villageId) invalidateVillageCache(resolvedScope.villageId);
       // R7: KB changed → invalidate semantic cache so new content is retrievable.
       void semanticCacheInvalidate(resolvedScope.villageId ?? 'global').catch(() => undefined);
+      // FAQ cache shares the semantic-cache table; explicit invalidate for auditability.
+      void faqCacheInvalidate(resolvedScope.villageId ?? 'global').catch(() => undefined);
 
       return {
         statusCode: 201,
@@ -282,6 +285,8 @@ router.put('/:id', async (req: Request, res: Response) => {
       if (resolvedScope.villageId) invalidateVillageCache(resolvedScope.villageId);
       // R7: KB changed → invalidate semantic cache so updated content is retrievable.
       void semanticCacheInvalidate(resolvedScope.villageId ?? 'global').catch(() => undefined);
+      // FAQ cache shares the semantic-cache table; explicit invalidate for auditability.
+      void faqCacheInvalidate(resolvedScope.villageId ?? 'global').catch(() => undefined);
 
       return {
         statusCode: 200,
@@ -348,6 +353,8 @@ router.delete('/:id', async (req: Request, res: Response) => {
     clearKnowledgeDocCountCache(villageIdForInvalidate ?? undefined);
     // R7: KB changed → invalidate semantic cache (tenant-aware when possible).
     void semanticCacheInvalidate(villageIdForInvalidate ?? 'global').catch(() => undefined);
+    // FAQ cache shares the semantic-cache table; explicit invalidate for auditability.
+    void faqCacheInvalidate(villageIdForInvalidate ?? 'global').catch(() => undefined);
 
     res.json({ status: 'success', deleted: true });
   } catch (error: any) {

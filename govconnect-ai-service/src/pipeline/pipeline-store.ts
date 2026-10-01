@@ -540,6 +540,72 @@ export async function semanticCacheInvalidate(tenantId: string, docVersion?: str
   } catch { /* best effort */ }
 }
 
+/** Candidate row for fuzzy FAQ matching (tenant-scoped, TTL-filtered). */
+export interface SemanticCacheCandidate {
+  cacheKey: string;
+  question: string; // normalized question as stored
+  answer: string;
+  hits: number;
+}
+
+/**
+ * List non-expired semantic-cache questions for one tenant (+ doc version).
+ * Used by the FAQ cache fuzzy path: tenant FAQ volume is small (hundreds),
+ * so one indexed SELECT ((tenant_id, doc_version) index) per exact-miss is
+ * cheap (~1-3 ms local). Never returns cross-tenant rows by construction.
+ */
+export async function semanticCacheListQuestions(
+  tenantId: string,
+  docVersion: string,
+  limit = 500,
+): Promise<SemanticCacheCandidate[]> {
+  const db = await getDb();
+  if (!db) return dbDown('semanticCacheListQuestions', []);
+  try {
+    const rows = (await db.$queryRawUnsafe(
+      `SELECT cache_key, question, answer, hits FROM pipeline_semantic_cache
+       WHERE tenant_id=$1 AND doc_version=$2 AND expires_at > now()
+       ORDER BY hits DESC, created_at DESC LIMIT $3`,
+      tenantId, docVersion, limit,
+    )) as Array<{ cache_key: string; question: string; answer: string; hits: number }>;
+    return rows.map((r) => ({
+      cacheKey: r.cache_key,
+      question: r.question,
+      answer: r.answer,
+      hits: Number(r.hits ?? 0),
+    }));
+  } catch {
+    return dbDown('semanticCacheListQuestions', []);
+  }
+}
+
+/**
+ * Simple size cap per tenant: keep the most-hit / newest entries, drop the
+ * rest. Called best-effort on FAQ cache store (stores are far less frequent
+ * than lookups, so one extra DELETE there is acceptable).
+ */
+export async function semanticCacheEvictOverflow(
+  tenantId: string,
+  docVersion: string,
+  maxEntries = 1000,
+): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  try {
+    const rows = (await db.$queryRawUnsafe(
+      `DELETE FROM pipeline_semantic_cache a USING (
+         SELECT cache_key FROM pipeline_semantic_cache
+         WHERE tenant_id=$1 AND doc_version=$2
+         ORDER BY hits DESC, created_at DESC OFFSET $3
+       ) old WHERE a.cache_key = old.cache_key RETURNING a.cache_key`,
+      tenantId, docVersion, maxEntries,
+    )) as unknown[];
+    return rows.length;
+  } catch {
+    return 0;
+  }
+}
+
 // ── Improvement proposals ─────────────────────────────────────────────────
 
 export async function createProposal(input: {

@@ -36,7 +36,7 @@ import { checkBudget } from './cost-guard';
 import { isCostSaverMode, collapseTurnMessages } from './cost-saver';
 import { ingressCheck } from './ingress-guard';
 import { isVillageKilled, KILL_SWITCH_REPLY } from './kill-switch';
-import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
+import { faqCacheLookup, faqCacheStore } from '../services/faq-cache.service';
 import { applyMemoryPolicy } from './memory-policy';
 import { issueFallback } from './fallback-policy';
 import { sanitizeOutboundText } from './outbound-sanitizer';
@@ -939,14 +939,17 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
         );
       }
     }
-    // 2b. Semantic cache: informational answers only, lookup before the agent.
+    // 2b. FAQ cache: informational answers only, lookup before the agent.
+    // Exact-normalized match first, fuzzy (token-set Jaccard) fallback —
+    // village-scoped, so answers never leak across villages. VERIFY/COLLECT
+    // stages never reach this branch (no caching mid multi-turn flow).
     if (decision.stage === 'INFORMATION') {
-      const cached = await semanticCacheLookup(tenantId, input.message);
+      const cached = await faqCacheLookup(tenantId, input.message);
       if (cached) {
-        audit('INFORMATION', 'semantic_cache_hit', {});
+        audit('INFORMATION', 'semantic_cache_hit', { matchType: cached.matchType });
         return {
           success: true,
-          response: cached,
+          response: cached.answer,
           intent: 'information_cached',
           metadata: {
             processingTimeMs: Date.now() - started,
@@ -1052,10 +1055,10 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       }
     }
 
-    // 5. Semantic cache store (informational, non-personal answers only).
+    // 5. FAQ cache store (informational, non-personal answers only).
     // P1-1: shadow must not pollute the production cache.
     if (sideEffectsAllowed && turn.terminalState === 'SUCCEEDED') {
-      void semanticCacheStore(tenantId, input.message, turn.response, decision.stage)
+      void faqCacheStore(tenantId, input.message, turn.response, decision.stage)
         .catch(() => undefined);
     }
 
