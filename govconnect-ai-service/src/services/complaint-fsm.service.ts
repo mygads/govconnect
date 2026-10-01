@@ -48,6 +48,7 @@ export type ComplaintFsmState =
   | 'waiting_for_address'
   | 'waiting_for_name'
   | 'waiting_for_phone'
+  | 'waiting_for_confirmation'
   | 'ready_to_submit'
   | 'submitted'
   | 'cancelled';
@@ -200,7 +201,7 @@ export async function decideAddressResume(input: {
 export interface DecideIdentityResumeInput {
   userId: string;
   message: string;
-  waitingFor: 'nama' | 'no_hp';
+  waitingFor: 'nama' | 'no_hp' | 'konfirmasi';
   channel: ChannelType;
   villageId?: string;
 }
@@ -208,6 +209,7 @@ export interface DecideIdentityResumeInput {
 export type DecideIdentityResumeOutput =
   | { action: 'interrupt'; reason: FsmInterrupt }
   | { action: 'reprompt'; reason: 'invalid_name' | 'invalid_phone' }
+  | { action: 'confirm'; resolution: 'execute' | 'cancel' | 'edit' | 'reverify' }
   | { action: 'resume'; extractedName?: string; extractedPhone?: string };
 
 /**
@@ -245,6 +247,32 @@ function normalizeDeterministicName(name: string): string | null {
 }
 
 export async function decideIdentityResume(input: DecideIdentityResumeInput): Promise<DecideIdentityResumeOutput> {
+  // P1-1: VERIFY stage — check confirmation BEFORE interrupt detection,
+  // so "batal"/"ubah" during verify are handled as confirm resolutions.
+  // Explicit cancel during verify still releases via the interrupt path below
+  // for safety, but confirm resolutions take precedence for UX clarity.
+  if (input.waitingFor === 'konfirmasi') {
+    const { isExplicitConfirmation, isCancellation, isCorrectionRequest } = await import('../pipeline/slot-fsm');
+    const trimmed = input.message.trim();
+    // Check explicit confirmation first (highest priority)
+    if (isExplicitConfirmation(trimmed)) {
+      return { action: 'confirm', resolution: 'execute' };
+    }
+    if (isCancellation(trimmed)) {
+      return { action: 'confirm', resolution: 'cancel' };
+    }
+    if (isCorrectionRequest(trimmed)) {
+      return { action: 'confirm', resolution: 'edit' };
+    }
+    // Fall through to interrupt detection for other patterns,
+    // then to reverify if nothing matches
+    const interruptDuringVerify = detectComplaintInterrupt(input.message);
+    if (interruptDuringVerify !== 'none') {
+      return { action: 'interrupt', reason: interruptDuringVerify };
+    }
+    return { action: 'confirm', resolution: 'reverify' };
+  }
+
   const interrupt = detectComplaintInterrupt(input.message);
   if (interrupt !== 'none') {
     return { action: 'interrupt', reason: interrupt };
@@ -323,9 +351,13 @@ export async function getComplaintSnapshot(userId: string): Promise<ComplaintFsm
   ]);
 
   if (identityPending) {
+    const state: ComplaintFsmState =
+      identityPending.waitingFor === 'nama' ? 'waiting_for_name'
+      : identityPending.waitingFor === 'no_hp' ? 'waiting_for_phone'
+      : 'waiting_for_confirmation';
     return {
-      state: identityPending.waitingFor === 'nama' ? 'waiting_for_name' : 'waiting_for_phone',
-      waitingFor: identityPending.waitingFor,
+      state,
+      waitingFor: identityPending.waitingFor === 'konfirmasi' ? undefined : identityPending.waitingFor,
       draft: {
         kategori: identityPending.kategori,
         deskripsi: identityPending.deskripsi,
@@ -334,6 +366,8 @@ export async function getComplaintSnapshot(userId: string): Promise<ComplaintFsm
         village_id: identityPending.village_id,
         channel: identityPending.channel,
         foto_url: identityPending.foto_url,
+        reporter_name: identityPending.reporter_name,
+        reporter_phone: identityPending.reporter_phone,
       },
       action: 'persist_waiting_identity',
       reason: 'pending_identity_state',
@@ -375,6 +409,12 @@ export async function submitComplaintDraft(input: {
     return { ok: false, reason: 'missing_fields' };
   }
 
+  // P1-2: normalize kategori to the canonical category name from DB.
+  const { resolveComplaintCategoryName } = await import('./ump-utils');
+  const normalizedKategori = await resolveComplaintCategoryName(input.draft.kategori, input.draft.village_id)
+    || categoryConfig?.name
+    || input.draft.kategori;
+
   try {
     // P1-5: fail-closed — no write after the turn was aborted.
     assertNotAborted(opts?.signal, 'create_complaint');
@@ -385,7 +425,7 @@ export async function submitComplaintDraft(input: {
       wa_user_id: input.channel === 'whatsapp' ? input.userId : undefined,
       channel: input.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
       channel_identifier: input.channel === 'webchat' ? input.userId : undefined,
-      kategori: categoryConfig?.name || input.draft.kategori,
+      kategori: normalizedKategori,
       deskripsi: input.draft.deskripsi,
       alamat: input.draft.alamat,
       rt_rw: input.draft.rt_rw,
@@ -416,7 +456,7 @@ export async function submitComplaintDraft(input: {
       content: `Laporan ${complaintId} dibuat via FSM resume untuk kategori ${categoryConfig?.name || input.draft.kategori}${input.draft.alamat ? ` di ${input.draft.alamat}` : ''}.`,
       metadata_json: {
         reference_number: complaintId,
-        kategori: categoryConfig?.name || input.draft.kategori,
+        kategori: normalizedKategori,
         alamat: input.draft.alamat,
         rt_rw: input.draft.rt_rw,
         is_urgent: categoryConfig?.is_urgent === true,
