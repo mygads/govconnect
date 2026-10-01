@@ -288,6 +288,48 @@ export function matchesComplaintIncident(normalized: string): boolean {
 }
 
 /**
+ * [P1-3 FIX] Multi-intent detection.
+ * Mendeteksi ketika user menyebut 2+ hal berbeda dalam satu pesan.
+ */
+const MULTI_INTENT_COMPLAINT_RE = /\b(jalan\s+rusak|berlubang|lampu\s+mati|sampah\s+(?:menumpuk|numpuk|bau)|air\s+(?:mati|macet)|banjir|drainase)\b/gi;
+const MULTI_INTENT_SERVICE_RE = /\b(syarat|persyaratan|biaya|berapa\s+lama|\bktp\b|\bkk\b|kartu\s+keluarga|sktm|domisili|surat\s+keterangan|akta\s+kelahiran)\b/i;
+
+export interface MultiIntentDetection {
+  isMulti: boolean;
+  intents: string[];
+  topics: string[];
+}
+
+export function detectMultiIntent(message: string): MultiIntentDetection {
+  const text = message || '';
+  const intents: string[] = [];
+  const topics: string[] = [];
+
+  const complaintMatches = text.match(MULTI_INTENT_COMPLAINT_RE);
+  if (complaintMatches && complaintMatches.length > 0) {
+    intents.push('complaint');
+    topics.push(...complaintMatches.map(m => m.trim()));
+  }
+  if (MULTI_INTENT_SERVICE_RE.test(text)) {
+    intents.push('service_info');
+    const svcMatch = text.match(/\b(ktp|kk|kartu\s+keluarga|sktm|domisili|surat\s+keterangan\s+\w+|akta\s+kelahiran)\b/gi);
+    if (svcMatch) topics.push(...svcMatch.map(m => m.trim()));
+  }
+
+  const uniqueIntents = [...new Set(intents)];
+  const uniqueTopics = [...new Set(topics.map(t => t.toLowerCase()))];
+
+  const isMulti = uniqueIntents.length >= 2 || uniqueTopics.length >= 2;
+  return { isMulti, intents: uniqueIntents, topics: [...new Set(topics)] };
+}
+
+export function buildMultiIntentResponse(detection: MultiIntentDetection): string {
+  const items = detection.topics.slice(0, 5).map((t, i) => `${i + 1}. ${t}`);
+  if (items.length === 0) items.push('1. Topik yang disebutkan');
+  return `Wah, sepertinya ada beberapa hal yang ingin dibahas sekaligus ya, Pak/Bu. Biar saya bantu satu per satu:\n\n${items.join('\n')}\n\nMau mulai dari yang mana dulu? Balas dengan nomornya ya.`;
+}
+
+/**
  * Emergency detection. Requires either explicit active-event signal OR
  * kebakaran/ledakan (which are rarely casual conversation). "Nomor polisi"
  * or "program damkar sekolah" will NOT trigger.
