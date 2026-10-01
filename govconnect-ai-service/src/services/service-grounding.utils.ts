@@ -29,12 +29,53 @@ export function significantTokens(raw: string, stopwords: Set<string> = DEFAULT_
     .filter((token) => token.length >= 3 && !stopwords.has(token));
 }
 
+/**
+ * [P2-1 FIX] Kamus alias/singkatan layanan desa Indonesia.
+ * Memetakan singkatan umum ke nama layanan resmi.
+ */
+export const SERVICE_ALIAS_MAP: Record<string, string> = {
+  'sku': 'surat keterangan usaha',
+  'sktm': 'surat keterangan tidak mampu',
+  'skd': 'surat keterangan domisili',
+  'skck': 'surat pengantar skck',
+  'ktp': 'kartu tanda penduduk',
+  'kk': 'kartu keluarga',
+  'suket': 'surat keterangan', // singkatan lokal umum
+  'akte': 'akta kelahiran',
+  'akte lahir': 'surat keterangan kelahiran',
+  'surat pindah': 'surat keterangan pindah',
+  'skpwni': 'surat keterangan pindah',
+  'surat kematian': 'surat keterangan kematian',
+  'surat nikah': 'surat pengantar nikah',
+  'n1': 'surat pengantar nikah',
+  'izin keramaian': 'surat izin keramaian',
+  'izin hajatan': 'surat izin keramaian',
+};
+
+/**
+ * Expand alias dalam teks menjadi nama layanan resmi.
+ * Contoh: "mau ngurus SKU" -> "mau ngurus surat keterangan usaha"
+ */
+export function expandServiceAliases(text: string): string {
+  if (!text) return text;
+  let result = text;
+  // Urutkan dari yang terpanjang agar "surat keterangan usaha" tidak terpotong
+  const sortedAliases = Object.keys(SERVICE_ALIAS_MAP).sort((a, b) => b.length - a.length);
+  for (const alias of sortedAliases) {
+    const pattern = new RegExp(`\\b${alias.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\$&')}\\b`, 'gi');
+    result = result.replace(pattern, SERVICE_ALIAS_MAP[alias]);
+  }
+  return result;
+}
+
 export function findUniqueServiceMention(
   services: ServiceCatalogItem[],
   texts: string[],
   options: { requireExplicitMention?: boolean } = {},
 ): ServiceCatalogItem | null {
-  const haystack = normalizeLooseText(texts.filter(Boolean).join(' '));
+  // [P2-1 FIX] Expand alias dulu sebelum matching
+  const expandedTexts = texts.map(t => expandServiceAliases(t || ''));
+  const haystack = normalizeLooseText(expandedTexts.filter(Boolean).join(' '));
   if (!haystack) return null;
 
   const matches = services.filter((service) => {
