@@ -14,9 +14,13 @@
  *   segment stripper. Non-JPEG without sharp is marked exifStripped:false.
  * - W15: KTP/identity documents are NEVER blurred (admin manual verification
  *   needs them intact) and are flagged adminOnly — never forwarded to any LLM.
- * - Targeted face/plate blur is a documented TODO: no detection model is
- *   available in this environment. General photos use whole-image blur
- *   (MEDIA_REDACT_MODE=blur) or are never forwarded (default 'degraded').
+ * - W15 targeted face blur: face-api tiny_face_detector on the tfjs WASM
+ *   backend (pipeline/face-detection.ts) blurs ONLY face regions when the
+ *   model is present (FACE_MODEL_DIR; fetched via
+ *   scripts/download-face-models.sh, never committed). Detection failure or
+ *   missing model degrades honestly to whole-image blur — see redactDetail
+ *   in the INGRESS audit payload ('targeted_faces:N' vs 'whole_image').
+ *   License-plate detection is still an open TODO (no plate model vetted).
  *
  * EXIF: best-effort pure-TS JPEG APPn-segment stripper (covers EXIF/XMP in
  * JPEG). Non-JPEG input without sharp is marked exifStripped:false (degraded).
@@ -31,10 +35,12 @@ import {
   hammingDistance,
   moderateImage,
   blurImage,
+  blurImageRegions,
   stripExifMetadata,
   isSharpAvailable,
   PHASH_NEAR_DUP_THRESHOLD,
 } from './media-perceptual';
+import { detectFaces } from './face-detection';
 
 /**
  * W15 — DB-backed media registry (ai.media_registry).
@@ -519,14 +525,32 @@ export async function processImageMedia(input: {
   }
 
   // Face/plate redaction: env-driven (MEDIA_REDACT_MODE).
-  // - 'blur': whole-image blur via sharp (privacy fallback; NOT targeted
-  //   face/plate detection — no detection model in this environment).
+  // - 'blur': targeted face-region blur when face detection is available
+  //   (face-api tiny_face_detector, tfjs WASM backend); any detection
+  //   failure or missing model degrades to whole-image blur via sharp.
+  //   License-plate detection is not yet implemented.
   // - 'degraded' (default): redaction unavailable — image NEVER reaches LLM.
   const mode = redactMode();
   const redaction: MediaSignal['redaction'] = mode === 'blur' ? 'done' : 'degraded';
   let redactedBytes: Buffer | undefined;
+  let redactDetail: 'targeted_faces' | 'whole_image' | 'none' = 'none';
+  let faceCount = 0;
   if (mode === 'blur') {
-    const blurred = await blurImage(bytes);
+    const faceBoxes = await detectFaces(bytes);
+    let blurred: Buffer | null = null;
+    if (faceBoxes && faceBoxes.length > 0) {
+      blurred = await blurImageRegions(bytes, faceBoxes);
+      if (blurred) {
+        redactDetail = 'targeted_faces';
+        faceCount = faceBoxes.length;
+      } else {
+        logger.warn('[media-pipeline] targeted face blur failed → whole-image fallback', { traceId });
+      }
+    }
+    if (!blurred) {
+      blurred = await blurImage(bytes);
+      if (blurred) redactDetail = 'whole_image';
+    }
     if (blurred) {
       redactedBytes = blurred;
     } else {
@@ -545,6 +569,7 @@ export async function processImageMedia(input: {
     payload: {
       sha256: hash.slice(0, 16) + '…', phash: phash ?? null, bytes: bytes.length,
       exifStripped, redaction: effectiveRedaction, redactMode: mode,
+      redactDetail, faceCount,
       forwardToLlm: false, fraudSignals,
       moderation: { flagged: moderation.flagged, skinRatio: moderation.skinRatio },
     },
@@ -561,17 +586,9 @@ export async function processImageMedia(input: {
 
   // W15: KTP / identity documents are NEVER blurred (needed for manual admin
   // verification) and are admin-eyes-only. General report photos keep the
-  // env-driven redaction behavior above.
-  // TODO(W15-face): targeted face/license-plate blur. No face/plate detection
-  // model is available in this environment (no on-prem detector, no budget
-  // for a vision-LLM detect-then-blur round-trip per image). Options evaluated:
-  //   (a) @xenova/transformers face-detection model — needs ~100MB+ model
-  //       download at runtime; blocked by egress proxy policy here.
-  //   (b) Vision-LLM bounding-box detection — 1 extra LLM call per image;
-  //       cost/latency not approved for the MVP path.
-  // Until one lands, general photos use whole-image blur (MEDIA_REDACT_MODE=blur)
-  // or are never forwarded to the LLM (default 'degraded'). This is an honest
-  // limitation, not a silent gap: redaction:'degraded' is audited per intake.
+  // env-driven redaction behavior above (targeted face blur when the model is
+  // present, whole-image blur fallback, or never forwarded in 'degraded').
+  // Open TODO: license-plate detection (no plate model vetted yet).
   const adminOnly = input.retainBytes === true || kind === 'document';
 
   // W15: persist intake to the DB registry (best-effort; never fails intake).

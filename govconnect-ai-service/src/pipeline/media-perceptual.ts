@@ -166,7 +166,8 @@ export async function stripExifMetadata(buf: Buffer): Promise<Buffer | null> {
  * is unavailable / decoding fails.
  *
  * NOTE: whole-image blur is a privacy fallback, not a substitute for
- * targeted face/plate detection (no detection model in this environment).
+ * targeted face/plate detection — use blurImageRegions() with detectFaces()
+ * (pipeline/face-detection.ts) when detection is available.
  */
 export async function blurImage(
   buf: Buffer,
@@ -177,6 +178,59 @@ export async function blurImage(
     return await sharp(buf).blur(sigma).toBuffer();
   } catch (err) {
     logger.debug('[media-perceptual] blur failed', {
+      error: String((err as Error)?.message ?? err).slice(0, 100),
+    });
+    return null;
+  }
+}
+
+export interface BlurRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * W15 targeted redaction: blur ONLY the given regions (face boxes), keeping
+ * the rest of the image intact. Each box is padded ~20% and clamped to the
+ * image bounds. Returns null when sharp is unavailable, decoding fails, or
+ * no region survives clamping — the caller must fall back to whole-image
+ * blurImage().
+ */
+export async function blurImageRegions(
+  buf: Buffer,
+  regions: BlurRegion[],
+  sigma = Number(process.env.MEDIA_BLUR_SIGMA ?? 12),
+): Promise<Buffer | null> {
+  if (!sharp) return null;
+  try {
+    const meta = await sharp(buf).metadata();
+    const imgW = meta.width ?? 0;
+    const imgH = meta.height ?? 0;
+    if (!imgW || !imgH) return null;
+
+    const composites: Array<{ input: Buffer; left: number; top: number }> = [];
+    for (const r of regions) {
+      const pad = 0.2;
+      let left = Math.floor(r.x - r.width * pad);
+      let top = Math.floor(r.y - r.height * pad);
+      let w = Math.ceil(r.width * (1 + pad * 2));
+      let h = Math.ceil(r.height * (1 + pad * 2));
+      left = Math.max(0, Math.min(left, imgW - 1));
+      top = Math.max(0, Math.min(top, imgH - 1));
+      w = Math.max(1, Math.min(w, imgW - left));
+      h = Math.max(1, Math.min(h, imgH - top));
+      const blurred = await sharp(buf)
+        .extract({ left, top, width: w, height: h })
+        .blur(sigma)
+        .toBuffer();
+      composites.push({ input: blurred, left, top });
+    }
+    if (composites.length === 0) return null;
+    return await sharp(buf).composite(composites).toBuffer();
+  } catch (err) {
+    logger.debug('[media-perceptual] region blur failed', {
       error: String((err as Error)?.message ?? err).slice(0, 100),
     });
     return null;

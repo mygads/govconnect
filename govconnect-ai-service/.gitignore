@@ -32,3 +32,6 @@ Thumbs.db
 .cache/
 
 /src/generated/prisma
+
+# W15 face-detection model weights (fetched via scripts/download-face-models.sh)
+/models/
