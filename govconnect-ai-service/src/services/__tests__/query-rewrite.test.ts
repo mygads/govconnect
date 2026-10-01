@@ -150,7 +150,9 @@ describe('hasAnaphoricSignal', () => {
   });
   it('tidak false-positive pada "punya"/"hanya"', () => {
     expect(hasAnaphoricSignal('saya punya KTP')).toBe(false);
-    expect(hasAnaphoricSignal('hanya itu saja')).toBe(false);
+    // 'hanya' dikecualikan dari aturan -nya; tanpa demonstrativa lain
+    // ('itu'/'ini' memang sinyal anafora yang sah) tidak ada sinyal.
+    expect(hasAnaphoricSignal('saya hanya butuh info')).toBe(false);
   });
 });
 

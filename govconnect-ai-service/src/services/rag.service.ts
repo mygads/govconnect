@@ -1111,6 +1111,8 @@ function buildHybridRetrievalDebug(
   return {
     hybridUsed: true,
     retrievalMode,
+    rewroteQuery: rewrite?.didRewrite,
+    rewrittenQuery: rewrite?.rewrittenQuery,
     candidates: candidates.slice(0, 10).map((candidate) => ({
       id: candidate.id,
       title: candidate.source,

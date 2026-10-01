@@ -23,6 +23,7 @@ import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
 import { resolveLearnedToolPolicy } from './tool-policy.service';
 import { executeToolCall, executeToolCalls, type ToolCallResult, type ToolExecutionTrace, type ToolTrustLevel, type ExecutedToolCall } from './tool-executor';
 import { buildAgentSystemPrompt, buildAgentDynamicContext, type AgentPromptContext } from './agent-prompt';
+import type { QueryRewriteContext } from '../query-rewrite.service';
 import { isContactDirectoryLookup } from '../important-contacts.service';
 
 const MAX_TOOL_ITERATIONS = 5;
@@ -82,6 +83,12 @@ interface ToolContext {
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   activeServiceSlug?: string;
   activeServiceName?: string;
+  /**
+   * Konteks percakapan untuk query rewriting sebelum RAG retrieval
+   * (query-rewrite.service.ts). Diteruskan via spread ke executor
+   * ToolContext; tool search_knowledge/search_documents memakainya.
+   */
+  rewriteContext?: QueryRewriteContext;
 }
 
 interface AgentGatewayTokenContext {
