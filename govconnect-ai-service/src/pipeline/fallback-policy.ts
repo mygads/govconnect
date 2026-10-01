@@ -26,6 +26,12 @@ export interface FallbackInput {
   /** What the user was trying to do, in plain words (no PII). */
   intentHint?: string;
   error?: string;
+  /** Village scope for improvement-loop recording (optional, additive). */
+  villageId?: string;
+  /** Raw user message for improvement-loop recording (PII redacted on save). */
+  userMessage?: string;
+  /** Session id for improvement-loop recording. */
+  sessionId?: string;
 }
 
 /** Mint a temporary ticket reference for follow-up. */
@@ -49,6 +55,22 @@ export function buildFallback(
   opts: { persisted?: boolean } = {},
 ): { response: string; ticketRef: string } {
   const ticket = ticketRef ?? mintTempTicket();
+
+  // Improvement loop (additive, fire-and-forget): record fallback failures
+  // for later analysis. Never throws, never blocks the response.
+  if (input.villageId) {
+    void import('../services/improvement-loop.service').then(({ recordFailure }) =>
+      recordFailure({
+        village_id: input.villageId!,
+        session_id: input.sessionId ?? input.traceId,
+        user_message: input.userMessage ?? input.intentHint ?? '',
+        failure_type: 'fallback',
+        stage: String(input.stage),
+        intent: input.intentHint,
+      }),
+    ).catch(() => undefined);
+  }
+
   const intentLine = INTENT_LINE[input.intentHint ?? ''] ?? 'pesan Anda';
 
   const first =
