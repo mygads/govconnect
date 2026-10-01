@@ -669,7 +669,8 @@ export async function retrieveContext(
   }
 
   // Step 0: Check query intent - skip RAG for greetings/simple responses
-  const queryIntentResult = await classifyQueryIntent(query, {
+  // Perf optimization: reuse precomputed intent if provided (avoids redundant LLM call on retries)
+  const queryIntentResult = (options as any).precomputedIntent || await classifyQueryIntent(query, {
     village_id: villageId,
     wa_user_id: waUserId,
     session_id: sessionId,

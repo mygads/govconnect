@@ -5,8 +5,9 @@ import { isAIGatewayEnabledAsync } from './ai-gateway.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import {
   retrieveContext,
+  classifyQueryIntent,
 } from './rag.service';
-import { searchKnowledgeByKeywordsDirect } from './vector-db.service';
+import { searchKnowledgeByKeywordsDirect, countKnowledgeDocs } from './vector-db.service';
 import { RAGContext } from '../types/embedding.types';
 import { classifyProfileQuery } from './micro-llm-matcher.service';
 
@@ -393,9 +394,34 @@ function trackKnowledgeSearch(
 async function searchKnowledgeWithRAG(query: string, categories?: string[], context?: string | SearchContext): Promise<KnowledgeSearchResult> {
   const searchContext = normalizeSearchContext(context);
   const { villageId } = searchContext;
+  
+  // P0-1 FIX: Early-exit if village has 0 KB docs (avoids 4x wasted RAG retries + LLM intent classification)
+  try {
+    const kbCount = await countKnowledgeDocs(villageId);
+    if (kbCount === 0) {
+      logger.debug('KB early-exit: village has 0 documents, skipping RAG', { villageId });
+      return { data: [], total: 0, context: '' };
+    }
+  } catch (e) {
+    // If count fails, proceed with normal RAG (fail-open for safety)
+  }
   // Let retrieveContext() handle category inference via its internal NLU (classifyQueryIntent).
   // Only pass explicit categories if the caller already knows them (e.g. from a prior NLU call).
   const effectiveCategories = categories && categories.length > 0 ? categories : undefined;
+
+  // Perf optimization: compute query intent ONCE and reuse across retries
+  // (avoids 4x redundant LLM calls when KB is empty or no results found)
+  let precomputedIntent = null;
+  try {
+    precomputedIntent = await classifyQueryIntent(query, {
+      village_id: villageId,
+      wa_user_id: searchContext.waUserId,
+      session_id: searchContext.sessionId,
+      channel: searchContext.channel,
+    });
+  } catch (e) {
+    // If intent classification fails, let retrieveContext handle it per-call
+  }
 
   // First attempt: use NLU-inferred categories (better precision when correct)
   let ragContext = await retrieveContext(query, {
@@ -407,6 +433,9 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
     waUserId: searchContext.waUserId,
     sessionId: searchContext.sessionId,
     channel: searchContext.channel,
+    precomputedIntent,
+    useQueryExpansion: false,  // Perf: skip LLM query expansion for fallback searches
+    useHybridSearch: false,    // Perf: skip hybrid rerank for fallback searches
   });
 
   // Fallback: if NLU category filtering is too strict, retry WITHOUT category filter.
@@ -425,6 +454,9 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
       waUserId: searchContext.waUserId,
       sessionId: searchContext.sessionId,
       channel: searchContext.channel,
+      precomputedIntent,
+      useQueryExpansion: false,
+      useHybridSearch: false,
     });
   }
 
@@ -439,6 +471,9 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
       waUserId: searchContext.waUserId,
       sessionId: searchContext.sessionId,
       channel: searchContext.channel,
+      precomputedIntent,
+      useQueryExpansion: false,
+      useHybridSearch: false,
     });
   }
 

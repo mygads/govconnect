@@ -187,6 +187,7 @@ export async function gatewayExecute(
         traceId: ctx.traceId,
         isEvaluation: ctx.isEvaluation,
         sideEffectMode: ctx.sideEffectMode,
+        abortSignal: ctx.signal,
       });
       let executed: ExecutedToolCall;
       try {

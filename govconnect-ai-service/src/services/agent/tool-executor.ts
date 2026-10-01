@@ -120,8 +120,13 @@ interface ToolContext {
   userMessage?: string;
   activeServiceSlug?: string;
   activeServiceName?: string;
+  // P1-4: Per-turn tool dedup cache. Key: toolName + stable args JSON.
+  // Prevents agent from re-calling identical tool+args 2-3x per turn.
+  executedTools?: Map<string, ExecutedToolCall>;
+  // P1-5: Abort signal for turn budget. If aborted, don't start new tools
+  // and don't use results from tools that completed after abort.
+  abortSignal?: AbortSignal;
 }
-
 const MUTATION_TOOLS = new Set<AgentToolName>([
   'create_complaint',
   'create_service_request',
@@ -223,12 +228,35 @@ function buildServiceEditGuidanceText(editUrl: string): string {
   return `Link edit permohonan:\n${editUrl}\n\nLink ini hanya berlaku satu kali dan hanya bisa dipakai oleh nomor yang membuat pengajuan.`;
 }
 
+/**
+ * P1-4: Build a stable dedup key for tool+args.
+ * Sorts keys to ensure identical args produce identical keys regardless of order.
+ */
+function buildToolDedupKey(toolName: string, args: Record<string, unknown>): string {
+  const sortedKeys = Object.keys(args).sort();
+  const sortedArgs: Record<string, unknown> = {};
+  for (const k of sortedKeys) {
+    sortedArgs[k] = args[k];
+  }
+  return `${toolName}:${JSON.stringify(sortedArgs)}`;
+}
+
 export async function executeToolCall(
   toolName: AgentToolName,
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ExecutedToolCall> {
   const startTime = Date.now();
+
+  // P1-4: Per-turn dedup — if identical tool+args already executed this turn, return cached result.
+  // Prevents agent from wasting 14-27s re-calling get_service_info 2-3x with same args.
+  if (ctx.executedTools) {
+    const dedupKey = buildToolDedupKey(toolName, args);
+    const cached = ctx.executedTools.get(dedupKey);
+    if (cached) {
+      return cached;
+    }
+  }
 
   if (ctx.sideEffectMode && ctx.sideEffectMode !== 'production' && MUTATION_TOOLS.has(toolName)) {
     return {
@@ -258,8 +286,17 @@ export async function executeToolCall(
     };
   }
 
+  // P1-5: Don't start new tool if turn already aborted
+  if (ctx.abortSignal?.aborted) {
+    throw new Error('turn_aborted_before_tool_start');
+  }
+
   try {
     const result = await dispatchTool(toolName, args, ctx);
+    // P1-5: If aborted during execution, don't use the result
+    if (ctx.abortSignal?.aborted) {
+      throw new Error('turn_aborted_during_tool_execution');
+    }
     const durationMs = Date.now() - startTime;
     const trace: ToolExecutionTrace = {
       tool: toolName,
@@ -285,11 +322,18 @@ export async function executeToolCall(
       sourceKind: trace.sourceKind,
     });
 
-    return {
+    const executed: ExecutedToolCall = {
       content: JSON.stringify(result),
       trace,
       result,
     };
+
+    // P1-4: Cache successful result for per-turn dedup
+    if (ctx.executedTools) {
+      ctx.executedTools.set(buildToolDedupKey(toolName, args), executed);
+    }
+
+    return executed;
   } catch (error: any) {
     const durationMs = Date.now() - startTime;
     logger.error('Agent tool execution failed', {
@@ -406,8 +450,19 @@ async function dispatchTool(
 }
 
 async function toolGetVillageProfile(ctx: ToolContext): Promise<ToolCallResult> {
-  const profile = await getVillageProfileSummary(ctx.villageId);
-  const contacts = ctx.villageId ? await getImportantContacts(ctx.villageId) : [];
+  // P1-13: Graceful degradation if dashboard/profile service is down
+  let profile = null;
+  let contacts: any[] = [];
+  try {
+    profile = await getVillageProfileSummary(ctx.villageId);
+  } catch (e) {
+    // Dashboard down - continue with null profile, will use fallback below
+  }
+  try {
+    contacts = ctx.villageId ? await getImportantContacts(ctx.villageId) : [];
+  } catch (e) {
+    // Contacts unavailable - continue with empty
+  }
   const officeContacts = contacts
     .filter((contact) => matchContactHints(contact, OFFICE_CONTACT_HINTS))
     .sort((a, b) => scoreOfficeContactCandidate(b) - scoreOfficeContactCandidate(a))
