@@ -242,8 +242,22 @@ function getGatewayBreaker(key: string, action: (...args: any[]) => Promise<any>
   return breaker;
 }
 
-export function clearGatewayBreaker(key: string): void {
-  const breaker = gatewayBreakers.get(key);
+/**
+ * Build the circuit-breaker key per-MODEL (not per-provider).
+ * A failing fallback model must not trip the breaker for a healthy
+ * primary model on the same provider/baseUrl.
+ */
+export function buildGatewayBreakerKey(
+  kind: GatewayLaneKind,
+  provider: string,
+  baseUrl: string,
+  model: unknown,
+): string {
+  const modelName = typeof model === 'string' && model ? model : 'unknown';
+  return `${kind}:${provider}:${baseUrl}:${modelName}`;
+}
+
+export function clearGatewayBreaker(key: string): void {  const breaker = gatewayBreakers.get(key);
   if (!breaker) return;
 
   const shutdown = (breaker as { shutdown?: () => void }).shutdown;
@@ -749,7 +763,7 @@ async function executeGatewayRequest<T>(
   timeoutMs: number,
   cacheEligible = false,
 ): Promise<GatewayResponseEnvelope<T>> {
-  const breakerKey = `${kind}:${gateway.provider}:${gateway.baseUrl}`;
+  const breakerKey = buildGatewayBreakerKey(kind, gateway.provider, gateway.baseUrl, body.model);
   const breaker = getGatewayBreaker(breakerKey, doExecuteGatewayRequest);
   return breaker.fire(kind, gateway, apiKey, body, timeoutMs, cacheEligible) as Promise<GatewayResponseEnvelope<T>>;
 }
