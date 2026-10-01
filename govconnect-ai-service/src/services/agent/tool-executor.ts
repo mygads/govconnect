@@ -1138,6 +1138,18 @@ async function toolGetServiceInfo(
 }
 
 async function toolGetComplaintCategories(ctx: ToolContext): Promise<ToolCallResult> {
+  // P1-12: fail-closed — never list complaint categories without a village
+  // scope. Without village_id the response could mix in other villages' data.
+  if (!ctx.villageId) {
+    return {
+      success: false,
+      error: 'village_id tidak tersedia; daftar kategori tidak dapat dimuat tanpa cakupan desa.',
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'official_complaint_types',
+      },
+    };
+  }
   const categories = await getComplaintTypes(ctx.villageId);
   const complaintTypes = categories.map((category) => ({
     name: category.name,
@@ -1751,7 +1763,7 @@ async function toolCreateComplaint(
   const namaPelapor = pickString('nama_pelapor', 'reporter_name', 'reporterName', 'nama', 'name') || undefined;
   const noHp = pickString('no_hp', 'phone', 'telp', 'noHp', 'phone_number') || undefined;
   const hasComplaintHint = Boolean(rawTypeId || rawCategoryId || kategori);
-  const categoryConfig = hasComplaintHint
+  const categoryConfig = hasComplaintHint && ctx.villageId
     ? await findComplaintCategoryConfig(kategori || undefined, ctx.villageId, rawTypeId, rawCategoryId)
     : null;
   const resolvedTypeId = categoryConfig?.id || rawTypeId;
@@ -2816,10 +2828,13 @@ async function resolveServiceFromName(
 
 async function findComplaintCategoryConfig(
   kategori: string | undefined,
-  villageId?: string,
+  villageId: string,
   typeId?: string,
   categoryId?: string,
 ) {
+  // P1-12: fail-closed — never resolve complaint categories without a village
+  // scope. Without village_id the lookup could match another village's types.
+  if (!villageId) return null;
   const categories = await getComplaintTypes(villageId);
 
   if (typeId) {

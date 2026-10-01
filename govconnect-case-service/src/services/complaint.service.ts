@@ -33,16 +33,22 @@ interface ResolvedComplaintType {
  *
  * @returns ResolvedComplaintType or null if no match found
  */
+/**
+ * P1-12 — Village scoping rule (explicit, fail-closed):
+ * complaint types are always per-village (inherited via category.village_id);
+ * there are no global types. `villageId` is REQUIRED — without it this returns
+ * null instead of matching the kategori against every village's types (which
+ * would be a cross-tenant leak: a type id from village B could be attached
+ * to a village A complaint).
+ */
 export async function resolveComplaintTypeFromDB(
   kategori: string,
-  villageId?: string
+  villageId: string
 ): Promise<ResolvedComplaintType | null> {
-  if (!kategori) return null;
+  if (!kategori || !villageId) return null;
 
   try {
-    const whereClause = villageId
-      ? { category: { village_id: villageId } }
-      : {};
+    const whereClause = { category: { village_id: villageId } };
 
     const types = await prisma.complaintType.findMany({
       where: whereClause,
