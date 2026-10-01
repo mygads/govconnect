@@ -306,6 +306,18 @@ const SERVICE_NAME_ALIASES: Record<string, string> = {
   'ktp el': 'ktp',
   'e ktp': 'ktp',
   'kartu keluarga': 'kk',
+  // [P2-1 FIX] Alias layanan — sinkron dengan SERVICE_ALIAS_MAP di service-grounding.utils.ts
+  'sku': 'surat keterangan usaha',
+  'suket usaha': 'surat keterangan usaha',
+  'surat keterangan berusaha': 'surat keterangan usaha',
+  'sktm': 'surat keterangan tidak mampu',
+  'suket tidak mampu': 'surat keterangan tidak mampu',
+  'skd': 'surat keterangan domisili',
+  'suket domisili': 'surat keterangan domisili',
+  'surat domisili': 'surat keterangan domisili',
+  'akte': 'akta kelahiran',
+  'akte kelahiran': 'akta kelahiran',
+  'suket': 'surat keterangan',
 };
 
 /**
@@ -2784,9 +2796,19 @@ function findAmbiguousServiceAlternatives(
 
   if (!hasKtpSignal || hasSpecificKtpSignal) return [];
 
-  return ktpServices(services)
+  const candidates = ktpServices(services)
     .slice(0, 4)
     .map((service) => ({ slug: service.slug, name: service.name }));
+
+  // [P2-2 FIX] Filter kandidat yang tidak relevan dengan query
+  // Mencegah "Izin Keramaian" muncul untuk query "ktp"
+  const queryTokens = normalized.split(/\s+/).filter(t => t.length >= 2).map(t => t.replace(/[^a-z0-9]/g, '')).filter(Boolean);
+  if (queryTokens.length === 0) return candidates;
+  const filtered = candidates.filter(c => {
+    const nameLower = (c.name || '').toLowerCase();
+    return queryTokens.some(token => nameLower.includes(token));
+  });
+  return filtered.length > 0 ? filtered : candidates.slice(0, 2);
 }
 
 async function resolveServiceFromName(

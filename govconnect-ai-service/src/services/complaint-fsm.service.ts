@@ -163,6 +163,13 @@ export async function decideAddressResume(input: {
     return { action: 'reprompt', reason: 'too_short' };
   }
 
+  // Deterministic: pola RT/RW sederhana langsung diterima tanpa LLM
+  // Contoh: "rt 05", "RT 05", "rt 05 rw 02", "rt05/rw02"
+  const rtRwPattern = /\brt\s*\.?\s*\d{1,3}\s*(\/\s*rw\s*\.?\s*\d{1,3}|rw\s*\.?\s*\d{1,3})?\b/i;
+  if (rtRwPattern.test(trimmed)) {
+    return { action: 'resume', alamat: trimmed, reason: 'nlu_extracted' };
+  }
+
   const extracted = await extractAddressFromMessage(trimmed, input.userId, {
     village_id: input.pendingAddr.village_id,
     channel: input.channel,

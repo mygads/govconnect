@@ -251,7 +251,7 @@ const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|jalan berlubang|jalan(?:\s+\
 const COMPLAINT_INFO_QUERY_PATTERN = /\b(pengaduan|keluhan|laporan)\b/i;
 const COMPLAINT_INFO_HINT_PATTERN = /\b(apa|bagaimana|gimana|jelaskan|contoh|format|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i;
 const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengantar)\b/i;
-const EMERGENCY_KEYWORDS = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|pencurian|darurat|bencana|longsor|gempa|tsunami|evakuasi|ledakan)\b/i;
+const EMERGENCY_KEYWORDS = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|pencurian|darurat|bencana|banjir|longsor|gempa|tsunami|evakuasi|ledakan|air masuk rumah|tenggelam)\b/i;
 
 /** Active-event signal: user is *reporting* something happening now. */
 const ACTIVE_EVENT_SIGNAL = /\b(tolong|segera|help|help\s*me|bantu|bantuin|terjadi|sedang\s+terjadi|barusan|baru\s+saja|lagi|ada\s+(?:yang|yg)|di\s*sini\s+ada|telah\s+terjadi|baru\s+terjadi|kejadian|ya\s*allah|ya\s*tuhan|astaga|gawat|bahaya|amblas)\b/i;
@@ -1133,8 +1133,20 @@ export function tryHandleOutOfScopeGuard(input: {
   traceId: string;
   startTime: number;
 }): ProcessMessageResult | null {
+  // [P1-2 FIX] Cek layanan pemerintah pusat DULU, independen dari isOutOfScopeGeneralQuestion.
+  // "di desa bisa perpanjang SIM nggak?" sering terklasifikasi SERVICE_INFO,
+  // sehingga gate shouldHardBlockOutOfScope tidak terpicu.
+  const govtRedirectEarly = buildGovtServiceRedirect(input.message);
+  if (govtRedirectEarly) {
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response: govtRedirectEarly,
+      intent: 'QUESTION',
+    });
+  }
+
   if (isOutOfScopeGeneralQuestion(input.message)) {
-    // [P1-2 FIX] Cek layanan pemerintah pusat spesifik dulu
     const govtRedirect = buildGovtServiceRedirect(input.message);
     return buildGuardResult({
       startTime: input.startTime,
