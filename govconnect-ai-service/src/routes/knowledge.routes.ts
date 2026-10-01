@@ -30,6 +30,7 @@ import {
 import { firstHeader, getParam } from '../utils/http';
 import { internalApiKeyMatches } from '../utils/internal-auth';
 import { clearRetrievalCache } from '../services/rag.service';
+import { clearKnowledgeDocCountCache } from '../services/knowledge.service';
 import { clearCache, invalidateVillageCache } from '../services/response-cache.service';
 import { semanticCacheInvalidate } from '../pipeline/pipeline-store';
 import { withAiBillingTurn } from '../services/ai-turn-billing.service';
@@ -343,6 +344,8 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     clearRetrievalCache();
     clearCache();
+    // P0-1: KB changed → invalidate doc-count cache (tenant-aware when possible).
+    clearKnowledgeDocCountCache(villageIdForInvalidate ?? undefined);
     // R7: KB changed → invalidate semantic cache (tenant-aware when possible).
     void semanticCacheInvalidate(villageIdForInvalidate ?? 'global').catch(() => undefined);
 

@@ -394,6 +394,33 @@ function trackKnowledgeSearch(
   }
 }
 
+// P0-1 FIX: cache positive KB doc counts (TTL 5 min) to avoid a COUNT(*) query
+// on every KB search. Only positive counts are cached (fail-open); a 0 result
+// is never cached so newly uploaded docs are visible immediately.
+const KB_COUNT_CACHE = new Map<string, { count: number; expiresAt: number }>();
+const KB_COUNT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export function clearKnowledgeDocCountCache(villageId?: string): void {
+  if (villageId) {
+    KB_COUNT_CACHE.delete(villageId);
+  } else {
+    KB_COUNT_CACHE.clear();
+  }
+}
+
+async function countKnowledgeDocsCached(villageId?: string): Promise<number> {
+  const cacheKey = villageId ?? '__global__';
+  const cached = KB_COUNT_CACHE.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.count;
+  }
+  const count = await countKnowledgeDocs(villageId);
+  if (count > 0) {
+    KB_COUNT_CACHE.set(cacheKey, { count, expiresAt: Date.now() + KB_COUNT_CACHE_TTL_MS });
+  }
+  return count;
+}
+
 /**
  * Search curated knowledge using RAG (semantic search with embeddings)
  * 
@@ -404,9 +431,9 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
   const searchContext = normalizeSearchContext(context);
   const { villageId } = searchContext;
   
-  // P0-1 FIX: Early-exit if village has 0 KB docs (avoids 4x wasted RAG retries + LLM intent classification)
+  // P0-1 FIX: Early-exit if village has 0 KB docs (avoids wasted RAG retrieval + LLM intent classification)
   try {
-    const kbCount = await perfMeasure('kb.count_docs', () => countKnowledgeDocs(villageId));
+    const kbCount = await perfMeasure('kb.count_docs', () => countKnowledgeDocsCached(villageId));
     if (kbCount === 0) {
       logger.debug('KB early-exit: village has 0 documents, skipping RAG', { villageId });
       return { data: [], total: 0, context: '' };
@@ -432,10 +459,15 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
     // If intent classification fails, let retrieveContext handle it per-call
   }
 
-  // First attempt: use NLU-inferred categories (better precision when correct)
-  let ragContext = await perfMeasure('kb.retrieve_attempt:1', () => retrieveContext(query, {
+  // Perf (P0-1): collapsed recall-first single pass.
+  // The old 4-attempt chain only differed in minScore (0.55/0.45/0.35/0.35)
+  // and a +0.02 category soft-boost; W6 fail-closed (top1 < 0.65 -> discard)
+  // dominates, so a higher threshold can never produce a passing hit that the
+  // lower threshold would miss. One call at minScore 0.35 preserves recall
+  // with ~1/4 of the embedding + DB round-trips on the miss path.
+  const ragContext = await perfMeasure('kb.retrieve_attempt:1', () => retrieveContext(query, {
     topK: 5,
-    minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
+    minScore: 0.35,
     categories: effectiveCategories,
     sourceTypes: ['knowledge'],
     villageId,
@@ -447,59 +479,6 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
     useHybridSearch: false,    // Perf: skip hybrid rerank for fallback searches
   }));
 
-  // Fallback: if NLU category filtering is too strict, retry WITHOUT category filter.
-  // This improves recall for generic KB (e.g., glossary/5W1H) that may not match NLU categories.
-  if (ragContext.totalResults === 0 && effectiveCategories && effectiveCategories.length > 0) {
-      logger.debug('Knowledge RAG fallback: retrying without category filter', {
-        effectiveCategories,
-      });
-
-    ragContext = await perfMeasure('kb.retrieve_attempt:2', () => retrieveContext(query, {
-      topK: 5,
-      minScore: 0.45,
-      categories: undefined,
-      sourceTypes: ['knowledge'],
-      villageId,
-      waUserId: searchContext.waUserId,
-      sessionId: searchContext.sessionId,
-      channel: searchContext.channel,
-      precomputedIntent,
-      useQueryExpansion: false,
-      useHybridSearch: false,
-    }));
-  }
-
-  // Second fallback: if still no results, retry with even lower threshold (broad recall).
-  if (ragContext.totalResults === 0) {
-    ragContext = await perfMeasure('kb.retrieve_attempt:3', () => retrieveContext(query, {
-      topK: 5,
-      minScore: 0.35,
-      categories: undefined,
-      sourceTypes: ['knowledge'],
-      villageId,
-      waUserId: searchContext.waUserId,
-      sessionId: searchContext.sessionId,
-      channel: searchContext.channel,
-      precomputedIntent,
-      useQueryExpansion: false,
-      useHybridSearch: false,
-    }));
-  }
-
-  // Final fallback: bypass hybrid/rerank and use raw vector retrieval.
-  if (ragContext.totalResults === 0) {
-    ragContext = await perfMeasure('kb.retrieve_attempt:4', () => retrieveContext(query, {
-      topK: 5,
-      minScore: 0.35,
-      categories: undefined,
-      sourceTypes: ['knowledge'],
-      villageId,
-      waUserId: searchContext.waUserId,
-      sessionId: searchContext.sessionId,
-      channel: searchContext.channel,
-      useHybridSearch: false,
-    }));
-  }
 
   if (ragContext.totalResults === 0) {
     return {

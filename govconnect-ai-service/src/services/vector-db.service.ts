@@ -13,6 +13,7 @@
 
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
+import { perfSpan, perfMeasure, perfCount } from '../pipeline/perf-timer';
 import { Prisma } from '@prisma/client';
 import { config } from '../config/env';
 import {
@@ -347,13 +348,17 @@ export async function searchVectors(
     // NOTE: Categories are NOT used in SQL WHERE because NLU category names
     // (e.g. "informasi_umum") often don't match stored categories (e.g. "umum", "general").
     // Using category as a hard filter causes 0 results. Vector similarity is the primary filter.
-    if (sourceTypes.includes('knowledge')) {
-      // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
-      // Actual quality filtering happens post-RRF in rerank stage.
-      const sqlMinScore = minScore;
-      const knowledgeQuery = villageId
+    // Perf (P0-1): the three vector scans below are independent DB reads, so they are
+    // launched in parallel via Promise.all. Row processing stays sequential afterwards
+    // (knowledge -> document -> variants) to preserve push order and the variant
+    // dedup semantics (variants must not duplicate direct knowledge hits).
+    // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
+    // Actual quality filtering happens post-RRF in rerank stage.
+    const sqlMinScore = minScore;
+    const knowledgeQuery = sourceTypes.includes('knowledge')
+      ? (villageId
         ? Prisma.sql`
-            SELECT 
+            SELECT
               id, content, title, category, keywords,
               1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity,
               'knowledge' as source_type, quality_score
@@ -362,53 +367,19 @@ export async function searchVectors(
               AND ${tenantScopeFilter}
           `
         : Prisma.sql`
-            SELECT 
+            SELECT
               id, content, title, category, keywords,
               1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity,
               'knowledge' as source_type, quality_score
             FROM ai.knowledge_vectors
             WHERE 1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
-          `;
-
-      const knowledgeResults = await prisma.$queryRaw<VectorSearchRow[]>`
-        ${knowledgeQuery}
-        ORDER BY similarity DESC
-        LIMIT ${topK}
-      `;
-
-      for (const row of knowledgeResults) {
-        // Apply quality_score as a slight boost to similarity
-        const qualityBoost = (row.quality_score ?? 1.0) * 0.03; // max +3% boost
-        // Soft boost if category matches NLU categories
-        const categoryBoost = categories?.length && row.category
-          && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
-            || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
-          ? 0.02 : 0;
-        const adjustedScore = Math.min(1.0, row.similarity + qualityBoost + categoryBoost);
-
-        results.push({
-          id: row.id,
-          content: row.content,
-          score: adjustedScore,
-          source: row.title,
-          sourceType: 'knowledge',
-          metadata: {
-            category: row.category,
-            keywords: row.keywords,
-            qualityScore: row.quality_score,
-          },
-        });
-      }
-    }
-
-    // Search document vectors
-    if (sourceTypes.includes('document')) {
-      // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
-      const sqlMinScore = minScore;
-      const documentQuery = villageId
+          `)
+      : null;
+    const documentQuery = sourceTypes.includes('document')
+      ? (villageId
         ? Prisma.sql`
-            SELECT 
+            SELECT
               id, content, document_title as title, category,
               document_id, chunk_index, page_number, section_title, provenance_json,
               1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity,
@@ -420,7 +391,7 @@ export async function searchVectors(
               AND publish_status = 'published'
           `
         : Prisma.sql`
-            SELECT 
+            SELECT
               id, content, document_title as title, category,
               document_id, chunk_index, page_number, section_title, provenance_json,
               1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity,
@@ -430,46 +401,12 @@ export async function searchVectors(
               AND ${tenantScopeFilter}
               -- §5.2 publish review gate: only published documents are retrievable.
               AND publish_status = 'published'
-          `;
-
-      const documentResults = await prisma.$queryRaw<VectorSearchRow[]>`
-        ${documentQuery}
-        ORDER BY similarity DESC
-        LIMIT ${topK}
-      `;
-
-      for (const row of documentResults) {
-        // Soft boost if category matches NLU categories
-        const categoryBoost = categories?.length && row.category
-          && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
-            || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
-          ? 0.02 : 0;
-
-        results.push({
-          id: row.id,
-          content: row.content,
-          score: row.similarity + categoryBoost,
-          source: row.title || row.document_id || row.id,
-          sourceType: 'document',
-          metadata: {
-            documentId: row.document_id,
-            chunkIndex: row.chunk_index,
-            pageNumber: row.page_number,
-            sectionTitle: row.section_title,
-            provenance: row.provenance_json,
-            category: row.category,
-          },
-        });
-      }
-    }
-
-    // Search question variants (maps back to parent knowledge entries)
-    if (sourceTypes.includes('knowledge')) {
-      try {
-        const sqlMinScore = minScore;
-        const variantQuery = villageId
-          ? Prisma.sql`
-              SELECT 
+          `)
+      : null;
+    const variantQuery = sourceTypes.includes('knowledge')
+      ? (villageId
+        ? Prisma.sql`
+              SELECT
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
                 1 - (qv.embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity
@@ -479,8 +416,8 @@ export async function searchVectors(
                 AND qv.source_type = 'knowledge'
                 AND ((qv.village_id = ${villageId} AND qv.scope = 'village' AND qv.is_global = FALSE) OR (qv.scope = 'global' AND qv.is_global = TRUE))
             `
-          : Prisma.sql`
-              SELECT 
+        : Prisma.sql`
+              SELECT
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
                 1 - (qv.embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity
@@ -490,35 +427,99 @@ export async function searchVectors(
                 AND qv.source_type = 'knowledge'
                 AND qv.scope = 'global'
                 AND qv.is_global = TRUE
-            `;
+            `)
+      : null;
 
-        const variantResults = await prisma.$queryRaw<any[]>`
-          ${variantQuery}
-          ORDER BY similarity DESC
-          LIMIT ${topK}
-        `;
+    const [knowledgeResults, documentResults, variantResults] = await Promise.all([
+      knowledgeQuery
+        ? perfMeasure('db.vector_query:knowledge', () => prisma.$queryRaw<VectorSearchRow[]>`
+            ${knowledgeQuery}
+            ORDER BY similarity DESC
+            LIMIT ${topK}
+          `)
+        : Promise.resolve([] as VectorSearchRow[]),
+      documentQuery
+        ? perfMeasure('db.vector_query:document', () => prisma.$queryRaw<VectorSearchRow[]>`
+            ${documentQuery}
+            ORDER BY similarity DESC
+            LIMIT ${topK}
+          `)
+        : Promise.resolve([] as VectorSearchRow[]),
+      // question_variants table may not exist yet — graceful fallback
+      variantQuery
+        ? prisma.$queryRaw<any[]>`
+            ${variantQuery}
+            ORDER BY similarity DESC
+            LIMIT ${topK}
+          `.catch(() => [] as any[])
+        : Promise.resolve([] as any[]),
+    ]);
 
-        for (const row of variantResults) {
-          // Only add if not already in results (avoid duplicates with direct knowledge match)
-          if (!results.some(r => r.id === row.source_id)) {
-            const qualityBoost = (row.quality_score ?? 1.0) * 0.03;
-            results.push({
-              id: row.source_id,
-              content: row.content,
-              score: Math.min(1.0, row.similarity + qualityBoost),
-              source: row.title,
-              sourceType: 'knowledge',
-              metadata: {
-                category: row.category,
-                keywords: row.keywords,
-                qualityScore: row.quality_score,
-                matchedVariant: row.variant_text,
-              },
-            });
-          }
-        }
-      } catch {
-        // question_variants table may not exist yet — graceful fallback
+    for (const row of knowledgeResults) {
+      // Apply quality_score as a slight boost to similarity
+      const qualityBoost = (row.quality_score ?? 1.0) * 0.03; // max +3% boost
+      // Soft boost if category matches NLU categories
+      const categoryBoost = categories?.length && row.category
+        && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
+          || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
+        ? 0.02 : 0;
+      const adjustedScore = Math.min(1.0, row.similarity + qualityBoost + categoryBoost);
+
+      results.push({
+        id: row.id,
+        content: row.content,
+        score: adjustedScore,
+        source: row.title,
+        sourceType: 'knowledge',
+        metadata: {
+          category: row.category,
+          keywords: row.keywords,
+          qualityScore: row.quality_score,
+        },
+      });
+    }
+
+    for (const row of documentResults) {
+      // Soft boost if category matches NLU categories
+      const categoryBoost = categories?.length && row.category
+        && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
+          || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
+        ? 0.02 : 0;
+
+      results.push({
+        id: row.id,
+        content: row.content,
+        score: row.similarity + categoryBoost,
+        source: row.title || row.document_id || row.id,
+        sourceType: 'document',
+        metadata: {
+          documentId: row.document_id,
+          chunkIndex: row.chunk_index,
+          pageNumber: row.page_number,
+          sectionTitle: row.section_title,
+          provenance: row.provenance_json,
+          category: row.category,
+        },
+      });
+    }
+
+    for (const row of variantResults) {
+      // Only add if not already in results (avoid duplicates with direct knowledge match)
+      if (!results.some(r => r.id === row.source_id)) {
+        const qualityBoost = (row.quality_score ?? 1.0) * 0.03;
+        results.push({
+          id: row.source_id,
+          content: row.content,
+          score: Math.min(1.0, row.similarity + qualityBoost),
+          source: row.title,
+          sourceType: 'knowledge',
+          metadata: {
+            category: row.category,
+            keywords: row.keywords,
+            qualityScore: row.quality_score,
+            matchedVariant: row.variant_text,
+          },
+        });
       }
     }
 
