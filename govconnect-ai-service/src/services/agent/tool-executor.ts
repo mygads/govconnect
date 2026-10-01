@@ -6,6 +6,7 @@
  */
 
 import logger from '../../utils/logger';
+import { assertNotAborted } from '../../pipeline/abort-guard';
 import {
   getImportantContacts,
   isConfidentContactLookupResult,
@@ -495,11 +496,38 @@ async function toolGetVillageProfile(ctx: ToolContext): Promise<ToolCallResult> 
       operating_hours: profile?.operating_hours || null,
       office_contacts: officeContacts,
     },
+    // P0-3: natural-language render so no caller ever needs to dump the
+    // raw data object (JSON) into a citizen reply.
+    suggested_response: buildVillageProfileResponse(profile, officeContacts),
     meta: {
       trustLevel: 'trusted_fact',
       sourceKind: 'official_village_profile',
     },
   };
+}
+
+/**
+ * P0-3 helper: render the village profile + office contacts as natural
+ * Indonesian text. Used as the tool's suggested_response so the model (or
+ * a deterministic lane) relays prose, never raw JSON.
+ */
+function buildVillageProfileResponse(
+  profile: { name?: string | null; address?: string | null; operating_hours?: string | null } | null,
+  officeContacts: Array<{ name: string; phone: string; description?: string | null }>,
+): string {
+  const parts: string[] = [];
+  if (profile?.name) parts.push(`Profil ${profile.name}.`);
+  if (profile?.address) parts.push(`Alamat kantor desa: ${profile.address}.`);
+  if (profile?.operating_hours) parts.push(`Jam operasional: ${profile.operating_hours}.`);
+  if (officeContacts.length > 0) {
+    const listed = officeContacts
+      .map((c) => `${c.name}${c.phone ? ` (${c.phone})` : ''}`)
+      .join('; ');
+    parts.push(`Kontak kantor desa: ${listed}.`);
+  }
+  return parts.length > 0
+    ? parts.join(' ')
+    : 'Profil desa belum tersedia lengkap. Silakan hubungi kantor desa langsung untuk informasi resmi.';
 }
 
 async function toolGetServiceInfo(
@@ -785,6 +813,13 @@ async function toolGetComplaintCategories(ctx: ToolContext): Promise<ToolCallRes
       category_total: groupedCategories.length,
       selection_hint: 'Utamakan type_id resmi saat membuat pengaduan. category_id hanya kategori induk.',
     },
+    // P0-3: natural-language render so no caller ever needs to dump the
+    // raw data object (JSON) into a citizen reply.
+    suggested_response: groupedCategories.length > 0
+      ? `Kategori laporan yang tersedia di desa: ${groupedCategories
+          .map((g) => g.category_name ?? 'Lainnya')
+          .join(', ')}.`
+      : 'Daftar kategori laporan belum tersedia. Silakan hubungi kantor desa langsung.',
     meta: {
       trustLevel: 'trusted_fact',
       sourceKind: 'official_complaint_types',
@@ -1316,6 +1351,10 @@ async function toolSearchUserMemory(
       })),
       usage_policy: 'Gunakan hanya sebagai konteks personal user, bukan fakta resmi desa.',
     },
+    // P0-3: natural-language render so the model relays prose, never raw JSON.
+    suggested_response: memories.length > 0
+      ? `Dari percakapan sebelumnya saya ingat: ${memories.slice(0, 3).map((m) => m.content).join('; ')}.`
+      : 'Saya tidak menemukan catatan percakapan sebelumnya yang relevan.',
     meta: {
       trustLevel: 'trusted_record',
       sourceKind: 'user_memory',
@@ -1452,6 +1491,10 @@ async function toolCreateComplaint(
       },
     };
   }
+  // P1-5: re-check the turn abort immediately before the write. The awaits
+  // above (category resolve, profile fetch) may have taken long enough for
+  // the turn to be aborted; without this re-check the write would still land.
+  assertNotAborted(ctx.abortSignal, 'create_complaint');
   const complaintId = await createComplaint({
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -1727,6 +1770,8 @@ async function toolUpdateComplaint(
     };
   }
 
+  // P1-5: fail-closed re-check before the write (see create_complaint above).
+  assertNotAborted(ctx.abortSignal, 'update_complaint');
   const result = await updateComplaintByUser(referenceNumber, {
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -1841,6 +1886,9 @@ async function toolGetServiceRequestEditLink(
     };
   }
 
+  // P1-5: fail-closed — minting an edit token writes a token row in
+  // case-service; never start it on an aborted turn.
+  assertNotAborted(ctx.abortSignal, 'get_service_request_edit_link');
   const tokenResult = await requestServiceRequestEditToken(referenceNumber, {
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -2175,6 +2223,8 @@ async function toolCancelRequest(
         },
       };
     }
+    // P1-5: fail-closed re-check before the write (see create_complaint above).
+    assertNotAborted(ctx.abortSignal, 'cancel_complaint');
     const result = await cancelComplaint(referenceNumber, {
       wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
       channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -2239,6 +2289,8 @@ async function toolCancelRequest(
     };
   }
 
+  // P1-5: fail-closed re-check before the write (see create_complaint above).
+  assertNotAborted(ctx.abortSignal, 'cancel_service_request');
   const result = await cancelServiceRequest(referenceNumber, {
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',

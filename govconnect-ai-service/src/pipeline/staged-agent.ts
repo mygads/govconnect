@@ -35,6 +35,8 @@ import { buildPrompt } from './prompt-builder';
 import { DEFAULT_IDENTITY, type VillageIdentity } from '../services/village-identity.service';
 import { resolveExperimentVariant } from '../services/experiment-framework.service';
 import { issueFallback, assertNonEmptyResponse } from './fallback-policy';
+import { toolResultToUserText } from './tool-result-text';
+import { assertNotAborted, createTurnAbortController } from './abort-guard';
 import {
   createPipelineContext, remainingMs,
   type PipelineContext, type Stage, type StageDecision, type ToolTraceEntry, type TurnResult,
@@ -107,7 +109,12 @@ function toGatewayContext(input: StagedAgentInput, stage: Stage, signal?: AbortS
   };
 }
 
-/** Serialize a tool result for the model: prefer the human-readable suggestion. */
+/** Serialize a tool result for the model: prefer the human-readable suggestion.
+ *
+ * P0-3: LLM-FACING ONLY. This may return raw JSON for the model to consume
+ * as tool content — it must NEVER be rendered directly into a citizen
+ * reply. Citizen-facing lanes use {@link toolResultToUserText} instead.
+ */
 function resultToText(result: ToolCallResult | undefined): string {
   if (!result) return '{}';
   if (result.suggested_response) return result.suggested_response;
@@ -136,7 +143,15 @@ function greetingReply(villageName: string, identity: VillageIdentity = DEFAULT_
 async function emergencyReply(input: StagedAgentInput): Promise<{ text: string; trace: ToolTraceEntry[] }> {
   const gw = toGatewayContext(input, 'EMERGENCY');
   const r = await gatewayExecute('get_emergency_contacts', {}, gw);
-  const contacts = r.ok ? resultToText(r.result) : '';
+  // P0-3: citizen-facing — never render the raw tool payload. The tool
+  // always ships a nested suggested_response, but even if it didn't, the
+  // fallback below (not JSON) is what the citizen sees.
+  const contacts = r.ok
+    ? toolResultToUserText(
+        r.result,
+        'Kontak darurat belum terdaftar — hubungi perangkat desa langsung.',
+      )
+    : '';
   const text = [
     'Ini kontak darurat yang tercatat di desa. Jika situasi mengancam jiwa, hubungi nomor di atas segera dan utamakan keselamatan.',
     contacts || 'Kontak darurat belum terdaftar — hubungi perangkat desa langsung.',
@@ -380,11 +395,17 @@ async function executeConfirmed(
   mutation: { tool: string; args: Record<string, unknown> },
   finish: (partial: Omit<TurnResult, 'durationMs' | 'assessorCalls'>) => TurnResult,
   failover: (reason: string, error?: string) => Promise<TurnResult>,
+  signal?: AbortSignal,
 ): Promise<TurnResult> {
+  // P1-5: fail-closed — never execute a confirmed mutation on an aborted turn.
+  assertNotAborted(signal, 'execute_confirmed_mutation');
   const r = await gatewayExecute(mutation.tool as AgentToolName, mutation.args, gw);
   if (!r.ok) return await failover(`mutation_failed:${r.error}`, r.error);
+  // P0-3: citizen-facing — prefer the tool's suggested_response; NEVER dump
+  // the raw tool payload (JSON) into the reply.
   const { text: verified } = verifyAnswer(
-    `Berhasil diproses. ${resultToText(r.result).slice(0, 500)}`, [r.trace],
+    `Berhasil diproses. ${toolResultToUserText(r.result, 'Petugas desa akan menindaklanjuti.')}`,
+    [r.trace],
   );
   return finish({
     terminalState: 'SUCCEEDED', response: verified, stage: 'EXECUTE', intent: 'mutation',
@@ -392,8 +413,8 @@ async function executeConfirmed(
   });
 }
 
-function gwFor(input: StagedAgentInput, stage: Stage): GatewayContext {
-  return toGatewayContext(input, stage);
+function gwFor(input: StagedAgentInput, stage: Stage, signal?: AbortSignal): GatewayContext {
+  return toGatewayContext(input, stage, signal);
 }
 
 /** Main entry: run one turn of the staged agent for the routed stage. */
@@ -525,10 +546,17 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
           return failover('verify_missing_mutation_data', 'slots incomplete at verify');
         }
         input.ctx.slots.pendingTool = bound;
-        const res = await executeConfirmed(input, gwFor(input, 'EXECUTE'), bound, finish, failover);
-        // Replay protection: the pending mutation is single-use.
-        delete input.ctx.slots.pendingTool;
-        return res;
+        // P1-5: the deterministic execute path gets the same per-turn abort
+        // budget as the agent loop, and the signal is threaded into the
+        // gateway so an aborted turn refuses the mutation outright.
+        const turnAbort = createTurnAbortController(Math.max(1000, remainingMs(input.ctx)));
+        try {
+          const res = await executeConfirmed(input, gwFor(input, 'EXECUTE', turnAbort.signal), bound, finish, failover, turnAbort.signal);
+          return res;
+        } finally {
+          turnAbort.dispose();
+          delete input.ctx.slots.pendingTool;
+        }
       }
       // Default: mint the pending mutation (so the next turn's confirm_send
       // click can bind to it) and show the deterministic summary again.
@@ -600,11 +628,19 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
       if (!mutation) {
         return failover('execute_without_pending_tool', 'no pending mutation in slots');
       }
-      const execRes = await executeConfirmed(input, gwFor(input, 'EXECUTE'), mutation, finish, failover);
-      // Replay protection: the pending mutation is single-use. A replayed
-      // confirm_send click finds no pendingTool and is rejected as stale.
-      delete input.ctx.slots.pendingTool;
-      return execRes;
+      // P1-5: per-turn abort budget for the deterministic execute path;
+      // the signal is threaded into the gateway so an aborted turn refuses
+      // the mutation outright (fail-closed).
+      const turnAbort = createTurnAbortController(Math.max(1000, remainingMs(input.ctx)));
+      try {
+        const execRes = await executeConfirmed(input, gwFor(input, 'EXECUTE', turnAbort.signal), mutation, finish, failover, turnAbort.signal);
+        return execRes;
+      } finally {
+        turnAbort.dispose();
+        // Replay protection: the pending mutation is single-use. A replayed
+        // confirm_send click finds no pendingTool and is rejected as stale.
+        delete input.ctx.slots.pendingTool;
+      }
     }
 
     // ── Agent stages: bounded loop with stage allowlist ──

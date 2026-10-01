@@ -8,6 +8,7 @@ import {
   classifyQueryIntent,
 } from './rag.service';
 import { searchKnowledgeByKeywordsDirect, countKnowledgeDocs } from './vector-db.service';
+import { perfSpan, perfMeasure, perfCount } from '../pipeline/perf-timer';
 import { RAGContext, RAGQualityAssessment } from '../types/embedding.types';
 import { classifyProfileQuery } from './micro-llm-matcher.service';
 
@@ -109,7 +110,7 @@ export async function searchKnowledge(
   const searchContext = normalizeSearchContext(villageOrContext, channel);
   const { villageId } = searchContext;
   try {
-    const ragSearchEnabled = await isRAGSearchEnabled(villageId);
+    const ragSearchEnabled = await perfMeasure('kb.rag_enabled_check', () => isRAGSearchEnabled(villageId));
 
     logger.info('Searching knowledge base', {
       query: query.substring(0, 100),
@@ -210,7 +211,7 @@ export async function searchDocuments(
   const searchContext = normalizeSearchContext(villageOrContext, channel);
   const { villageId } = searchContext;
   try {
-    const ragSearchEnabled = await isRAGSearchEnabled(villageId);
+    const ragSearchEnabled = await perfMeasure('kb.rag_enabled_check', () => isRAGSearchEnabled(villageId));
     if (!ragSearchEnabled) {
       const empty = {
         data: [],
@@ -405,7 +406,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
   
   // P0-1 FIX: Early-exit if village has 0 KB docs (avoids 4x wasted RAG retries + LLM intent classification)
   try {
-    const kbCount = await countKnowledgeDocs(villageId);
+    const kbCount = await perfMeasure('kb.count_docs', () => countKnowledgeDocs(villageId));
     if (kbCount === 0) {
       logger.debug('KB early-exit: village has 0 documents, skipping RAG', { villageId });
       return { data: [], total: 0, context: '' };
@@ -421,18 +422,18 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
   // (avoids 4x redundant LLM calls when KB is empty or no results found)
   let precomputedIntent = null;
   try {
-    precomputedIntent = await classifyQueryIntent(query, {
+    precomputedIntent = await perfMeasure('kb.intent_classify', () => classifyQueryIntent(query, {
       village_id: villageId,
       wa_user_id: searchContext.waUserId,
       session_id: searchContext.sessionId,
       channel: searchContext.channel,
-    });
+    }));
   } catch (e) {
     // If intent classification fails, let retrieveContext handle it per-call
   }
 
   // First attempt: use NLU-inferred categories (better precision when correct)
-  let ragContext = await retrieveContext(query, {
+  let ragContext = await perfMeasure('kb.retrieve_attempt:1', () => retrieveContext(query, {
     topK: 5,
     minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
     categories: effectiveCategories,
@@ -444,7 +445,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
     precomputedIntent,
     useQueryExpansion: false,  // Perf: skip LLM query expansion for fallback searches
     useHybridSearch: false,    // Perf: skip hybrid rerank for fallback searches
-  });
+  }));
 
   // Fallback: if NLU category filtering is too strict, retry WITHOUT category filter.
   // This improves recall for generic KB (e.g., glossary/5W1H) that may not match NLU categories.
@@ -453,7 +454,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
         effectiveCategories,
       });
 
-    ragContext = await retrieveContext(query, {
+    ragContext = await perfMeasure('kb.retrieve_attempt:2', () => retrieveContext(query, {
       topK: 5,
       minScore: 0.45,
       categories: undefined,
@@ -465,12 +466,12 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
       precomputedIntent,
       useQueryExpansion: false,
       useHybridSearch: false,
-    });
+    }));
   }
 
   // Second fallback: if still no results, retry with even lower threshold (broad recall).
   if (ragContext.totalResults === 0) {
-    ragContext = await retrieveContext(query, {
+    ragContext = await perfMeasure('kb.retrieve_attempt:3', () => retrieveContext(query, {
       topK: 5,
       minScore: 0.35,
       categories: undefined,
@@ -482,12 +483,12 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
       precomputedIntent,
       useQueryExpansion: false,
       useHybridSearch: false,
-    });
+    }));
   }
 
   // Final fallback: bypass hybrid/rerank and use raw vector retrieval.
   if (ragContext.totalResults === 0) {
-    ragContext = await retrieveContext(query, {
+    ragContext = await perfMeasure('kb.retrieve_attempt:4', () => retrieveContext(query, {
       topK: 5,
       minScore: 0.35,
       categories: undefined,
@@ -497,7 +498,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
       sessionId: searchContext.sessionId,
       channel: searchContext.channel,
       useHybridSearch: false,
-    });
+    }));
   }
 
   if (ragContext.totalResults === 0) {

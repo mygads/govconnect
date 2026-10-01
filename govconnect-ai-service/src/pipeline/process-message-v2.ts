@@ -39,6 +39,7 @@ import { isVillageKilled, KILL_SWITCH_REPLY } from './kill-switch';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
 import { applyMemoryPolicy } from './memory-policy';
 import { issueFallback } from './fallback-policy';
+import { sanitizeOutboundText } from './outbound-sanitizer';
 import {
   confirmButtons, categoryList, validateInteractive, type InteractivePayload,
   resolveTriageCategory,
@@ -1183,6 +1184,18 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       logger.warn('[processMessageV2] canary outbound check failed (fail-open on the check, response untouched)', {
         traceId: result.metadata?.traceId, error: (err as Error)?.message ?? String(err),
       });
+    }
+
+    // P0-3: raw-JSON tripwire — the same choke point also guarantees no raw
+    // JSON / debug structure ever leaves as a citizen reply. The sanitizer
+    // never throws and never returns empty (never-silent).
+    const sanitized = sanitizeOutboundText(result.response ?? '');
+    if (sanitized.substituted) {
+      result = {
+        ...result,
+        response: sanitized.text,
+        metadata: { ...(result.metadata ?? {}), rawJsonBlocked: true },
+      };
     }
   } finally {
     // Finalize accrual BEFORE resolution accounting: recordResolution sums
