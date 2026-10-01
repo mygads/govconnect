@@ -2091,13 +2091,30 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       return finish(multiIntentResult);
     }
 
-    const outOfScopeGuardResult = sideEffectMode === 'knowledge_test' || !shouldHardBlockOutOfScope(routingDecision)
-      ? null
-      : tryHandleOutOfScopeGuard({
-          message: workingMessage,
-          traceId,
-          startTime,
-        });
+    // [P1-2 FIX] Government service redirect (SIM, paspor, dll) harus dicek
+    // independen dari routing decision — "di desa bisa perpanjang SIM nggak?"
+    // sering terklasifikasi SERVICE_INFO bukan OUT_OF_SCOPE.
+    const { buildGovtServiceRedirect: checkGovtRedirect } = await import('./pre-agent-state-router.service');
+    const govtServiceRedirect = sideEffectMode === 'knowledge_test' ? null : checkGovtRedirect(workingMessage);
+    const outOfScopeGuardResult: ProcessMessageResult | null = govtServiceRedirect
+      ? {
+          success: true,
+          response: govtServiceRedirect,
+          intent: 'QUESTION',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            hasKnowledge: false,
+            agentMode: 'pre_agent_guard' as const,
+            traceId,
+          },
+        }
+      : sideEffectMode === 'knowledge_test' || !shouldHardBlockOutOfScope(routingDecision)
+        ? null
+        : tryHandleOutOfScopeGuard({
+            message: workingMessage,
+            traceId,
+            startTime,
+          });
     if (outOfScopeGuardResult) {
       routingOutcome = {
         outcome: 'hard_blocked',
