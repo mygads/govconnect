@@ -52,6 +52,14 @@ export interface GatewayContext {
   recentSignatures: string[];
   /** Identity ladder level (L0/L1/L2) resolved at ingress. */
   identityLevel?: IdentityLevel;
+  /**
+   * P1-4: per-turn tool dedup cache, shared across every gatewayExecute in
+   * the turn (including parallel batches). Created once per turn by the
+   * pipeline; identical (normalized) tool+args execute once and share the
+   * result. Value is a promise so concurrent duplicates share in-flight
+   * executions.
+   */
+  dedupCache?: Map<string, Promise<ExecutedToolCall>>;
 }
 
 export interface GatewayResult {
@@ -188,6 +196,9 @@ export async function gatewayExecute(
         isEvaluation: ctx.isEvaluation,
         sideEffectMode: ctx.sideEffectMode,
         abortSignal: ctx.signal,
+        // P1-4: per-turn dedup across the whole turn (shared with parallel
+        // batches so concurrent identical calls execute once).
+        executedTools: ctx.dedupCache,
       });
       let executed: ExecutedToolCall;
       try {

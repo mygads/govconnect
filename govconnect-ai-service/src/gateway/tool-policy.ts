@@ -51,3 +51,38 @@ export const STAGE_TOOL_ALLOWLIST: Record<Stage, ReadonlySet<AgentToolName>> = {
 export function isParallelizable(tool: AgentToolName): boolean {
   return TOOL_GRADES[tool] === 'G0';
 }
+
+/**
+ * P1-4: max concurrent tool executions inside one parallel wave.
+ * Bounds fan-out so one chatty turn cannot stampede downstream services
+ * (case-service, knowledge/RAG, vector DB).
+ *
+ * Lives in this PURE module (no service imports) so pipeline stages can
+ * use the concurrency bound without pulling the heavy tool-executor
+ * dependency graph at module-evaluation time.
+ */
+export const TOOL_PARALLEL_LIMIT = 5;
+
+/**
+ * Run async task factories with at most `limit` in flight.
+ * Results come back in task order. A task that rejects does NOT cancel
+ * its siblings — each worker keeps draining the queue.
+ */
+export async function runWithConcurrencyLimit<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<T[]> {
+  const results = new Array<T>(tasks.length);
+  let next = 0;
+  const workerCount = Math.max(1, Math.min(limit, tasks.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const i = next;
+      next += 1;
+      if (i >= tasks.length) return;
+      results[i] = await tasks[i]();
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
