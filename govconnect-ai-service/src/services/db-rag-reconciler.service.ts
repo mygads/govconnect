@@ -261,12 +261,21 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
   }
 
   const usedServiceTool = toolsUsed.includes('get_service_info');
-  if (usedServiceTool) {
+  // DB-first for service requirements also applies when the answer was sourced
+  // from the KB (search_knowledge/search_documents) WITHOUT get_service_info:
+  // a KB document can list different requirements than the DB service
+  // requirements, and the DB must win. Cost/duration/mode/availability stay
+  // gated on the service tool to avoid false positives on narrative KB text.
+  const kbAnswersRequirements = !usedServiceTool
+    && REQUIREMENT_SIGNAL_REGEX.test(responseText)
+    && responseMentionsRequirementDocs(responseText);
+  if (usedServiceTool || kbAnswersRequirements) {
     const services = await getServiceCatalog(villageId).catch(() => []);
     const matchedService = findUniqueServiceMention(services, [userMessage || '', responseText]);
 
     if (
-      matchedService?.estimated_cost
+      usedServiceTool
+      && matchedService?.estimated_cost
       && COST_SIGNAL_REGEX.test(responseText)
       && !responseMatchesServiceCost(responseText, matchedService.estimated_cost)
     ) {
@@ -280,7 +289,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
     }
 
     if (
-      matchedService?.estimated_processing_time
+      usedServiceTool
+      && matchedService?.estimated_processing_time
       && DURATION_SIGNAL_REGEX.test(responseText)
       && !responseMatchesServiceDuration(responseText, matchedService.estimated_processing_time)
     ) {
@@ -293,7 +303,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
       });
     }
 
-    if (matchedService?.mode) {
+    if (usedServiceTool && matchedService?.mode) {
       const mode = String(matchedService.mode).toLowerCase();
       const claimsOnline = responseClaimsOnlineAvailability(responseText);
       const claimsOfflineOnly = responseClaimsOfflineOnly(responseText);
@@ -319,7 +329,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
       }
     }
 
-    if (matchedService) {
+    if (usedServiceTool && matchedService) {
       const claimsAvailable = responseClaimsServiceAvailable(responseText);
       const claimsUnavailable = responseClaimsServiceUnavailable(responseText);
 
@@ -342,8 +352,12 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
           entityId: matchedService.id,
         });
       }
+    }
 
-      if (REQUIREMENT_SIGNAL_REGEX.test(responseText)) {
+    // Requirements check runs on BOTH paths: get_service_info answers AND
+    // KB-sourced answers (kbAnswersRequirements). DB service requirements
+    // always win over any requirement list coming from KB documents.
+    if (matchedService && (usedServiceTool || kbAnswersRequirements) && REQUIREMENT_SIGNAL_REGEX.test(responseText)) {
         const requirements = Array.isArray(matchedService.requirements) ? matchedService.requirements : [];
         const mentionsDocs = responseMentionsRequirementDocs(responseText);
 
@@ -376,7 +390,6 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
         }
       }
     }
-  }
 
   if (mismatches.length === 0) {
     return { ok: true, rewritten: false, mismatches: [] };

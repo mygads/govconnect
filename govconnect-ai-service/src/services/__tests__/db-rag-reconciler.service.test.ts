@@ -334,4 +334,129 @@ describe('db-rag reconciler', () => {
     expect(decision.ok).toBe(true);
     expect(decision.mismatches).toHaveLength(0);
   });
+
+  describe('KB-vs-DB alignment (DB-first enforcement, no get_service_info call)', () => {
+    const domisiliService = {
+      id: 'svc-1',
+      slug: 'surat-domisili',
+      name: 'Surat Keterangan Domisili',
+      is_active: true,
+      requirements: [
+        { label: 'KTP-el', is_required: true },
+        { label: 'Kartu Keluarga', is_required: true },
+      ],
+    };
+
+    it('rewrites a KB-sourced answer whose requirement list conflicts with DB', async () => {
+      // Artificial conflict: DB says KTP-el + Kartu Keluarga; the KB answer
+      // lists an entirely different set of documents.
+      vi.mocked(getServiceCatalog).mockResolvedValue([domisiliService] as any);
+
+      const decision = await reconcile({
+        villageId: 'village-1',
+        userMessage: 'syarat surat domisili apa aja?',
+        result: baseResult({
+          intent: 'SERVICE_INFO',
+          response:
+            'Syarat Surat Keterangan Domisili: 1. Surat pengantar RT/RW 2. Pas foto 4x6 3. Fotokopi buku nikah.',
+        }),
+        toolsUsed: ['search_knowledge'],
+      });
+
+      expect(decision.ok).toBe(false);
+      expect(decision.rewritten).toBe(true);
+      expect(
+        decision.mismatches.some((item) => item.kind === 'service_requirement_mismatch'),
+      ).toBe(true);
+      const mismatch = decision.mismatches.find((item) => item.kind === 'service_requirement_mismatch')!;
+      expect(mismatch.entityType).toBe('service');
+      expect(mismatch.entityId).toBe('svc-1');
+      // DB value is recorded so admins can see what the official list is.
+      expect(mismatch.dbValue).toContain('KTP-el');
+      // Conflict is persisted for the admin dashboard (runtime mismatches).
+      expect(vi.mocked(recordRuntimeGroundingMismatches)).toHaveBeenCalled();
+      // The conflicting KB answer is not served to the user.
+      expect(decision.replacement?.response).not.toContain('Surat pengantar RT');
+    });
+
+    it('rewrites a KB-sourced "no requirements" claim when DB documents requirements', async () => {
+      vi.mocked(getServiceCatalog).mockResolvedValue([domisiliService] as any);
+
+      const decision = await reconcile({
+        villageId: 'village-1',
+        userMessage: 'syarat surat domisili?',
+        result: baseResult({
+          intent: 'SERVICE_INFO',
+          response: 'Untuk Surat Keterangan Domisili tidak ada syarat, cukup bawa fotokopi KK saja.',
+        }),
+        toolsUsed: ['search_knowledge'],
+      });
+
+      expect(decision.ok).toBe(false);
+      expect(
+        decision.mismatches.some((item) => item.kind === 'service_requirement_mismatch'),
+      ).toBe(true);
+    });
+
+    it('passes a KB-sourced answer that matches the DB requirement list', async () => {
+      // Consistent case: KB answer happens to agree with DB — no rewrite.
+      vi.mocked(getServiceCatalog).mockResolvedValue([domisiliService] as any);
+
+      const decision = await reconcile({
+        villageId: 'village-1',
+        userMessage: 'syarat surat domisili apa aja?',
+        result: baseResult({
+          intent: 'SERVICE_INFO',
+          response:
+            'Syarat Surat Keterangan Domisili: KTP-el dan Kartu Keluarga. Bawa dokumen aslinya ya.',
+        }),
+        toolsUsed: ['search_knowledge'],
+      });
+
+      expect(decision.ok).toBe(true);
+      expect(decision.rewritten).toBe(false);
+      expect(decision.mismatches).toHaveLength(0);
+    });
+
+    it('does not touch KB answers that do not mention requirement documents', async () => {
+      // Narrative KB answer without a document list — no false positive.
+      vi.mocked(getServiceCatalog).mockResolvedValue([domisiliService] as any);
+
+      const decision = await reconcile({
+        villageId: 'village-1',
+        userMessage: 'jam buka kantor desa?',
+        result: baseResult({
+          intent: 'QUESTION',
+          response: 'Kantor desa buka Senin sampai Jumat. Datang pagi biasanya lebih sepi.',
+        }),
+        toolsUsed: ['search_knowledge'],
+      });
+
+      expect(decision.ok).toBe(true);
+      expect(decision.mismatches).toHaveLength(0);
+      expect(vi.mocked(recordRuntimeGroundingMismatches)).not.toHaveBeenCalled();
+    });
+
+    it('does not flag KB requirement answers when no service can be matched', async () => {
+      // Two unrelated services in the catalog: no unique mention → no check,
+      // no false positive.
+      vi.mocked(getServiceCatalog).mockResolvedValue([
+        { id: 'svc-1', name: 'Surat Keterangan Domisili', is_active: true, requirements: [] },
+        { id: 'svc-2', name: 'Surat Keterangan Usaha', is_active: true, requirements: [] },
+      ] as any);
+
+      const decision = await reconcile({
+        villageId: 'village-1',
+        userMessage: 'syarat bikin SIM?',
+        result: baseResult({
+          intent: 'SERVICE_INFO',
+          response: 'Syarat bikin SIM: fotokopi KTP, surat keterangan sehat, dan pas foto.',
+        }),
+        toolsUsed: ['search_knowledge'],
+      });
+
+      expect(decision.ok).toBe(true);
+      expect(decision.mismatches).toHaveLength(0);
+    });
+  });
 });
