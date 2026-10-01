@@ -129,6 +129,8 @@ export interface ProcessMessageResult {
     traceId?: string;
     /** R6: outbound response contained a canary token and was substituted */
     canaryLeakBlocked?: boolean;
+    /** P0-3: outbound response was raw JSON / empty and was substituted */
+    rawJsonBlocked?: boolean;
     walletStatus?: string;
     walletBalanceUsd?: number;
     /** True when a wallet-exhausted message was held for later flush. */
