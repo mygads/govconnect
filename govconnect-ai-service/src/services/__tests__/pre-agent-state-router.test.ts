@@ -276,3 +276,35 @@ describe('[P1-2] govt service out-of-scope redirects', () => {
     expect(buildGovtServiceRedirect('syarat KK')).toBeNull();
   });
 });
+
+describe('[P1-3] multi-intent detection', () => {
+  it('detects multiple complaint topics', async () => {
+    const { detectMultiIntent } = await import('../pre-agent-state-router.service');
+    const result = detectMultiIntent('jalan rusak di rt 05, lampu mati, sampah numpuk 4 hari');
+    expect(result.isMulti).toBe(true);
+    expect(result.intents).toContain('complaint');
+    expect(result.topics.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('detects complaint + service_info mix', async () => {
+    const { detectMultiIntent } = await import('../pre-agent-state-router.service');
+    const result = detectMultiIntent('jalan rusak parah, terus syarat bikin KTP apa aja?');
+    expect(result.isMulti).toBe(true);
+    expect(result.intents).toContain('complaint');
+    expect(result.intents).toContain('service_info');
+  });
+
+  it('returns not multi for single topic', async () => {
+    const { detectMultiIntent } = await import('../pre-agent-state-router.service');
+    const result = detectMultiIntent('jalan rusak di rt 05');
+    expect(result.isMulti).toBe(false);
+  });
+
+  it('builds priority question response', async () => {
+    const { detectMultiIntent, buildMultiIntentResponse } = await import('../pre-agent-state-router.service');
+    const detection = detectMultiIntent('lampu mati dan sampah numpuk');
+    const response = buildMultiIntentResponse(detection);
+    expect(response).toMatch(/beberapa hal/i);
+    expect(response).toMatch(/mau mulai dari yang mana/i);
+  });
+});

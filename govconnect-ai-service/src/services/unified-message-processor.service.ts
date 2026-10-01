@@ -120,6 +120,9 @@ import {
   tryHandlePendingServiceClarification,
   tryHandleProtocolGuards,
   tryHandleOutOfScopeGuard,
+  tryHandleNikValidation,
+  detectMultiIntent,
+  buildMultiIntentResponse,
   tryHandleServiceListingShortcut,
   type FastIntentDecision,
 } from './pre-agent-state-router.service';
@@ -2062,6 +2065,31 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       return finish(activeServiceFollowUpResult);
     }
 
+    // [P1-3 FIX] Multi-intent: jika 2+ hal berbeda dalam satu pesan, tanya prioritas
+    const multiIntentResult: import('./ump-types').ProcessMessageResult | null = sideEffectMode === 'knowledge_test'
+      ? null
+      : (() => {
+          const detection = detectMultiIntent(workingMessage);
+          if (!detection.isMulti) return null;
+          const result: import('./ump-types').ProcessMessageResult = {
+            success: true,
+            response: buildMultiIntentResponse(detection),
+            intent: 'QUESTION',
+            metadata: {
+              processingTimeMs: Date.now() - startTime,
+              hasKnowledge: false,
+              agentMode: 'pre_agent_guard',
+              traceId,
+            },
+          };
+          return result;
+        })();
+    if (multiIntentResult) {
+      tracker.complete();
+      notifyStage('done', 100);
+      return finish(multiIntentResult);
+    }
+
     const outOfScopeGuardResult = sideEffectMode === 'knowledge_test' || !shouldHardBlockOutOfScope(routingDecision)
       ? null
       : tryHandleOutOfScopeGuard({
@@ -2089,6 +2117,34 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         messagePreview: workingMessage,
       });
       return finish(outOfScopeGuardResult);
+    }
+
+    // P1-4: NIK format validation — reject invalid NIK before it falls through
+    // to complaint classification.
+    const nikValidationResult = tryHandleNikValidation({
+      message: workingMessage,
+      traceId,
+      startTime,
+    });
+    if (nikValidationResult) {
+      routingOutcome = {
+        outcome: 'hard_blocked',
+        reason: nikValidationResult.intent,
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'pre_agent_identity',
+        guardType: 'nik_validation',
+        action: 'handled',
+        reason: nikValidationResult.intent,
+        messagePreview: workingMessage,
+      });
+      return finish(nikValidationResult);
     }
 
     // Deterministic service listing — bypasses RAG/knowledge for "layanan apa aja"
