@@ -118,6 +118,8 @@ export interface VectorSearchResult {
  */
 export type RetrievalMode = 'external_rerank' | 'heuristic_rerank' | 'raw_no_rerank';
 
+import type { QueryRewriteContext } from '../services/query-rewrite.service';
+
 export interface VectorSearchOptions {
   topK?: number;              // Number of results to return (default: 5)
   minScore?: number;          // Minimum similarity threshold (default: 0.7)
@@ -131,6 +133,12 @@ export interface VectorSearchOptions {
   useHybridSearch?: boolean;
   useQueryExpansion?: boolean;
   precomputedIntent?: any;  // Pre-computed query intent to skip NLU LLM call (perf optimization)
+  /**
+   * Konteks percakapan untuk query rewriting sebelum retrieval
+   * (query-rewrite.service.ts). Opsional: tanpa ini, rewrite tidak jalan
+   * dan query diteruskan apa adanya.
+   */
+  queryRewriteContext?: QueryRewriteContext;
 }
 
 /**
@@ -189,6 +197,10 @@ export interface RAGContext {
   retrievalDebug?: {
     hybridUsed: boolean;
     retrievalMode?: RetrievalMode;
+    /** Query rewriting sebelum retrieval: true bila query di-rewrite. */
+    rewroteQuery?: boolean;
+    /** Query final setelah rewrite (== query asli bila tidak di-rewrite). */
+    rewrittenQuery?: string;
     candidates: Array<{
       id: string;
       title: string;

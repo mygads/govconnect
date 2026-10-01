@@ -16,6 +16,7 @@ import { callAIGatewayPrompt, type GatewayChatMessage, type GatewayPromptResult 
 import { AGENT_TOOLS, type AgentToolName } from '../services/agent/tool-definitions';
 import type { ToolCallResult, ExecutedToolCall } from '../services/agent/tool-executor';
 import { gatewayExecute, type GatewayContext } from '../gateway/tool-gateway';
+import { buildQueryRewriteContext } from '../services/query-rewrite.service';
 import {
   INTENT_SLOT_KEY, nextMissingSlot, isCollectComplete, renderVerifySummary,
   isCancellation, isCorrectionRequest, extractSlotsDeterministic, mergeSlots,
@@ -99,6 +100,12 @@ function toGatewayContext(
   signal?: AbortSignal,
   dedupCache?: Map<string, Promise<ExecutedToolCall>>,
 ): GatewayContext {
+  // Query rewriting sebelum RAG: topik aktif + entitas dari slots turnState
+  // (deterministik). Bila slots kosong, rewrite tidak jalan (fail-safe).
+  const rewriteContext = buildQueryRewriteContext({ slots: input.ctx.slots });
+  const hasRewriteContext = Boolean(
+    rewriteContext.activeTopic || (rewriteContext.entities?.length ?? 0) > 0,
+  );
   return {
     userId: input.ctx.userId,
     tenantId: input.ctx.tenantId,
@@ -111,6 +118,7 @@ function toGatewayContext(
     idempotencyKeys: input.ctx.idempotencyKeys,
     recentSignatures: [],
     identityLevel: input.ctx.identityLevel,
+    rewriteContext: hasRewriteContext ? rewriteContext : undefined,
     signal,
     // P1-4: one dedup map per turn — shared by every tool call in this turn,
     // including concurrent ones in a parallel batch. Callers that run

@@ -66,6 +66,7 @@ import {
   needsHumanEscalation,
 } from './sentiment-analysis.service';
 import { startTakeoverForUser } from './channel-client.service';
+import { buildQueryRewriteContext } from './query-rewrite.service';
 import { getEnhancedContext } from './conversation-context.service';
 import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village-behavior.service';
 import { getVillageIdentity } from './village-identity.service';
@@ -1052,6 +1053,18 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     // Fail-open ke default (transparan, "Gana") bila dashboard tak terjangkau.
     const aiIdentity = await getVillageIdentity(villageId);
 
+    // Query rewriting sebelum RAG: bangun konteks percakapan (topik aktif +
+    // entitas) dari summary + recent messages secara deterministik. Tool
+    // search_knowledge/search_documents memakai ini untuk me-rewrite query
+    // anaforis ("kapan selesainya?") menjadi query lengkap sebelum embedding.
+    const queryRewriteContext = buildQueryRewriteContext({
+      summary: conversationSummary,
+      recentMessages: recentConversationHistory,
+    });
+    const hasRewriteContext = Boolean(
+      queryRewriteContext.activeTopic || (queryRewriteContext.entities?.length ?? 0) > 0,
+    );
+
     const result = await runAgent(
       message,
       {
@@ -1075,6 +1088,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         sideEffectMode,
         activeServiceSlug,
         activeServiceName,
+        rewriteContext: hasRewriteContext ? queryRewriteContext : undefined,
       },
       {
         summary: conversationSummary,

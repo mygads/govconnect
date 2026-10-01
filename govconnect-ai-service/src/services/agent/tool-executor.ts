@@ -30,6 +30,7 @@ import {
 } from '../case-client.service';
 import { rememberMemoryEvent, searchUserMemories } from '../hybrid-memory.service';
 import { searchDocuments, searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
+import type { QueryRewriteContext } from '../query-rewrite.service';
 import { searchKnowledgeByKeywordsDirect } from '../vector-db.service';
 import { loadSkill } from '../skill-loader.service';
 import { recordMemoryTrace } from '../runtime-observability.service';
@@ -132,6 +133,12 @@ interface ToolContext {
   // P1-5: Abort signal for turn budget. If aborted, don't start new tools
   // and don't use results from tools that completed after abort.
   abortSignal?: AbortSignal;
+  /**
+   * Konteks percakapan untuk query rewriting sebelum RAG retrieval
+   * (query-rewrite.service.ts). Dibangun oleh caller dari history/slots;
+   * diteruskan ke search_knowledge / search_documents.
+   */
+  rewriteContext?: QueryRewriteContext;
 }
 const MUTATION_TOOLS = new Set<AgentToolName>([
   'create_complaint',
@@ -1505,6 +1512,7 @@ async function toolSearchKnowledge(
     waUserId: ctx.userId,
     sessionId: ctx.userId,
     channel: ctx.channel,
+    rewriteContext: ctx.rewriteContext,
   });
   if (!result.context || result.total === 0) {
     // W6: if the fail-closed assertion discarded the retrieval, tell the
@@ -1587,6 +1595,7 @@ async function toolSearchDocuments(
     waUserId: ctx.userId,
     sessionId: ctx.userId,
     channel: ctx.channel,
+    rewriteContext: ctx.rewriteContext,
   });
   if (!result.context || result.total === 0) {
     return {
