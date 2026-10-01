@@ -11,7 +11,7 @@ import axios from 'axios';
 import { config } from '../config/env';
 import { extractNameViaNLU, analyzeAddress, matchComplaintType } from './micro-llm-matcher.service';
 import { getVillageProfileSummary } from './knowledge.service';
-import { getComplaintTypes } from './case-client.service';
+import { getComplaintTypes, getComplaintCategories } from './case-client.service';
 import type { ChannelType } from './ump-formatters';
 import { conversationHistoryCache, complaintTypeCache } from './ump-state';
 
@@ -339,4 +339,59 @@ export async function resolveVillageSlugForPublicForm(villageId?: string): Promi
     // ignore
   }
   return 'desa';
+}
+
+/**
+ * P1-2: Normalize a raw kategori string to the canonical complaint category
+ * name from the DB. This ensures the `kategori` column stores e.g.
+ * "Lampu Penerangan" instead of raw user input like "lampu jalan rt 05 mati".
+ *
+ * Strategy:
+ * 1. Exact (case-insensitive) match against category names → return canonical.
+ * 2. Micro-LLM semantic match against category names → return canonical if
+ *    confidence >= 0.5.
+ * 3. Fallback: return the original string unchanged (never block creation).
+ */
+export async function resolveComplaintCategoryName(
+  kategori: string | undefined,
+  villageId?: string
+): Promise<string | undefined> {
+  if (!kategori || !villageId) return kategori;
+
+  const categories = await getComplaintCategories(villageId);
+  if (!categories.length) return kategori;
+
+  const normalized = kategori.trim().toLowerCase();
+
+  // 1. Exact match (case-insensitive)
+  const exact = categories.find(c => c.name.trim().toLowerCase() === normalized);
+  if (exact) return exact.name;
+
+  // 2. Micro-LLM semantic match
+  try {
+    const options = categories
+      .filter(c => c?.id && c?.name)
+      .map(c => ({ id: c.id, name: c.name, categoryName: c.name }));
+    const { matchComplaintType } = await import('./micro-llm-matcher.service');
+    const result = await matchComplaintType(kategori, options as any);
+    if (result?.matched_id && result.confidence >= 0.5) {
+      const matched = categories.find(c => c.id === result.matched_id);
+      if (matched) {
+        logger.debug('resolveComplaintCategoryName: matched', {
+          kategori,
+          matchedName: matched.name,
+          confidence: result.confidence,
+        });
+        return matched.name;
+      }
+    }
+  } catch (error: any) {
+    logger.warn('resolveComplaintCategoryName: micro-LLM failed', {
+      error: error.message,
+      kategori,
+    });
+  }
+
+  // 3. Fallback: original unchanged
+  return kategori;
 }

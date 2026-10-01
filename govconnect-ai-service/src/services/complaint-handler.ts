@@ -304,12 +304,16 @@ export async function handleComplaintCreation(
 
   // P1-5: fail-closed — no write after the turn was aborted.
   assertNotAborted(opts?.signal, 'create_complaint');
+  // P1-2: normalize kategori to the canonical category name from DB
+  // (e.g. "Lampu Penerangan" instead of raw "lampu jalan rt 05 mati").
+  const { resolveComplaintCategoryName } = await import('./ump-utils');
+  const normalizedKategori = await resolveComplaintCategoryName(kategori, villageId) || kategori;
   const complaintId = await createComplaint({
     wa_user_id: isWebchatChannel ? undefined : userId,
     channel: isWebchatChannel ? 'WEBCHAT' : 'WHATSAPP',
     channel_identifier: userId,
-    kategori,
-    deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
+    kategori: normalizedKategori,
+    deskripsi: deskripsi || `Laporan ${normalizedKategori.replace(/_/g, ' ')}`,
     village_id: villageId,
     alamat: alamat || undefined,
     rt_rw: rt_rw || '',

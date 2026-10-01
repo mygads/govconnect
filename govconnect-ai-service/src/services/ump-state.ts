@@ -118,7 +118,10 @@ export const pendingComplaintData = new LRUCache<string, {
   foto_url?: string;
   channel: ChannelType;
   timestamp: number;
-  waitingFor: 'nama' | 'no_hp';
+  waitingFor: 'nama' | 'no_hp' | 'konfirmasi';
+  // P1-1: VERIFY stage — reporter identity collected for the confirmation summary
+  reporter_name?: string;
+  reporter_phone?: string;
 }>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingComplaintData' });
 
 // --- Pending Complaint Data accessors with DB persistence (Temuan 7) ---

@@ -241,6 +241,46 @@ export async function getComplaintTypes(villageId: string): Promise<ComplaintTyp
 }
 
 /**
+ * P1-2 — Fetch complaint CATEGORIES (not types) for a village.
+ * Used to normalize the raw kategori string to the canonical category name
+ * before storing a ticket. Fail-closed: returns [] without village_id.
+ */
+export interface ComplaintCategoryInfo {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export async function getComplaintCategories(villageId: string): Promise<ComplaintCategoryInfo[]> {
+  if (!villageId) {
+    logger.warn('getComplaintCategories called without villageId — refusing unscoped query (fail-closed)');
+    return [];
+  }
+  try {
+    const url = `${config.caseServiceUrl}/complaints/categories`;
+    const response = await resilientHttp.get<{ data: ComplaintCategoryInfo[] }>(url, {
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+        'Content-Type': 'application/json',
+        'x-admin-role': 'village_admin',
+        'x-village-id': villageId,
+      },
+      params: { village_id: villageId },
+      timeout: 10000,
+    });
+
+    if (resilientHttp.isFallbackResponse(response)) return [];
+    return response.data.data || [];
+  } catch (error: any) {
+    logger.warn('Failed to fetch complaint categories', {
+      error: error.message,
+      status: error.response?.status,
+    });
+    return [];
+  }
+}
+
+/**
  * Get complaint status by complaint_id (e.g., LAP-20251201-001)
  * NOTE: This is for admin/internal use without ownership check
  */
