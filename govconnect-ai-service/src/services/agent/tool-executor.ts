@@ -7,6 +7,7 @@
 
 import logger from '../../utils/logger';
 import { assertNotAborted } from '../../pipeline/abort-guard';
+import { recordToolErrorFailure } from '../improvement-loop.service';
 import {
   getImportantContacts,
   isConfidentContactLookupResult,
@@ -519,6 +520,17 @@ async function runExecuteToolCall(
     // that should never land in a user reply. The real details stay in
     // logs for RCA; the user gets a polite, actionable response.
     const userFacingError = buildUserFacingToolError(toolName);
+
+    // Improvement loop (additive, fail-open): tool exception adalah sinyal
+    // failure. PII di-redact di recordFailure. Tidak pernah throw.
+    recordToolErrorFailure({
+      villageId: ctx.villageId,
+      sessionId: ctx.traceId ?? ctx.userId,
+      message: ctx.userMessage,
+      toolName,
+      errorCode: userFacingError.code,
+      recordable: (ctx.sideEffectMode ?? 'production') === 'production' && !ctx.isEvaluation,
+    });
 
     return {
       content: JSON.stringify({

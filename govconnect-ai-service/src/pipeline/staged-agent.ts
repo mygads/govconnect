@@ -566,6 +566,14 @@ export async function runStagedTurn(input: StagedAgentInput): Promise<TurnResult
       } catch (err) {
         logger.warn('v2 handoff: startTakeoverForUser failed', { error: String(err) });
       }
+      // Improvement loop (additive, fail-open): handoff ke manusia adalah
+      // sinyal failure yang berharga. Tidak pernah throw / blokir turn.
+      recordHandoffFailure({
+        villageId: input.ctx.tenantId,
+        sessionId: input.ctx.traceId,
+        message: input.message,
+        recordable: persistWrites,
+      });
       return finish({
         terminalState: 'WAITING_FOR_HUMAN',
         response: 'Baik, saya teruskan ke petugas desa ya. Mohon tunggu sebentar, petugas akan segera membantu. 🙏',
