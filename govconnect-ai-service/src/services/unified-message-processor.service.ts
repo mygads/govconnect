@@ -22,6 +22,7 @@ import logger from '../utils/logger';
 import { createTurnAbortController } from '../pipeline/abort-guard';
 import { formatVillageDateTimeForPrompt } from '../utils/wib-datetime';
 import { sanitizeUserInput } from './context-builder.service';
+import { maybeRecordUserCorrection } from './improvement-loop.service';
 import { getVillageProfileSummary } from './knowledge.service';
 import { isSpamMessage } from './rag.service';
 import { getAutoFillSuggestionsWithFallback, learnFromMessage, getProfileWithFallback } from './user-profile.service';
@@ -1269,6 +1270,16 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       },
     };
   }
+
+  // Improvement loop (additive, fail-open): user mengoreksi jawaban agent
+  // ("bukan itu maksud saya") adalah sinyal failure yang kuat. Dicatat
+  // sekali per turn di ingress; tidak pernah throw / blokir pipeline.
+  maybeRecordUserCorrection({
+    villageId,
+    sessionId: messageId ?? userId,
+    message,
+    recordable: (sideEffectMode ?? 'production') === 'production' && !isEvaluation,
+  });
 
   // G7: Passive profile learning — extract name/phone/style from every message
   // (e.g. "nama saya Rina Wijaya") into durable_user_profiles.nama_lengkap.

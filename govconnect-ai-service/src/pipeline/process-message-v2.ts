@@ -78,6 +78,7 @@ import { PROMPT_VERSION } from './prompt-builder';
 import type { ProcessMessageInput, ProcessMessageResult } from '../services/ump-types';
 import { redactForLog } from '../gateway/pii-gateway';
 import { extractTopicKey } from '../services/kb-suggester-core';
+import { maybeRecordUserCorrection } from '../services/improvement-loop.service';
 import { checkOutboundForCanary, CANARY_SAFE_REPLY } from '../security/canary-docs';
 import { answerCsatSurvey, CSAT_THANKS } from '../services/csat.service';
 import { getVillageIdentity } from '../services/village-identity.service';
@@ -258,6 +259,16 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
   // `isEvaluation` so shadow and production are distinguishable in the trail.
   const sideEffectsAllowed = (input.sideEffectMode ?? 'production') === 'production';
   const isEvaluation = input.isEvaluation ?? !sideEffectsAllowed;
+
+  // Improvement loop (additive, fail-open): user mengoreksi jawaban agent
+  // ("bukan itu maksud saya") adalah sinyal failure yang kuat. Dicatat
+  // sekali per turn di ingress; tidak pernah throw / blokir pipeline.
+  maybeRecordUserCorrection({
+    villageId: input.villageId,
+    sessionId: traceId,
+    message: input.message,
+    recordable: sideEffectsAllowed && !isEvaluation,
+  });
 
   const audit = (stage: string, event: string, payload?: Record<string, unknown>) => {
     void appendAudit({

@@ -12,6 +12,8 @@ import { sanitizeProviderDefaultHeaders } from '../utils/provider-headers';
 import { getRuntimeGatewayConfig, onRuntimeGatewayConfigCacheClear } from './ai-runtime-config.service';
 import * as healthService from './ai-provider-health.service';
 import { modelStatsService } from './model-stats.service';
+// Alias: nama ini juga dipakai fungsi lokal recordGatewayFailure() (generation log).
+import { recordGatewayFailure as recordImprovementLoopFailure } from './improvement-loop.service';
 import { registerUsageWrite } from './ai-turn-billing.service';
 import { recordGenerationLog } from './generation-log.service';
 import { recordTokenUsage, resolveTokenUsagePricing, type CallType, type LayerType } from './token-usage.service';
@@ -1150,6 +1152,42 @@ async function executePromptRequestWithJsonFallback(
   }
 }
 
+/**
+ * Ambil teks pesan user terakhir dari messages gateway untuk improvement-loop
+ * recording. Hanya dipakai sebagai sampel (max 500 char, PII di-redact di
+ * recordFailure); bukan untuk logika bisnis.
+ */
+function lastUserMessageText(messages: GatewayChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== 'user') continue;
+    const c = m.content;
+    if (typeof c === 'string') return c;
+    if (Array.isArray(c)) {
+      const t = c
+        .map((p) =>
+          typeof p === 'string'
+            ? p
+            : typeof (p as { text?: unknown })?.text === 'string'
+              ? (p as { text: string }).text
+              : '',
+        )
+        .join(' ')
+        .trim();
+      if (t) return t;
+    }
+  }
+  return '';
+}
+
+/**
+ * Klasifikasi failure gateway untuk improvement loop: bedakan empty-output
+ * (masalah prompt/output) dari error provider. Pure, unit-testable.
+ */
+export function classifyGatewayFailure(lastError: string): 'error' | 'empty_output' {
+  return /empty message content/i.test(lastError ?? '') ? 'empty_output' : 'error';
+}
+
 export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promise<GatewayPromptResult | null> {
   const lane = options.lane || 'llm';
   const resolved = await resolveGateway(lane, options.context?.village_id);
@@ -1351,6 +1389,17 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
     models: attemptedModels,
     lastError,
     source: resolved.meta?.source,
+  });
+
+  // Improvement loop (additive, fail-open): semua attempt LLM gagal adalah
+  // sinyal failure. Bedakan empty-output dari error provider agar saran
+  // perbaikannya tepat. PII di-redact di recordFailure. Tidak pernah throw.
+  recordImprovementLoopFailure({
+    villageId: options.context?.village_id,
+    sessionId: options.context?.session_id ?? options.context?.trace_id,
+    message: lastUserMessageText(options.messages),
+    failureType: classifyGatewayFailure(lastError),
+    lane,
   });
 
   return null;
