@@ -27,6 +27,7 @@ import { generateEmbedding } from './embedding.service';
 import { searchVectors, recordBatchRetrievals } from './vector-db.service';
 import { hybridSearch, HybridSearchResult } from './hybrid-search.service';
 import { evaluateRAGQuality, recordRAGQualityMetrics } from './rag-quality-gate.service';
+import { perfSpan, perfMeasure, perfCount } from '../pipeline/perf-timer';
 import {
   buildPromptMessages,
   callAIGatewayPrompt,
@@ -309,15 +310,12 @@ interface QueryIntentResult {
 }
 
 /**
- * Classify query intent to determine RAG necessity.
- * Uses micro NLU (LLM) for intelligent classification.
- * Also returns NLU-inferred categories for smarter retrieval.
- * Falls back to 'optional' if LLM is unavailable.
+ * Sync fast pre-filter for query intent: deterministic skip/require without
+ * any I/O. Returns null when the micro-LLM classifier is needed.
+ * P0-1: extracted so callers can decide skip/require synchronously and run
+ * the async classifier in parallel with embedding/expansion work.
  */
-async function classifyQueryIntent(
-  query: string,
-  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
-): Promise<QueryIntentResult> {
+export function fastClassifyQueryIntent(query: string): QueryIntentResult | null {
   const normalizedQuery = query.trim().toLowerCase();
 
   // Fast pre-filter: trivially obvious skips (saves an LLM call)
@@ -334,8 +332,20 @@ async function classifyQueryIntent(
     }
   }
 
+  return null;
+}
+
+/**
+ * Async half of query intent classification: the micro-LLM call.
+ * The sync pre-filter MUST be consulted first (fastClassifyQueryIntent).
+ */
+async function classifyQueryIntentAsync(
+  query: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<QueryIntentResult> {
   // Use micro NLU for intelligent classification
   try {
+    perfCount('llm_call:rag_intent');
     const result = await classifyRAGIntent(query, context);
     if (result && result.confidence >= 0.6) {
       if (result.decision === 'RAG_REQUIRED') return { intent: 'required', nluCategories: result.categories };
@@ -349,6 +359,19 @@ async function classifyQueryIntent(
 
   // Fallback: if LLM unavailable, default to optional (still searches RAG)
   return { intent: 'optional' };
+}
+
+/**
+ * Classify query intent to determine RAG necessity.
+ * Uses micro NLU (LLM) for intelligent classification.
+ * Also returns NLU-inferred categories for smarter retrieval.
+ * Falls back to 'optional' if LLM is unavailable.
+ */
+async function classifyQueryIntent(
+  query: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<QueryIntentResult> {
+  return fastClassifyQueryIntent(query) ?? classifyQueryIntentAsync(query, context);
 }
 
 /**
@@ -709,19 +732,67 @@ export async function retrieveContext(
   }
 
   // Step 0: Check query intent - skip RAG for greetings/simple responses
-  // Perf optimization: reuse precomputed intent if provided (avoids redundant LLM call on retries)
-  const queryIntentResult = (options as any).precomputedIntent || await classifyQueryIntent(query, {
+  // P0-1: the sync pre-filter decides skip/require with zero I/O. The async
+  // micro-LLM half is kicked off immediately and runs IN PARALLEL with query
+  // expansion below (they are independent) — previously strictly sequential,
+  // costing one micro-LLM round-trip (~1s) on the critical path.
+  // Reuse precomputed intent if provided (avoids redundant LLM call on retries).
+  const endIntent = perfSpan('rag.intent_classify');
+  const intentContext = {
     village_id: villageId,
     wa_user_id: waUserId,
     session_id: sessionId,
     channel,
-  });
-  const queryIntent = queryIntentResult.intent;
-  
-  if (queryIntent === 'skip') {
-    logger.debug('Skipping RAG for simple query', { 
+  };
+  const precomputedIntent = (options as any).precomputedIntent as QueryIntentResult | undefined;
+  const fastIntent = precomputedIntent ?? fastClassifyQueryIntent(query);
+  if (fastIntent && fastIntent.intent === 'skip') {
+    endIntent();
+    logger.debug('Skipping RAG for simple query', {
       query: query.substring(0, 30),
-      intent: queryIntent 
+      intent: fastIntent.intent
+    });
+    return {
+      relevantChunks: [],
+      contextString: '',
+      totalResults: 0,
+      searchTimeMs: Date.now() - startTime,
+    };
+  }
+  // Async classifier in flight while expansion runs below.
+  const intentPromise = (async (): Promise<QueryIntentResult> => {
+    try {
+      return precomputedIntent
+        ?? await perfMeasure('rag.intent_llm', () => classifyQueryIntentAsync(query, intentContext));
+    } finally {
+      endIntent();
+    }
+  })();
+
+  const expansionContext = {
+    village_id: villageId,
+    wa_user_id: waUserId,
+    session_id: sessionId,
+    channel,
+  };
+
+  // Step 1: await the intent classifier and query expansion TOGETHER — they
+  // are independent, so the micro-LLM round-trip overlaps expansion work
+  // instead of blocking it (P0-1: previously strictly sequential).
+  const [queryIntentResult, expandedQuery] = await Promise.all([
+    intentPromise,
+    useQueryExpansion
+      ? perfMeasure('rag.query_expansion', () => expandQuery(query, expansionContext))
+      : Promise.resolve(query),
+  ]);
+  const queryIntent = queryIntentResult.intent;
+
+  // The async classifier may still decide 'skip' (high-confidence RAG_SKIP);
+  // honor it before any retrieval work (expansion already ran — rare path,
+  // result is simply discarded).
+  if (queryIntent === 'skip') {
+    logger.debug('Skipping RAG per async intent classification', {
+      query: query.substring(0, 30),
     });
     return {
       relevantChunks: [],
@@ -757,16 +828,6 @@ export async function retrieveContext(
   });
 
   try {
-    const expansionContext = {
-      village_id: villageId,
-      wa_user_id: waUserId,
-      session_id: sessionId,
-      channel,
-    };
-
-    // Step 1: Expand query with synonyms for better recall
-    const expandedQuery = useQueryExpansion ? await expandQuery(query, expansionContext) : query;
-
     let filteredResults: VectorSearchResult[];
     let retrievalDebug: RAGContext['retrievalDebug'] | undefined;
     const rerankCandidateCount = config.rerankEnabled
@@ -775,23 +836,23 @@ export async function retrieveContext(
 
     // Step 2-4: Use Hybrid Search (Vector + Keyword) or pure Vector search
     if (useHybridSearch) {
-      const hybridResults = await hybridSearch(expandedQuery, {
+      const hybridResults = await perfMeasure('rag.hybrid_search', () => hybridSearch(expandedQuery, {
         topK: rerankCandidateCount,
         minScore: Math.max(adjustedMinScore * 0.8, MIN_EFFECTIVE_SCORE),
         categories: effectiveCategories,
         sourceTypes,
         villageId,
         useQueryExpansion: false,
-      });
+      }));
 
-      const rerankOutcome = await rerankRetrievedResults(
+      const rerankOutcome = await perfMeasure('rag.rerank', () => rerankRetrievedResults(
         hybridResults,
         expandedQuery,
         topK,
         adjustedMinScore,
         retrievalMode,
         expansionContext,
-      );
+      ));
       filteredResults = rerankOutcome.results;
       retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults, rerankOutcome.appliedMode);
 
@@ -803,20 +864,23 @@ export async function retrieveContext(
       });
     } else {
       // Fallback: Pure vector search
-      const queryEmbedding = await generateEmbedding(expandedQuery, {
-        taskType: 'RETRIEVAL_QUERY',
-        outputDimensionality: 768,
-        useCache: true,
-        context: expansionContext,
+      const queryEmbedding = await perfMeasure('rag.embedding', async () => {
+        perfCount('embedding_call');
+        return generateEmbedding(expandedQuery, {
+          taskType: 'RETRIEVAL_QUERY',
+          outputDimensionality: 768,
+          useCache: true,
+          context: expansionContext,
+        });
       });
 
-      const searchResults = await searchVectors(queryEmbedding.values, {
+      const searchResults = await perfMeasure('rag.vector_search', () => searchVectors(queryEmbedding.values, {
         topK: rerankCandidateCount,
         minScore: adjustedMinScore * 0.8,
         categories: effectiveCategories,
         sourceTypes,
         villageId,
-      });
+      }));
 
       if (searchResults.length === 0) {
         // Fase 1.8: Structured "why retrieval failed" trace
@@ -841,14 +905,14 @@ export async function retrieveContext(
         };
       }
 
-      const rerankOutcome = await rerankRetrievedResults(
+      const rerankOutcome = await perfMeasure('rag.rerank', () => rerankRetrievedResults(
         searchResults,
         expandedQuery,
         topK,
         adjustedMinScore,
         retrievalMode,
         expansionContext,
-      );
+      ));
       filteredResults = rerankOutcome.results;
       retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults, rerankOutcome.appliedMode);
     }

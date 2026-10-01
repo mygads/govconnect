@@ -346,7 +346,16 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
         };
       }
     }
-    const prior = await loadTurnState(tenantId, input.userId, channel);
+    // Perf (P0-1): launch independent pre-agent reads in parallel. Each is
+    // awaited below at the exact point the original sequential code needed it,
+    // so ordering, early-returns and error semantics are unchanged — only the
+    // DB round-trips overlap. (CSAT stays awaited above: a consumed survey must
+    // short-circuit BEFORE the ingress rate-limit counter is touched.)
+    const turnStatePromise = loadTurnState(tenantId, input.userId, channel);
+    const identityLevelPromise = resolveIdentityLevel({ tenantId, userId: input.userId, channel });
+    const budgetPromise = checkBudget(tenantId);
+    const glossaryPromise = loadGlossary(tenantId).catch(() => []);
+    const prior = await turnStatePromise;
     if (prior) {
       ctx.slots = { ...(prior.slots as Record<string, unknown>) };
       ctx.assessorConfidences = [...(prior.assessorConfidences ?? [])];
@@ -485,15 +494,15 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
     }
 
     // 0d. Identity ladder (deterministic, never LLM): L0/L1/L2.
-    ctx.identityLevel = await resolveIdentityLevel({
-      tenantId, userId: input.userId, channel,
-    });
+    // (launched in parallel at 0c-bis; resolved here, after the ingress gate)
+    const [identityLevel, budget] = await Promise.all([identityLevelPromise, budgetPromise]);
+    ctx.identityLevel = identityLevel;
     await auditIdentityLevel({
       tenantId, userId: input.userId, channel, traceId, level: ctx.identityLevel,
     });
 
     // 0e. Budget guard: no LLM spend when the tenant's daily budget is out.
-    const budget = await checkBudget(tenantId);
+    // (budget resolved from the parallel batch at 0d)
     if (!budget.allowed) {
       audit('INGRESS', 'budget_exceeded', { spentUsd: budget.spentUsd });
       const fbInput = {
@@ -547,7 +556,8 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
     // 0f. A2 glossary normalization: local terms → standard Indonesian BEFORE
     // intent routing / slot extraction. Fail-open: no glossary = unchanged.
     try {
-      const entries = await loadGlossary(tenantId);
+      // (glossary entries pre-fetched in parallel at 0c-bis; fail-open preserved)
+      const entries = await glossaryPromise;
       if (entries.length > 0 && input.message) {
         const norm = normalizeWithGlossary(input.message, entries);
         if (norm.applied.length > 0) {
@@ -949,10 +959,13 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
     }
 
     // Track A2: real village name (DB-first, cached), fail-soft to 'Desa'.
-    const villageName = await resolveVillageName(tenantId);
     // Identitas AI per desa (pengaturan admin desa): nama, disclosure, persona.
     // Fail-open ke default (transparan, "Gana") bila dashboard tak terjangkau.
-    const aiIdentity = await getVillageIdentity(tenantId);
+    // Perf (P0-1): independent reads, resolved in parallel.
+    const [villageName, aiIdentity] = await Promise.all([
+      resolveVillageName(tenantId),
+      getVillageIdentity(tenantId),
+    ]);
     const turn = await runStagedTurn({
       message: input.message,
       decision,

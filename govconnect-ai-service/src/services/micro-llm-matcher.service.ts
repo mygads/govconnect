@@ -1210,13 +1210,16 @@ export async function validateResponseAgainstKnowledge(
 }
 
 // Keyed cache for classify results — prevents race conditions under concurrent requests.
-// Key = hash(message), stores result per-message with 2s TTL.
+// P0-1: key = village_id + hash(message) because the prompt is village-dependent
+// (buildUnifiedClassifyPrompt(village_id)); a message-only key could leak one
+// village's classification into another. TTL 60s: classification is stable per
+// message+village and this cache sits in front of an LLM call.
 const _classifyCache = new Map<string, { result: UnifiedClassifyResult | null; ts: number }>();
-const CLASSIFY_CACHE_TTL = 2000; // 2 seconds
-const MAX_CLASSIFY_CACHE = 50;
+const CLASSIFY_CACHE_TTL = 60 * 1000; // 60 seconds
+const MAX_CLASSIFY_CACHE = 200;
 
 /**
- * Get unified classification result, cached within a 2-second window
+ * Get unified classification result, cached within a 60-second window
  * to avoid duplicate LLM calls when greeting/farewell/RAG check the same message.
  * Uses keyed Map instead of single global variable to handle concurrent requests safely.
  */
@@ -1225,7 +1228,7 @@ async function classifyMessageCached(
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<UnifiedClassifyResult | null> {
   const trimmed = message.trim();
-  const cacheKey = simpleHash(trimmed);
+  const cacheKey = `${context?.village_id ?? 'global'}:${simpleHash(trimmed)}`;
   const now = Date.now();
 
   const cached = _classifyCache.get(cacheKey);
