@@ -917,6 +917,32 @@ async function toolGetVillageProfile(ctx: ToolContext): Promise<ToolCallResult> 
  * Indonesian text. Used as the tool's suggested_response so the model (or
  * a deterministic lane) relays prose, never raw JSON.
  */
+function formatOperatingHours(hours: unknown): string {
+  if (!hours) return '';
+  if (typeof hours === 'string') return hours;
+  if (typeof hours === 'object') {
+    const h = hours as Record<string, unknown>;
+    const labelMap: Record<string, string> = {
+      senin_jumat: 'Senin–Jumat',
+      senin_kamis: 'Senin–Kamis',
+      jumat: 'Jumat',
+      sabtu: 'Sabtu',
+      minggu: 'Minggu',
+      senin_minggu: 'Senin–Minggu',
+      catatan: 'Catatan',
+      note: 'Catatan',
+    };
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(h)) {
+      if (value === null || value === undefined || value === '') continue;
+      const label = labelMap[key] ?? key.replace(/_/g, ' ');
+      parts.push(`${label}: ${String(value)}`);
+    }
+    return parts.join(', ');
+  }
+  return String(hours);
+}
+
 function buildVillageProfileResponse(
   profile: { name?: string | null; address?: string | null; operating_hours?: string | null } | null,
   officeContacts: Array<{ name: string; phone: string; description?: string | null }>,
@@ -924,7 +950,8 @@ function buildVillageProfileResponse(
   const parts: string[] = [];
   if (profile?.name) parts.push(`Profil ${profile.name}.`);
   if (profile?.address) parts.push(`Alamat kantor desa: ${profile.address}.`);
-  if (profile?.operating_hours) parts.push(`Jam operasional: ${profile.operating_hours}.`);
+  const hoursText = formatOperatingHours(profile?.operating_hours);
+  if (hoursText) parts.push(`Jam operasional: ${hoursText}.`);
   if (officeContacts.length > 0) {
     const listed = officeContacts
       .map((c) => `${c.name}${c.phone ? ` (${c.phone})` : ''}`)
