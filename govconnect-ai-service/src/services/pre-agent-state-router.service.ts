@@ -792,6 +792,14 @@ export function decideFastIntent(input: {
   // "badhe damel KK"). When the classifier is null (timeout/lane down) or
   // low-confidence, we fall through to the deterministic regex branches, so
   // there is never a stall — regex is the safety net, NLU is the lead.
+  //
+  // [P0#1 FIX] Safety-critical override: komplain serius (pungli/oknum) BYPASS
+  // NLU dan agent LLM — LLM mengembalikan output kosong untuk konten sensitif,
+  // langsung ke complaint FSM deterministik.
+  const strongComplaintEarly = /\b(pungli|pungutan\s+liar|dimintai[n]?\s+uang|oknum)\b/i.test(normalized);
+  if (strongComplaintEarly) {
+    return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: 'handle_pre_agent', confidence: 'high', mixedSignals: false, reasons: ['strong_complaint_safety_override'], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
+  }
   if (input.unified?.routing_intent && (input.unified.routing_confidence ?? 0) >= 0.7) {
     const nluIntent = input.unified.routing_intent;
     const regexAgrees = (
@@ -807,10 +815,7 @@ export function decideFastIntent(input: {
   }
 
   if (complaintSignal) {
-    // [P0#1 FIX] Komplain serius (pungli/oknum/dimintain uang) jangan di-defer ke agent
-    // saat mixed dengan sinyal layanan ("surat tanah") — langsung ke complaint FSM.
-    const strongComplaint = /\b(pungli|pungutan\s+liar|dimintai[n]?\s+uang|oknum)\b/i.test(normalized);
-    return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: (mixedSignals && !strongComplaint) ? 'defer_to_agent' : 'handle_pre_agent', confidence: (mixedSignals && !strongComplaint) ? 'medium' : 'high', mixedSignals: mixedSignals && !strongComplaint, reasons: ['complaint_signal'], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
+    return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: mixedSignals ? 'defer_to_agent' : 'handle_pre_agent', confidence: mixedSignals ? 'medium' : 'high', mixedSignals, reasons: ['complaint_signal'], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
   }
 
   if (villageProfileSignal) {
