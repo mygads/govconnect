@@ -250,7 +250,7 @@ function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncer
 const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|jalan berlubang|jalan(?:\s+\w+){1,4}\s+(?:rusak|berlubang|amblas|ambles)|berlubang|banyak\s+lubang|lubang(?:\s+\w+){0,2}\s+(?:di jalan|jalan)|lampu(?:\s+\w+){0,2}\s+mati|lampu jalan|penerangan jalan|pju\s+mati|sampah menumpuk|sampah berserakan|drainase|selokan mampet|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|amblas|kecelaka+an|kebakaran|orang pingsan|ledakan)\b/i;
 const COMPLAINT_INFO_QUERY_PATTERN = /\b(pengaduan|keluhan|laporan)\b/i;
 const COMPLAINT_INFO_HINT_PATTERN = /\b(apa|bagaimana|gimana|jelaskan|contoh|format|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i;
-const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengantar)\b/i;
+const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|sku|suket|skd|layanan|permohonan|pengantar)\b/i;
 const EMERGENCY_KEYWORDS = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|pencurian|darurat|bencana|banjir|longsor|gempa|tsunami|evakuasi|ledakan|air masuk rumah|tenggelam)\b/i;
 
 /** Active-event signal: user is *reporting* something happening now. */
