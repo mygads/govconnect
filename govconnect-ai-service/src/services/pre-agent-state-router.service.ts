@@ -807,7 +807,10 @@ export function decideFastIntent(input: {
   }
 
   if (complaintSignal) {
-    return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: mixedSignals ? 'defer_to_agent' : 'handle_pre_agent', confidence: mixedSignals ? 'medium' : 'high', mixedSignals, reasons: ['complaint_signal'], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
+    // [P0#1 FIX] Komplain serius (pungli/oknum/dimintain uang) jangan di-defer ke agent
+    // saat mixed dengan sinyal layanan ("surat tanah") — langsung ke complaint FSM.
+    const strongComplaint = /\b(pungli|pungutan\s+liar|dimintai[n]?\s+uang|oknum)\b/i.test(normalized);
+    return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: (mixedSignals && !strongComplaint) ? 'defer_to_agent' : 'handle_pre_agent', confidence: (mixedSignals && !strongComplaint) ? 'medium' : 'high', mixedSignals: mixedSignals && !strongComplaint, reasons: ['complaint_signal'], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
   }
 
   if (villageProfileSignal) {
