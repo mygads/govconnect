@@ -256,7 +256,7 @@ const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|sku|suket|skd|
 const EMERGENCY_KEYWORDS = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|orang pingsan|pingsan|kecelakaan|pencurian|darurat|bencana|banjir|longsor|gempa|tsunami|evakuasi|ledakan|air masuk rumah|tenggelam)\b/i;
 
 /** Active-event signal: user is *reporting* something happening now. */
-const ACTIVE_EVENT_SIGNAL = /\b(tolong|segera|help|help\s*me|bantu|bantuin|terjadi|sedang\s+terjadi|barusan|baru\s+saja|lagi|ada\s+(?:yang|yg)|di\s*sini\s+ada|telah\s+terjadi|baru\s+terjadi|kejadian|ya\s*allah|ya\s*tuhan|astaga|gawat|bahaya|amblas)\b/i;
+const ACTIVE_EVENT_SIGNAL = /\b(tolong|segera|help|help\s*me|bantu|bantuin|terjadi|sedang\s+terjadi|barusan|baru\s+saja|lagi|ada(\s+(?:yang|yg))?|di\s*sini\s+ada|telah\s+terjadi|baru\s+terjadi|kejadian|ya\s*allah|ya\s*tuhan|astaga|gawat|bahaya|amblas)\b/i;
 
 /** Explicit "I want to report" — this alone is enough to enter complaint flow. */
 const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|mau lapor|saya lapor|saya mau lapor|buat laporan|buat pengaduan|laporkan|aduan)\b/i;
@@ -349,7 +349,8 @@ function matchesActiveEmergency(normalized: string): boolean {
   }
   if (!EMERGENCY_KEYWORDS.test(normalized)) return false;
   // Rare severe-event keywords carry enough signal by themselves.
-  if (/\b(kebakaran|ledakan|gempa|tsunami|longsor)\b/i.test(normalized)) return true;
+  // [FIX] pingsan/orang pingsan adalah emergency medis, tidak butuh signal tambahan
+  if (/\b(kebakaran|ledakan|gempa|tsunami|longsor|pingsan|orang\s+pingsan)\b/i.test(normalized)) return true;
   return ACTIVE_EVENT_SIGNAL.test(normalized);
 }
 
