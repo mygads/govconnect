@@ -419,9 +419,12 @@ function isExplicitHumanHandoffRequest(message: string): boolean {
     /\b(?:petugas|admin|operator)\s+(?:asli|manusia|desa)\b/,
     /^operator[\s!.,?]*$/,
     /\b(?:minta|mohon)\s+(?:petugas|admin|operator|manusia)\b/,
-    /\b(?:minta|mohon|tolong|ingin|mau|butuh|perlu)\b.*\b(?:dibantu|disambungkan|dialihkan|diteruskan|bicara|ngobrol|chat)\b.*\b(?:petugas|admin|operator|manusia)\b/,
-    /\b(?:hubungkan|sambungkan|disambungkan|alih(?:kan)?|dialihkan|teruskan|diteruskan)\b.*\b(?:petugas|admin|operator|manusia)\b/,
+    /\b(?:minta|mohon|tolong|ingin|mau|butuh|perlu)\b.*\b(?:dibantu|disambungkan|dialihkan|diteruskan|bicara|ngobrol|ngomong|chat)\b.*\b(?:petugas|admin|operator|manusia|orang)\b/,
+    /\b(?:hubungkan|sambungkan|disambungkan|alih(?:kan)?|dialihkan|teruskan|diteruskan)\b.*\b(?:petugas|admin|operator|manusia|orang)\b/,
     /\b(?:mau|ingin|butuh|perlu)\s+(?:orang|manusia|petugas|admin|operator)\b/,
+    // [P0#3 FIX] "mau ngomong sama orang", "panggilkan petugas"
+    /\bmau\s+(?:bicara|ngomong|ngobrol)\s+(?:sama|dengan|ke)\s+(?:orang|petugas|admin|operator|manusia)\b/,
+    /\b(?:panggilkan|panggil|hadirkan)\s+(?:petugas|admin|operator|orang)\b/,
   ].some((pattern) => pattern.test(text));
 }
 
