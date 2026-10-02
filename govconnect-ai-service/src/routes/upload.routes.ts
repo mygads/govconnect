@@ -284,8 +284,8 @@ router.post('/document/:documentId/process-seed', verifyInternalKey, async (req:
     });
     if (!chunksRes.ok) return res.status(404).json({ error: 'Document chunks not found' });
 
-    const chunksPayload = await chunksRes.json() as { data?: Array<{ chunk_index: number; content: string }> };
-    const chunks = chunksPayload?.data || [];
+    const chunksPayload = await chunksRes.json() as { chunks?: Array<{ chunk_index: number; content: string }>; total?: number };
+    const chunks = chunksPayload?.chunks || [];
     if (chunks.length === 0) return res.status(400).json({ error: 'No chunks found for document' });
 
     // 2. Generate embeddings
