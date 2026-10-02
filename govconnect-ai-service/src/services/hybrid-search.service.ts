@@ -431,9 +431,10 @@ export async function hybridSearch(
 
   try {
     // Generate embedding for vector search
+    // [FIX] Use 1536 dims to match stored document embeddings (text-embedding-3-small default)
     const embedding = await generateEmbedding(query, {
       taskType: 'RETRIEVAL_QUERY',
-      outputDimensionality: 768,
+      outputDimensionality: 1536,
       useCache: true,
       context: {
         village_id: villageId || null,

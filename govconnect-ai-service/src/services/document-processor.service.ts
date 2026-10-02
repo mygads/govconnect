@@ -171,7 +171,7 @@ export async function processDocumentWithEmbeddings(
   // Generate embeddings in batch
   const batchResult = await generateBatchEmbeddings(texts, {
     taskType: 'RETRIEVAL_DOCUMENT',
-    outputDimensionality: 768,
+    outputDimensionality: 1536,
   });
 
   // Combine chunks with embeddings
@@ -687,7 +687,7 @@ export async function processDocumentSemanticChunking(
   // Generate embeddings in batch
   const batchResult = await generateBatchEmbeddings(texts, {
     taskType: 'RETRIEVAL_DOCUMENT',
-    outputDimensionality: 768,
+    outputDimensionality: 1536,
     context,
   });
 
