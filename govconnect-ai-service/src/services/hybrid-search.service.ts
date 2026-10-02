@@ -418,7 +418,7 @@ export async function hybridSearch(
 ): Promise<HybridSearchResult[]> {
   const {
     topK = 5,
-    minScore = 0.65,
+    minScore = 0.3,  // [FIX] Lowered from 0.65 to allow more results
     categories,
     sourceTypes = ['knowledge', 'document'],
     villageId,
