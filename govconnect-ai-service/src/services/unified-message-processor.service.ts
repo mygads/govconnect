@@ -1265,6 +1265,27 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange, messageId, batchedMessageIds } = input;
 
+  // [W8 FIX] Message-level rate limiting: max 20 messages/minute per user
+  // to prevent spam/DoS and wallet drain from excessive LLM calls.
+  if (!isEvaluation && (sideEffectMode ?? 'production') === 'production') {
+    const { rateLimiterService } = await import('./rate-limiter.service');
+    const rateCheck = rateLimiterService.checkMessageRateLimit(userId, villageId);
+    if (!rateCheck.allowed) {
+      decrementActiveProcessing();
+      return {
+        success: true,
+        response: rateCheck.reason || 'Terlalu banyak pesan. Mohon tunggu sebentar ya Pak/Bu.',
+        intent: 'RATE_LIMITED',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+          agentMode: 'pre_agent_guard',
+          traceId: `t-${Date.now()}`,
+        },
+      };
+    }
+  }
+
   // Cross-session memory: lazy session-end detection. Bila turn terakhir user
   // lebih lama dari SESSION_IDLE_TIMEOUT_MS, session lama dianggap berakhir
   // dan ringkasannya di-save (fail-open, sekali per session). Dijalankan di

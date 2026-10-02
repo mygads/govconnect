@@ -5,6 +5,7 @@
  * - Max reports per day per phone number
  * - Cooldown period between reports
  * - Blacklist management for spam numbers
+ * - [W8 FIX] Message-level rate limiting to prevent DoS/wallet drain
  */
 
 import logger from '../utils/logger';
@@ -486,6 +487,35 @@ class RateLimiterService {
     return false;
   }
 
+  // [W8 FIX] Message-level rate limiting: max 20 messages per minute per user
+  // to prevent spam/DoS and wallet drain from excessive LLM calls.
+  private messageTimestamps: Map<string, number[]> = new Map();
+
+  checkMessageRateLimit(wa_user_id: string, village_id?: string | null): { allowed: boolean; reason?: string } {
+    if (!config.rateLimitEnabled) {
+      return { allowed: true };
+    }
+    const key = `${village_id || 'global'}:${wa_user_id}`;
+    const now = Date.now();
+    const windowMs = 60 * 1000; // 1 minute
+    const maxMessages = 20;
+
+    let timestamps = this.messageTimestamps.get(key) || [];
+    // Remove timestamps outside the window
+    timestamps = timestamps.filter((ts) => now - ts < windowMs);
+
+    if (timestamps.length >= maxMessages) {
+      logger.warn('🚫 Message rate limit exceeded', { wa_user_id, village_id, count: timestamps.length });
+      return {
+        allowed: false,
+        reason: 'Terlalu banyak pesan dalam 1 menit. Mohon tunggu sebentar ya Pak/Bu.',
+      };
+    }
+
+    timestamps.push(now);
+    this.messageTimestamps.set(key, timestamps);
+    return { allowed: true };
+  }
 }
 
 // Export singleton
