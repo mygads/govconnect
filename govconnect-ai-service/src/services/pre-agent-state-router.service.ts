@@ -1911,7 +1911,7 @@ export async function tryHandlePendingOffers(
         ...(pendingEmergency.village_id ? { village_id: pendingEmergency.village_id } : {}),
       },
       reply_text: '',
-    }, message, undefined, { signal });
+    }, message, undefined, { signal, isUrgentOverride: true });
     const normalized = normalizeHandlerResult(complaintResult);
     return buildGuardResult({
       startTime,

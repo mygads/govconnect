@@ -141,7 +141,7 @@ export async function handleComplaintCreation(
   llmResponse: any,
   currentMessage: string,
   mediaUrl?: string,
-  opts?: { signal?: AbortSignal }
+  opts?: { signal?: AbortSignal; isUrgentOverride?: boolean }
 ): Promise<HandlerResult> {  const { kategori, rt_rw } = llmResponse.fields || {};
   let { alamat, deskripsi } = llmResponse.fields || {};
   const villageId = llmResponse.fields?.village_id;
@@ -250,8 +250,11 @@ export async function handleComplaintCreation(
   }
 
   // Emergency detection is fully DB-driven via complaintTypeConfig.is_urgent
-  const isEmergency = typeof complaintTypeConfig?.is_urgent === 'boolean'
-    ? complaintTypeConfig.is_urgent : false;
+  // [P1#6 FIX] Allow override for emergency flow (banjir/tolong! -> selalu urgent)
+  const isEmergency = opts?.isUrgentOverride === true
+    ? true
+    : typeof complaintTypeConfig?.is_urgent === 'boolean'
+      ? complaintTypeConfig.is_urgent : false;
 
   // ==================== NAME & PHONE VALIDATION ====================
   const isWebchatChannel = channel === 'webchat';
