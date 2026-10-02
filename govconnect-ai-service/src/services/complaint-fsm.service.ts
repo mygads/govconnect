@@ -98,7 +98,7 @@ export type FsmInterrupt =
 const EXPLICIT_ESCAPE_PATTERN = /\b(batal|cancel|lupakan|gausah|gak\s*jadi|nanti\s+(aja|dulu)|stop|berhenti)\b/i;
 const GREETING_PATTERN = /^(halo|hai|hi|hello|assalamualaikum|permisi|p|selamat (pagi|siang|sore|malam))[\s!.,?]*$/i;
 const STATUS_LOOKUP_PATTERN = /\b(lap|lay)-?\d{8}-?\d{3}\b/i;
-const SERVICE_SWITCH_PATTERN = /\b(saya\s+mau|ingin|urus|urusin)\s+(ktp|kk|akta|domisili|sktm|surat)\b/i;
+const SERVICE_SWITCH_PATTERN = /\b(saya\s+mau|ingin|urus|urusin|ngurus)\s+(ktp|kk|akta|domisili|sktm|surat)\b|\b(syarat|biaya|caranya).*\b(ktp|kk|akta|domisili|sktm|surat)\b/i;
 // E1/E2/E3/J2/J4: detect frustration, handoff requests, corrections, and
 // questions while a complaint draft is active so the FSM does not hijack
 // the turn by endlessly re-asking for the pending field.
