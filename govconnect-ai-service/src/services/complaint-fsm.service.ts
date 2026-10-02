@@ -104,7 +104,7 @@ const SERVICE_SWITCH_PATTERN = /\b(saya\s+mau|ingin|urus|urusin|ngurus)\s+(ktp|k
 // the turn by endlessly re-asking for the pending field.
 const FRUSTRATION_PATTERN = /\b(muter[-\s]?muter|berputar[-\s]?putar|lama\s+banget|kelamaan|payah|bodoh|menyebalkan|kesal|kesel|frustrasi|tidak\s+membantu|nggak\s+membantu|gak\s+membantu|capek|bosan|nyebelin|gajelas|nggak\s+jelas|gak\s+jelas)\b/i;
 const HANDOFF_PATTERN = /\b(petugas\s+asli|orang\s+asli|manusia|operator|cs\s+asli|bicara\s+dengan\s+(petugas|orang|manusia)|sambungkan|hubungkan\s+(ke|sama)|mau\s+(bicara|ngomong|ngobrol)\s+(sama|dengan|ke)|panggilkan\s+(petugas|admin|operator|orang)|panggil\s+(petugas|admin))\b/i;
-const CORRECTION_PATTERN = /\b(eh\s+)?(salah|rubah|ubah|ganti|koreksi|revisi|maksud\s+(saya|aku|gue)|bukan\s+itu|bukan\s+di|bukan\s+[^,]+,\s*(?:tapi|melainkan))\b/i;
+const CORRECTION_PATTERN = /\b(eh\s+)?(salah|rubah|ubah|ganti|koreksi|revisi|maksud\s+(saya|aku|gue)|bukan\s+itu|bukan\s+di|bukan\s+[^,]+,\s*(?:tapi|melainkan)|eh\s+bukan,?\s*\w+|bukan\s+\w+,?\s*\w+\s+(?:rusak|mati|baru|lain))\b/i;
 const QUESTION_PATTERN = /^(kapan|bagaimana|gimana|kenapa|mengapa|dimana|di\s+mana|berapa|apakah|bisakah|bisa\s+nggak|bisa\s+tidak).*\?|^.*\?\s*$/i;
 
 export function detectComplaintInterrupt(message: string): FsmInterrupt {

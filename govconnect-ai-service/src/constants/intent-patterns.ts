@@ -124,6 +124,8 @@ export const UPDATE_COMPLAINT_PATTERNS = [
   /\b(ubah|ganti)\s+(alamat|deskripsi|keterangan)\s+laporan\b/i,
   // Fix A1: "tambah info ke LAP-xxx" / "tambah keterangan"
   /\b(tambah|tambahkan)\s+(info|informasi|keterangan|detail|catatan)\b/i,
+  // [P1 FIX] "tambahin info untuk LAP-xxx"
+  /\b(tambahin|tambahin\s+info)\b/i,
 ];
 
 // ==================== STATUS CHECK PATTERNS ====================

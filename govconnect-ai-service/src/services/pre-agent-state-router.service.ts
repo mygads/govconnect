@@ -280,7 +280,10 @@ export function matchesComplaintIncident(normalized: string): boolean {
     return false;
   }
   // Guard: if the user is asking for a contact number, not reporting.
-  if (CONTACT_DIRECTORY_SIGNAL.test(normalized)) return false;
+  // [P1 FIX] "no 15" dalam alamat (jl merdeka no 15) bukan query kontak.
+  // Hanya anggap kontak jika tidak ada indikator alamat.
+  const hasAddressIndicator = /\b(jl|jalan|rt|rw|dusun|desa|gang|nomor rumah)\b/i.test(normalized);
+  if (CONTACT_DIRECTORY_SIGNAL.test(normalized) && !hasAddressIndicator) return false;
   // A specific incident keyword that survived the informational + contact guards is
   // self-evidently a complaint ("lampu jalan mati seminggu", "sampah menumpuk bau"),
   // even without an explicit "lapor" verb or urgency word. Route it to the
@@ -424,7 +427,14 @@ function isExplicitHumanHandoffRequest(message: string): boolean {
     /\b(?:mau|ingin|butuh|perlu)\s+(?:orang|manusia|petugas|admin|operator)\b/,
     // [P0#3 FIX] "mau ngomong sama orang", "panggilkan petugas"
     /\bmau\s+(?:bicara|ngomong|ngobrol)\s+(?:sama|dengan|ke)\s+(?:orang|petugas|admin|operator|manusia)\b/,
-    /\b(?:panggilkan|panggil|hadirkan)\s+(?:petugas|admin|operator|orang)\b/,
+    /\b(?:panggilkan|panggil|hadirkan)\s+(?:petugas|admin|operator|orang|manusia)\b/,
+    // [P1 FIX] "panggilkan manusia", "mau sama orang aja", "bisa bicara dengan petugasnya"
+    /\b(?:panggilkan|panggil)\s+(?:segera\s+)?(?:manusia|orang)\b.*(?:sekarang|dong|aja|saja)?/,
+    /\bmau\s+(?:sama|dengan)\s+(?:orang|manusia|petugas)\b/,
+    /\b(?:bisa|boleh)\s+(?:bicara|ngomong)\s+(?:dengan|sama)\s+(?:petugas|admin|operator)(?:nya|kah)?\b/,
+    // [P1 FIX] Frustrasi: "AI bodoh!", "ribet amat"
+    /\b(?:ai|bot|kamu|kau)\s+(?:bodoh|bego|goblok|tolol|lemot)\b/,
+    /\bribet\s+(?:amat|banget|sekali)\b.*\b(?:orang|manusia|petugas)\b/,
   ].some((pattern) => pattern.test(text));
 }
 
