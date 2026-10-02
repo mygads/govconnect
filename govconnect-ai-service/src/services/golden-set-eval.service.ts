@@ -332,7 +332,7 @@ async function runRetrievalOnlyBenchmark(item: GoldenSetItem): Promise<Retrieval
 
   const embedding = await generateEmbedding(item.query, {
     taskType: 'RETRIEVAL_QUERY',
-    outputDimensionality: 768,
+    outputDimensionality: 1536,
     useCache: true,
   });
 

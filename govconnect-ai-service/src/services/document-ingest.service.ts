@@ -413,7 +413,7 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
     const texts = smartChunks.map(c => `${c.title}\n${c.content}`);
     const batchResult = await generateBatchEmbeddings(texts, {
       taskType: 'RETRIEVAL_DOCUMENT',
-      outputDimensionality: 768,
+      outputDimensionality: 1536,
       context: {
         village_id: input.villageId || null,
       },
