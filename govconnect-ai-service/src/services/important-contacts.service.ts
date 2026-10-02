@@ -283,7 +283,8 @@ export function isContactDirectoryLookup(message: string): boolean {
   }
   // Address lines can contain house numbers plus RT/RW ("Jalan X No 12 RT 03/RW 05")
   // and should not be treated as a contact lookup just because they contain "no".
-  if (/\b(?:jl|jln|jalan|gang|gg|komplek|komp|perum(?:ahan)?|blok|kp|kampung)\b/i.test(message) && /\b(?:no\.?\s*\d+|rt\s*\.?\s*\d+\s*[\/\s]*rw\s*\.?\s*\d+)\b/i.test(message)) {
+  // [FIX] RW optional — "rt 02" saja sudah valid sebagai alamat
+  if (/\b(?:jl|jln|jalan|gang|gg|komplek|komp|perum(?:ahan)?|blok|kp|kampung)\b/i.test(message) && /\b(?:no\.?\s*\d+|rt\s*\.?\s*\d+(\s*[\/\s]*rw\s*\.?\s*\d+)?)\b/i.test(message)) {
     return false;
   }
 
