@@ -259,7 +259,8 @@ const OBVIOUS_REQUIRE_PATTERNS = [
 // heuristics so official domains pass while phishing shortlinks don't.
 const SPAM_PATTERNS = [
   /(.)\1{30,}/,                         // 30+ repeated single characters
-  /^[^\w\s]+$/,                         // Only symbols (no letters/numbers/spaces)
+  // [P2 FIX] Emoji-only bukan spam — user mengekspresikan emosi
+  /^[^\w\s\p{Emoji}]+$/u,               // Only symbols (no letters/numbers/spaces/emoji)
   /\b(viagra|casino|poker|judi|togel|slot|xxx|porn)\b/i,
   /\b(click\s+here|klik\s+disini|download\s+now|claim\s+now)\b/i,
   /\b(menang\s+jutaan|hadiah\s+milyar|transfer\s+sekarang|bonus\s+besar)\b/i,
