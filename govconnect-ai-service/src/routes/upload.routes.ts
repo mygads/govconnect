@@ -306,12 +306,12 @@ router.post('/document/:documentId/process-seed', verifyInternalKey, async (req:
 
       await prisma.$executeRawUnsafe(
         `INSERT INTO ai.document_vectors (id, document_id, village_id, chunk_index, content, embedding, created_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::vector, NOW())
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())
          ON CONFLICT (document_id, chunk_index) DO UPDATE SET
            content = EXCLUDED.content,
            embedding = EXCLUDED.embedding,
            created_at = NOW()`,
-        documentId, villageId, chunk.chunk_index, chunk.content, JSON.stringify(embedding)
+        documentId, villageId, chunk.chunk_index, chunk.content, `[${embedding.join(',')}]`
       );
       stored++;
     }
