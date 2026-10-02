@@ -80,7 +80,7 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
         created_at, updated_at
       ) VALUES (
         ${id}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${title}, ${content}, ${category}, ${keywordsLiteral}::text[],
-        ${embeddingStr}::public.vector, ${embeddingModel}, ${qualityScore},
+        ${embeddingStr}::ai.vector, ${embeddingModel}, ${qualityScore},
         NOW(), NOW()
       )
       ON CONFLICT (id) DO UPDATE SET
@@ -214,7 +214,7 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
             ${chunk.documentId}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${chunk.chunkIndex}, ${chunk.content},
             ${chunk.documentTitle || null}, ${chunk.category || null},
             ${chunk.pageNumber || null}, ${chunk.sectionTitle || null}, ${chunk.provenance || null},
-            ${embeddingStr}::public.vector, ${chunk.embeddingModel || config.embeddingGateway.model},
+            ${embeddingStr}::ai.vector, ${chunk.embeddingModel || config.embeddingGateway.model},
             ${chunk.publishStatus || 'published'}, NOW()
           )
           ON CONFLICT (document_id, chunk_index) DO UPDATE SET
@@ -360,19 +360,19 @@ export async function searchVectors(
         ? Prisma.sql`
             SELECT
               id, content, title, category, keywords,
-              1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity,
+              1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'knowledge' as source_type, quality_score
             FROM ai.knowledge_vectors
-            WHERE 1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) >= ${sqlMinScore}
+            WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
           `
         : Prisma.sql`
             SELECT
               id, content, title, category, keywords,
-              1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity,
+              1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'knowledge' as source_type, quality_score
             FROM ai.knowledge_vectors
-            WHERE 1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) >= ${sqlMinScore}
+            WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
           `)
       : null;
@@ -382,10 +382,10 @@ export async function searchVectors(
             SELECT
               id, content, document_title as title, category,
               document_id, chunk_index, page_number, section_title, provenance_json,
-              1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity,
+              1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'document' as source_type
             FROM ai.document_vectors
-            WHERE 1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) >= ${sqlMinScore}
+            WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
               -- §5.2 publish review gate: only published documents are retrievable.
               AND publish_status = 'published'
@@ -394,10 +394,10 @@ export async function searchVectors(
             SELECT
               id, content, document_title as title, category,
               document_id, chunk_index, page_number, section_title, provenance_json,
-              1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity,
+              1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'document' as source_type
             FROM ai.document_vectors
-            WHERE 1 - (embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) >= ${sqlMinScore}
+            WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
               -- §5.2 publish review gate: only published documents are retrievable.
               AND publish_status = 'published'
@@ -409,10 +409,10 @@ export async function searchVectors(
               SELECT
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
-                1 - (qv.embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity
+                1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity
               FROM ai.question_variants qv
               JOIN ai.knowledge_vectors kv ON kv.id = qv.source_id
-              WHERE 1 - (qv.embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) >= ${sqlMinScore}
+              WHERE 1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
                 AND qv.source_type = 'knowledge'
                 AND ((qv.village_id = ${villageId} AND qv.scope = 'village' AND qv.is_global = FALSE) OR (qv.scope = 'global' AND qv.is_global = TRUE))
             `
@@ -420,10 +420,10 @@ export async function searchVectors(
               SELECT
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
-                1 - (qv.embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) as similarity
+                1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity
               FROM ai.question_variants qv
               JOIN ai.knowledge_vectors kv ON kv.id = qv.source_id
-              WHERE 1 - (qv.embedding OPERATOR(public.<=>) ${embeddingStr}::public.vector) >= ${sqlMinScore}
+              WHERE 1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
                 AND qv.source_type = 'knowledge'
                 AND qv.scope = 'global'
                 AND qv.is_global = TRUE
