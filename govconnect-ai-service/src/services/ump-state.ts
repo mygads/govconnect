@@ -203,6 +203,41 @@ registerInterval(() => {
 export const MAX_PHOTOS_PER_COMPLAINT = 5;
 
 /**
+ * Topic stack for multi-turn resume ("balik ke ktp tadi", "lanjut lapor tadi").
+ * Stores recent topics per user: { topic, intent, timestamp }.
+ * Max 5 topics, TTL 30 minutes.
+ */
+export const topicStack = new LRUCache<string, Array<{ topic: string; intent: string; timestamp: number }>>({
+  maxSize: 10000,
+  ttlMs: 30 * 60 * 1000,
+});
+
+export function pushTopic(userId: string, topic: string, intent: string): void {
+  const stack = topicStack.get(userId) || [];
+  // Don't push duplicates consecutively
+  if (stack.length > 0 && stack[stack.length - 1].topic === topic) return;
+  stack.push({ topic, intent, timestamp: Date.now() });
+  // Keep max 5
+  if (stack.length > 5) stack.shift();
+  topicStack.set(userId, stack);
+}
+
+export function popTopic(userId: string): { topic: string; intent: string } | null {
+  const stack = topicStack.get(userId) || [];
+  if (stack.length === 0) return null;
+  const item = stack.pop()!;
+  topicStack.set(userId, stack);
+  return { topic: item.topic, intent: item.intent };
+}
+
+export function peekTopic(userId: string): { topic: string; intent: string } | null {
+  const stack = topicStack.get(userId) || [];
+  if (stack.length === 0) return null;
+  const item = stack[stack.length - 1];
+  return { topic: item.topic, intent: item.intent };
+}
+
+/**
  * Add a photo URL to the pending photos cache for a user.
  * Returns the current count after adding.
  */
