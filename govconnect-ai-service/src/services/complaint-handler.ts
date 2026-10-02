@@ -664,6 +664,36 @@ export async function handlePendingAddressConfirmation(
   }
 
   // User said something else, clear pending and continue normal flow
+  // [P0#4 FIX] Jika user memberikan NAMA (bukan konfirmasi/bukan alamat),
+  // simpan sebagai nama pelapor dan lanjutkan, jangan clear + restart.
+  const { extractNameDeterministic } = await import('./complaint-fsm.service');
+  const providedName = extractNameDeterministic(message.trim());
+  if (providedName) {
+    const { updateProfile } = await import('./user-profile.service');
+    updateProfile(userId, { nama_lengkap: providedName }, pendingConfirm.village_id);
+    logger.info('User provided name during address confirmation, saved and continuing', { userId, providedName });
+    // Lanjutkan dengan alamat yang sudah ada di pendingConfirm
+    clearPendingAddressConfirmation(userId);
+    // Set pending complaint untuk lanjut ke VERIFY (atau langsung buat jika sudah lengkap)
+    const { setPendingComplaintData } = await import('./ump-state');
+    setPendingComplaintData(userId, {
+      kategori: pendingConfirm.kategori,
+      deskripsi: pendingConfirm.deskripsi,
+      alamat: pendingConfirm.alamat,
+      village_id: pendingConfirm.village_id,
+      foto_url: pendingConfirm.foto_url,
+      channel: channel as 'webchat' | 'whatsapp' | 'other',
+      timestamp: Date.now(),
+      waitingFor: 'konfirmasi',
+    });
+    const { buildConfirmationSummary } = await import('./complaint-fsm.service');
+    return buildConfirmationSummary({
+      kategori: pendingConfirm.kategori,
+      deskripsi: pendingConfirm.deskripsi,
+      alamat: pendingConfirm.alamat,
+      reporter_name: providedName,
+    });
+  }
   logger.info('User response not confirmation, clearing pending and processing normally', { userId });
   clearPendingAddressConfirmation(userId);
   return null;
