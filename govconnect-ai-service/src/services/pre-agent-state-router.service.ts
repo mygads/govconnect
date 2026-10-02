@@ -798,6 +798,8 @@ export function decideFastIntent(input: {
   // langsung ke complaint FSM deterministik.
   const strongComplaintEarly = /\b(pungli|pungutan\s+liar|dimintai[n]?\s+uang|oknum)\b/i.test(normalized);
   if (strongComplaintEarly) {
+    // eslint-disable-next-line no-console
+    console.log(`[DEBUG] strongComplaintEarly TRIGGERED for: ${normalized.slice(0, 50)}`);
     return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: 'handle_pre_agent', confidence: 'high', mixedSignals: false, reasons: ['strong_complaint_safety_override'], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
   }
   if (input.unified?.routing_intent && (input.unified.routing_confidence ?? 0) >= 0.7) {
