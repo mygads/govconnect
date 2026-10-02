@@ -199,6 +199,14 @@ export async function decideAddressResume(input: {
       return { action: 'resume', alamat: addrAnalysis.address, reason: 'nlu_usable' };
     }
 
+    // [P0#2 FIX] Dalam konteks komplain, deskripsi lokasi landmark ("tps deket pasar",
+    // "depan masjid", "dekat sekolah") valid walau tanpa RT/RW formal. Terima jika
+    // mengandung kata lokasi umum.
+    const hasLocationHint = /\b(tps|pasar|masjid|mushola|sekolah|kantor|balai|desa|dusun|gang|jalan|jl\.?|depan|belakang|samping|dekat|samping|sebelah|depan|pos|ronda|pertigaan|perempatan|jembatan|sungai|kali|lapangan)\b/i.test(trimmed);
+    if (hasLocationHint && trimmed.length >= 10) {
+      return { action: 'resume', alamat: trimmed, reason: 'nlu_usable' };
+    }
+
     return { action: 'reprompt', reason: 'not_address' };
   }
 
