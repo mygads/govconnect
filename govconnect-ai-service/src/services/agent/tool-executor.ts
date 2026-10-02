@@ -1942,90 +1942,41 @@ async function toolCreateComplaint(
   // above (category resolve, profile fetch) may have taken long enough for
   // the turn to be aborted; without this re-check the write would still land.
   assertNotAborted(ctx.abortSignal, 'create_complaint');
-  const complaintId = await createComplaint({
-    wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
-    channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
-    channel_identifier: ctx.channel === 'webchat' ? ctx.userId : undefined,
-    kategori: complaintNameForSubmission,
-    category_id: resolvedCategoryId,
-    type_id: resolvedTypeId,
-    deskripsi,
-    alamat,
-    rt_rw: rtRw,
-    village_id: ctx.villageId,
-    is_urgent: categoryConfig?.is_urgent === true,
-    reporter_name: reporterName,
-    reporter_phone: reporterPhone,
-  });
-
-  if (!complaintId) {
-    return {
-      success: false,
-      error: 'Gagal membuat laporan. Silakan coba lagi.',
-      data: {
-        suggested_response: 'Maaf Pak/Bu, laporan belum berhasil kami catat sekarang. Coba kirim lagi sebentar ya.',
+  // [P1#5 FIX] Agent tidak boleh buat tiket langsung. Delegasikan ke FSM
+  // (handleComplaintCreation) yang menegakkan alur VERIFY: nama -> alamat ->
+  // VERIFY -> YA -> tiket. Ini mencegah tiket terbit tanpa konfirmasi.
+  const { handleComplaintCreation } = await import('../complaint-handler');
+  const fsmResult = await handleComplaintCreation(
+    ctx.userId,
+    ctx.channel as 'webchat' | 'whatsapp' | 'other',
+    {
+      intent: 'CREATE_COMPLAINT',
+      fields: {
+        village_id: ctx.villageId,
+        kategori: complaintNameForSubmission,
+        deskripsi,
+        alamat: alamat || undefined,
+        rt_rw: rtRw || undefined,
       },
-    };
-  }
-
-  recordComplaintCreated(ctx.userId, slugifyCategory(complaintNameForSubmission));
-  void rememberMemoryEvent({
-    wa_user_id: ctx.userId,
-    village_id: ctx.villageId,
-    memory_type: 'complaint',
-    memory_key: complaintId,
-    importance: categoryConfig?.is_urgent === true ? 0.95 : 0.86,
-    content: `Laporan ${complaintId} dibuat untuk kategori ${complaintNameForSubmission}${alamat ? ` di ${alamat}` : ''}.`,
-    metadata_json: {
-      reference_number: complaintId,
-      kategori: complaintNameForSubmission,
-      alamat,
-      rt_rw: rtRw,
-      is_urgent: categoryConfig?.is_urgent === true,
+      reply_text: '',
     },
-  });
-
-  let importantContactsNotice = '';
-
-  if (
-    categoryConfig?.send_important_contacts
-    && categoryConfig.important_contact_category_id
-  ) {
-    importantContactsNotice = '\n\n📞 Kontak penting terkait akan saya kirim terpisah setelah laporan dibuat.';
-  } else if (categoryConfig?.send_important_contacts) {
-    logger.warn('Complaint type requests important-contact auto send without category config', {
-      userId: ctx.userId,
-      villageId: ctx.villageId,
-      kategori: categoryConfig.name,
-    });
-  }
-
-  const suggestedResponse = categoryConfig?.is_urgent === true
-    ? `Terima kasih.\nLaporan Anda sudah tercatat dengan nomor ${complaintId} dan petugas desa akan menindaklanjuti.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`
-    : `Terima kasih.\nLaporan Anda sudah tercatat dengan nomor ${complaintId} dan petugas desa akan menindaklanjuti.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`;
-
+    deskripsi || complaintNameForSubmission,
+    undefined,
+    { signal: ctx.abortSignal },
+  );
+  // handleComplaintCreation returns string | HandlerResult
+  const replyText = typeof fsmResult === 'string' ? fsmResult : fsmResult.replyText || 'Baik, laporan sedang diproses.';
+  const ticketCreated = typeof fsmResult !== 'string' && (fsmResult as any).complaintId;
   return {
-    success: true,
+    success: !!ticketCreated,
+    error: ticketCreated ? undefined : 'Menunggu kelengkapan data atau konfirmasi user.',
     data: {
-      created: true,
-      complaint_id: complaintId,
-      reference_number: complaintId,
-      type_id: resolvedTypeId || null,
-      category_id: resolvedCategoryId || null,
-      status: 'OPEN',
-      status_label: getStatusLabel('OPEN'),
-      is_urgent: categoryConfig?.is_urgent === true,
-      send_important_contacts: categoryConfig?.send_important_contacts === true,
-      important_contacts: [],
-      contacts: [],
-      message: categoryConfig?.is_urgent === true
-        ? `Laporan darurat berhasil dibuat dengan nomor ${complaintId}.`
-        : `Laporan berhasil dibuat dengan nomor ${complaintId}.`,
-      suggested_response: suggestedResponse,
+      suggested_response: replyText,
+      ...(ticketCreated ? { complaint_id: (fsmResult as any).complaintId } : {}),
     },
     meta: {
       trustLevel: 'action_result',
-      sourceKind: 'complaint_creation',
+      sourceKind: 'complaint_fsm_delegated',
     },
   };
 }

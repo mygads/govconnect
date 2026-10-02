@@ -208,7 +208,8 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       strict: true,
       description:
         'Buat pengaduan resmi desa. Utamakan type_id resmi dari get_complaint_categories bila sudah tersedia. category_id boleh dipakai sebagai kategori induk, dan kategori string hanya fallback bila ID resmi belum ada. ' +
-        'Alamat hanya wajib untuk jenis pengaduan yang memang membutuhkan lokasi. Nama pelapor dan nomor telepon bersifat opsional. Untuk kanal WhatsApp jangan meminta nomor HP lagi jika masalah sudah jelas. Jangan bilang laporan berhasil dibuat jika tool ini gagal.',
+        'Alamat hanya wajib untuk jenis pengaduan yang memang membutuhkan lokasi. Nama pelapor dan nomor telepon bersifat opsional. Untuk kanal WhatsApp jangan meminta nomor HP lagi jika masalah sudah jelas. Jangan bilang laporan berhasil dibuat jika tool ini gagal. ' +
+        'Tool ini didelegasikan ke FSM yang menegakkan alur VERIFY (nama -> alamat -> konfirmasi YA -> tiket).',
       parameters: {
         type: 'object',
         properties: {
