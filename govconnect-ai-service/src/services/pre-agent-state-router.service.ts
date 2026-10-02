@@ -2180,6 +2180,22 @@ export async function tryHandleLatePreAgentState(
     }
   }
 
+  // [TOPIC RESUME] "balik ke ktp tadi", "lanjut lapor tadi"
+  const resumePattern = /\b(balik|kembali|lanjut|terus)(kan)?\s+(ke\s+)?(.+?)\s+tadi\b/i;
+  const resumeMatch = message.match(resumePattern);
+  if (resumeMatch) {
+    const { peekTopic } = await import('./ump-state');
+    const prev = peekTopic(userId);
+    if (prev) {
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response: `Baik, kita kembali ke topik "${prev.topic}". Ada yang ingin ditanyakan atau dilanjutkan?`,
+        intent: prev.intent as any,
+      });
+    }
+  }
+
   const pendingAddr = await getPendingAddressRequestWithFallback(userId);
   if (pendingAddr) {
     // [P2 FIX] Resolusi pronoun: jika pesan mengandung "itu"/"ini"/"tersebut" dan ada
