@@ -2172,6 +2172,25 @@ export async function tryHandleLatePreAgentState(
 
   const pendingAddr = await getPendingAddressRequestWithFallback(userId);
   if (pendingAddr) {
+    // [P2 FIX] Resolusi pronoun: jika pesan mengandung "itu"/"ini"/"tersebut" dan ada
+    // draft aktif, anggap sebagai deskripsi tambahan untuk draft, bukan alamat baru.
+    const hasPronoun = /\b(itu|ini|tersebut)\b/i.test(message);
+    const isElliptical = hasPronoun && message.trim().split(/\s+/).length <= 8;
+    if (isElliptical && pendingAddr.kategori) {
+      const { setPendingAddressRequest } = await import('./ump-state');
+      const updatedDeskripsi = `${pendingAddr.deskripsi} ${message.trim()}`.trim();
+      setPendingAddressRequest(userId, {
+        ...pendingAddr,
+        deskripsi: updatedDeskripsi,
+        timestamp: Date.now(),
+      });
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response: `Baik, saya catat tambahan untuk laporan ${pendingAddr.kategori}: "${message.trim()}". Mohon sebutkan lokasi spesifiknya (RT/RW atau patokan) ya Pak/Bu.`,
+        intent: 'CREATE_COMPLAINT',
+      });
+    }
     const { decideAddressResume } = await import('./complaint-fsm.service');
     const decision = await decideAddressResume({
       userId,
@@ -2343,24 +2362,31 @@ export async function tryHandleLatePreAgentState(
         draftReleased: released,
         messagePreview: message.substring(0, 60),
       });
-      // E1 fix: answer timeline/process questions IN CONTEXT of the draft
-      // instead of falling through to a generic KB answer that forgets it.
+      // E1 fix: untuk pertanyaan tentang draft (timeline/proses), jawab dalam konteks.
+      // Untuk pertanyaan topik lain (mis. syarat KK), biarkan agent yang jawab
+      // dengan konteks draft — jangan halusinasi "jadwal perbaikan".
       if (identityDecision.reason === 'question' && !released) {
-        const draftSummary = [
-          pendingComplaint.kategori,
-          pendingComplaint.alamat ? `di ${pendingComplaint.alamat}` : '',
-        ].filter(Boolean).join(' ');
-        const needField = pendingComplaint.waitingFor === 'nama'
-          ? 'nama Bapak/Ibu'
-          : pendingComplaint.waitingFor === 'no_hp'
-            ? 'nomor HP Bapak/Ibu'
-            : 'data yang kurang';
-        return buildGuardResult({
-          startTime,
-          traceId,
-          response: `Untuk laporan ${draftSummary || 'tersebut'}, saya belum bisa pastikan jadwal perbaikannya karena laporannya belum selesai dibuat — saya masih butuh ${needField} dulu. Setelah laporan masuk dan dapat nomor pelacakan, Bapak/Ibu bisa cek statusnya kapan saja. Boleh sebutkan ${needField} sekarang?`,
-          intent: 'CREATE_COMPLAINT',
-        });
+        const isAboutDraft = /\b(jadwal|kapan|perbaikan|ditangani|diproses|laporan\s+(ini|tersebut|itu))\b/i.test(message);
+        if (!isAboutDraft) {
+          // Bukan tentang draft — fall through ke agent
+          logger.info('🧭 question not about draft, falling through to agent', { userId, messagePreview: message.substring(0, 60) });
+        } else {
+          const draftSummary = [
+            pendingComplaint.kategori,
+            pendingComplaint.alamat ? `di ${pendingComplaint.alamat}` : '',
+          ].filter(Boolean).join(' ');
+          const needField = pendingComplaint.waitingFor === 'nama'
+            ? 'nama Bapak/Ibu'
+            : pendingComplaint.waitingFor === 'no_hp'
+              ? 'nomor HP Bapak/Ibu'
+              : 'data yang kurang';
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: `Untuk laporan ${draftSummary || 'tersebut'}, saya belum bisa pastikan jadwal perbaikannya karena laporannya belum selesai dibuat — saya masih butuh ${needField} dulu. Setelah laporan masuk dan dapat nomor pelacakan, Bapak/Ibu bisa cek statusnya kapan saja. Boleh sebutkan ${needField} sekarang?`,
+            intent: 'CREATE_COMPLAINT',
+          });
+        }
       }
       // E3 fix: apply corrections to the draft (location/category).
       if (identityDecision.reason === 'correction' && !released) {

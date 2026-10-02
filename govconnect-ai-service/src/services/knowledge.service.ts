@@ -799,7 +799,7 @@ function formatProfileAsContext(profile: VillageProfileSummary): string {
 
 // In-memory cache for village profiles (M4 optimization)
 const _villageProfileCache = new Map<string, { data: VillageProfileSummary | null; ts: number }>();
-const VILLAGE_PROFILE_TTL = 15 * 60 * 1000; // 15 minutes
+const VILLAGE_PROFILE_TTL = 5 * 60 * 1000; // 5 minutes (reduced from 15 to minimize stale data)
 
 export async function getVillageProfileSummary(villageId?: string): Promise<VillageProfileSummary | null> {
   if (!villageId) return null;
