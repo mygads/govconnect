@@ -96,11 +96,10 @@ interface VillageProfileSummary {
 }
 
 async function isRAGSearchEnabled(villageId?: string): Promise<boolean> {
-  const [embedEnabled, ragEnabled] = await Promise.all([
-    isAIGatewayEnabledAsync('embed', villageId ?? null),
-    isAIGatewayEnabledAsync('rag', villageId ?? null),
-  ]);
-  return embedEnabled && ragEnabled;
+  // [FIX] RAG only needs embed lane. The 'rag' (rewrite) lane is optional
+  // for query rewriting, not required for basic vector search.
+  const embedEnabled = await isAIGatewayEnabledAsync('embed', villageId ?? null);
+  return embedEnabled;
 }
 
 /**
