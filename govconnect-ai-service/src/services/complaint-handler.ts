@@ -541,55 +541,30 @@ export async function handlePendingAddressConfirmation(
     const combinedFotoUrl = consumePendingPhotos(userId);
 
     const complaintTypeConfig = await resolveComplaintTypeConfig(pendingConfirm.kategori, pendingConfirm.village_id);
-    const isEmergency = typeof complaintTypeConfig?.is_urgent === 'boolean' ? complaintTypeConfig.is_urgent : false;
+    const normalizedKategori = (complaintTypeConfig as any)?.category_name || (complaintTypeConfig as any)?.name || pendingConfirm.kategori;
     const userProfile = getProfile(userId, pendingConfirm.village_id); // W5: village-scoped
 
-    // P1-5: fail-closed — no write after the turn was aborted.
-    assertNotAborted(opts?.signal, 'create_complaint');
-    const complaintId = await createComplaint({
-      wa_user_id: channel === 'webchat' ? undefined : userId,
-      channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
-      channel_identifier: userId,
-      kategori: pendingConfirm.kategori,
+    // [P0#1 FIX] Jangan langsung createComplaint. Transisi ke VERIFY stage:
+    // tampilkan ringkasan dengan kategori ternormalisasi, tunggu konfirmasi YA.
+    const { setPendingComplaintData } = await import('./ump-state');
+    setPendingComplaintData(userId, {
+      kategori: normalizedKategori,
       deskripsi: pendingConfirm.deskripsi,
-      village_id: pendingConfirm.village_id,
       alamat: pendingConfirm.alamat,
-      rt_rw: '',
-      foto_url: combinedFotoUrl,
-      category_id: complaintTypeConfig?.category_id,
-      type_id: complaintTypeConfig?.id,
-      is_urgent: isEmergency,
-      reporter_name: userProfile.nama_lengkap,
-      reporter_phone: channel === 'webchat' ? userProfile.no_hp : userId,
-    });
-
-    if (!complaintId) {
-      throw new Error('Failed to create complaint after address confirmation');
-    }
-
-    rateLimiterService.recordReport(userId, pendingConfirm.village_id);
-    aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
-    saveDefaultAddress(userId, pendingConfirm.alamat, '', pendingConfirm.village_id); // W5
-    recordComplaintCreated(userId, pendingConfirm.kategori, pendingConfirm.village_id); // W5
-    recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
-    void rememberMemoryEvent({
-      wa_user_id: userId,
       village_id: pendingConfirm.village_id,
-      memory_type: 'complaint',
-      memory_key: complaintId,
-      importance: isEmergency ? 0.95 : 0.85,
-      content: `Laporan ${complaintId} dibuat untuk kategori ${pendingConfirm.kategori} di ${pendingConfirm.alamat}.`,
-      metadata_json: {
-        reference_number: complaintId,
-        kategori: pendingConfirm.kategori,
-        alamat: pendingConfirm.alamat,
-        is_urgent: isEmergency,
-      },
+      foto_url: combinedFotoUrl || pendingConfirm.foto_url,
+      channel: channel as 'webchat' | 'whatsapp' | 'other',
+      timestamp: Date.now(),
+      waitingFor: 'konfirmasi',
     });
-
-    const photoCount = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
-    const withPhotoNote = photoCount > 0 ? `\n${photoCount > 1 ? photoCount + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
-    return `Terima kasih.\nLaporan Anda sudah tercatat dengan nomor ${complaintId} dan petugas desa akan menindaklanjuti.${withPhotoNote}`;
+    const { buildConfirmationSummary } = await import('./complaint-fsm.service');
+    return buildConfirmationSummary({
+      kategori: normalizedKategori,
+      deskripsi: pendingConfirm.deskripsi,
+      alamat: pendingConfirm.alamat,
+      reporter_name: userProfile.nama_lengkap,
+      reporter_phone: channel === 'webchat' ? userProfile.no_hp : undefined,
+    });
   }
 
   if (addrDecision === 'no') {
