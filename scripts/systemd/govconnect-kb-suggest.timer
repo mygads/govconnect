@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily GovConnect ops job: kb-suggest
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

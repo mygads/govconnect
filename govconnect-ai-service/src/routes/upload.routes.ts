@@ -145,8 +145,12 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
 
     clearRetrievalCache(resolvedVillageId);
 
+    // R3: surface KB-router rejections to the uploader. The document row
+    // already carries status 'rejected' with the reason.
+    const kbRoute = (result as { kbRoute?: string }).kbRoute;
+    const kbRejected = kbRoute === 'rejected';
     return res.json({
-      success: true,
+      success: !kbRejected,
       documentId,
       filename: storedFile.fileName,
       fileUrl: storedFile.url,
@@ -157,7 +161,11 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       chunksCount: result.chunksCount,
       aiChunking: result.usedAiChunking,
       ocrQueued: Boolean((result as any).queuedOcr),
-      message: (result as any).queuedOcr ? 'Document queued for OCR processing' : 'Document uploaded and processed successfully',
+      kbRoute,
+      rejected: kbRejected || undefined,
+      message: kbRejected
+        ? 'Dokumen DITOLAK oleh KB router: berisi data operasional yang sudah otoritatif di sistem (jam layanan/tarif/kontak). Data ini dikelola di case-service. Update di sana.'
+        : (result as any).queuedOcr ? 'Document queued for OCR processing' : 'Document uploaded and processed successfully',
     });
   } catch (error: any) {
     logger.error('Document upload failed', { documentId, error: error.message });
@@ -200,13 +208,20 @@ router.post('/document/:documentId/process', verifyInternalKey, async (req: Requ
 
     clearRetrievalCache(document.village_id || null);
 
+    // R3: surface KB-router rejections (document row already 'rejected').
+    const kbRoute = (result as { kbRoute?: string }).kbRoute;
+    const kbRejected = kbRoute === 'rejected';
     return res.json({
-      success: true,
+      success: !kbRejected,
       documentId,
       chunksCount: result.chunksCount,
       aiChunking: result.usedAiChunking,
       ocrQueued: Boolean((result as any).queuedOcr),
-      message: (result as any).queuedOcr ? 'Document queued for OCR processing' : 'Document processed successfully',
+      kbRoute,
+      rejected: kbRejected || undefined,
+      message: kbRejected
+        ? 'Dokumen DITOLAK oleh KB router: berisi data operasional yang sudah otoritatif di sistem (jam layanan/tarif/kontak). Data ini dikelola di case-service. Update di sana.'
+        : (result as any).queuedOcr ? 'Document queued for OCR processing' : 'Document processed successfully',
     });
   } catch (error: any) {
     logger.error('Document process failed', { documentId, error: error.message });
@@ -239,6 +254,94 @@ router.delete('/document/:documentId', verifyInternalKey, async (req: Request, r
   } catch (error: any) {
     logger.error('Failed to delete document vectors', { documentId, error: error.message });
     return res.status(500).json({ error: 'Failed to delete document', details: error.message });
+  }
+});
+
+/**
+ * POST /api/upload/document/:documentId/process-seed
+ * Process a seeded document (content already in dashboard DB, no file download).
+ * Fetches chunks from dashboard, generates embeddings, stores in AI service.
+ */
+router.post('/document/:documentId/process-seed', verifyInternalKey, async (req: Request, res: Response) => {
+  const documentId = getParam(req, 'documentId');
+  if (!documentId) return res.status(400).json({ error: 'documentId is required' });
+
+  try {
+    // 1. Fetch document + chunks from dashboard
+    const docRes = await fetch(`${config.dashboardServiceUrl}/api/internal/documents/${documentId}`, {
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!docRes.ok) return res.status(404).json({ error: 'Document not found in dashboard' });
+
+    const docPayload = await docRes.json() as { data?: { id: string; title?: string; village_id?: string } };
+    const doc = docPayload?.data;
+    if (!doc) return res.status(404).json({ error: 'Document data not found' });
+
+    const chunksRes = await fetch(`${config.dashboardServiceUrl}/api/internal/documents/${documentId}/chunks`, {
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!chunksRes.ok) return res.status(404).json({ error: 'Document chunks not found' });
+
+    const chunksPayload = await chunksRes.json() as { chunks?: Array<{ chunk_index: number; content: string }>; total?: number };
+    const chunks = chunksPayload?.chunks || [];
+    if (chunks.length === 0) return res.status(400).json({ error: 'No chunks found for document' });
+
+    // 2. Generate embeddings
+    const { generateBatchEmbeddings } = await import('../services/embedding.service');
+    const texts = chunks.map(c => c.content);
+    const batchResult = await generateBatchEmbeddings(texts);
+    const embeddings = batchResult.embeddings.map(e => e.values);
+
+    // 3. Store in document_vectors
+    const { default: prisma } = await import('../lib/prisma');
+    const villageId = doc.village_id || null;
+    let stored = 0;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const embedding = embeddings[i];
+      if (!embedding) continue;
+
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO ai.document_vectors (id, document_id, village_id, chunk_index, content, embedding, created_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::ai.vector, NOW())
+         ON CONFLICT (document_id, chunk_index) DO UPDATE SET
+           content = EXCLUDED.content,
+           embedding = EXCLUDED.embedding,
+           created_at = NOW()`,
+        documentId, villageId, chunk.chunk_index, chunk.content, `[${embedding.join(',')}]`
+      );
+      stored++;
+    }
+
+    // 4. Update dashboard status
+    try {
+      await fetch(`${config.dashboardServiceUrl}/api/internal/documents/${documentId}/status`, {
+        method: 'PUT',
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'completed' }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (e) {
+      logger.warn('Failed to update dashboard document status', { documentId });
+    }
+
+    clearRetrievalCache(villageId);
+    return res.json({
+      success: true,
+      documentId,
+      chunksCount: chunks.length,
+      stored,
+      message: 'Seeded document processed successfully',
+    });
+  } catch (error: any) {
+    logger.error('Seed document process failed', { documentId, error: error.message });
+    return res.status(500).json({ error: 'Failed to process seed document', details: error.message });
   }
 });
 

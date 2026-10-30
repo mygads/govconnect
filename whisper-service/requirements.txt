@@ -1,0 +1,8 @@
+# Pinned from a verified install (python 3.12, 2026-09-29).
+faster-whisper==1.2.1
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+# --- test only ---
+pytest==9.1.1
+httpx==0.28.1

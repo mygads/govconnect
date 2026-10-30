@@ -13,6 +13,7 @@
 
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
+import { perfSpan, perfMeasure, perfCount } from '../pipeline/perf-timer';
 import { Prisma } from '@prisma/client';
 import { config } from '../config/env';
 import {
@@ -66,6 +67,11 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
   try {
     // Convert embedding array to pgvector format
     const embeddingStr = `[${embedding.join(',')}]`;
+    // BUGFIX(TEST): keywords is text[] — a JS array passed to $executeRaw is
+    // sent as text. Format as a Postgres array literal and cast explicitly.
+    // Also normalize: callers sometimes pass a single string.
+    const kwArray: string[] = Array.isArray(keywords) ? keywords : (keywords ? [String(keywords)] : []);
+    const keywordsLiteral = `{${kwArray.map((k) => `"${k.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')}}`;
 
     await prisma.$executeRaw`
       INSERT INTO ai.knowledge_vectors (
@@ -73,7 +79,7 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
         embedding, embedding_model, quality_score,
         created_at, updated_at
       ) VALUES (
-        ${id}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${title}, ${content}, ${category}, ${keywords},
+        ${id}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${title}, ${content}, ${category}, ${keywordsLiteral}::text[],
         ${embeddingStr}::ai.vector, ${embeddingModel}, ${qualityScore},
         NOW(), NOW()
       )
@@ -176,6 +182,12 @@ export interface DocumentChunkInput {
   embeddingModel?: string;
   scope?: VectorScope;
   isGlobal?: boolean;
+  /**
+   * §5.2 publish review gate. New ingests enter as 'draft' (set by the
+   * caller); re-ingests may preserve the document's current status.
+   * Retrieval only serves 'published'.
+   */
+  publishStatus?: 'draft' | 'published' | 'withdrawn' | 'superseded';
 }
 
 /**
@@ -196,14 +208,14 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
           INSERT INTO ai.document_vectors (
             id, document_id, village_id, scope, is_global, chunk_index, content,
             document_title, category, page_number, section_title, provenance_json,
-            embedding, embedding_model, created_at
+            embedding, embedding_model, publish_status, created_at
           ) VALUES (
             ${`${chunk.documentId}_${chunk.chunkIndex}`},
             ${chunk.documentId}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${chunk.chunkIndex}, ${chunk.content},
             ${chunk.documentTitle || null}, ${chunk.category || null},
             ${chunk.pageNumber || null}, ${chunk.sectionTitle || null}, ${chunk.provenance || null},
             ${embeddingStr}::ai.vector, ${chunk.embeddingModel || config.embeddingGateway.model},
-            NOW()
+            ${chunk.publishStatus || 'published'}, NOW()
           )
           ON CONFLICT (document_id, chunk_index) DO UPDATE SET
             village_id = EXCLUDED.village_id,
@@ -216,7 +228,8 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
             section_title = EXCLUDED.section_title,
             provenance_json = EXCLUDED.provenance_json,
             embedding = EXCLUDED.embedding,
-            embedding_model = EXCLUDED.embedding_model
+            embedding_model = EXCLUDED.embedding_model,
+            publish_status = EXCLUDED.publish_status
         `;
       }
     });
@@ -247,6 +260,57 @@ export async function deleteDocumentVectors(documentId: string): Promise<boolean
     logger.error('Failed to delete document vectors', { documentId, error: error.message });
     return false;
   }
+}
+
+export type DocumentPublishStatus = 'draft' | 'published' | 'withdrawn' | 'superseded';
+
+const PUBLISH_STATUSES: DocumentPublishStatus[] = ['draft', 'published', 'withdrawn', 'superseded'];
+
+export function isValidPublishStatus(s: unknown): s is DocumentPublishStatus {
+  return typeof s === 'string' && (PUBLISH_STATUSES as string[]).includes(s);
+}
+
+/**
+ * §5.2 publish review gate: flip the review state of all vectors of a document.
+ * Used by the admin publish/withdraw flow. Only 'published' vectors are
+ * served by retrieval.
+ */
+export async function setDocumentPublishStatus(
+  documentId: string,
+  status: DocumentPublishStatus,
+): Promise<number> {
+  const result = await prisma.$executeRaw`
+    UPDATE ai.document_vectors
+    SET publish_status = ${status}
+    WHERE document_id = ${documentId}
+  `;
+  logger.info('Document publish status updated', { documentId, status, chunksUpdated: Number(result) });
+  return Number(result);
+}
+
+/**
+ * Read the current publish status of a document's vectors (null = no vectors).
+ * Used by ingest to preserve the review state across re-ingests.
+ */
+/**
+ * Resolve the village scope(s) owning a document's vectors ([] = no vectors
+ * indexed yet). Used by the publish/withdraw flow for tenant-aware cache
+ * invalidation — retrieval, semantic & FAQ caches are all keyed per tenant.
+ */
+export async function getDocumentVillageIds(documentId: string): Promise<Array<string | null>> {
+  const rows = await prisma.$queryRaw<Array<{ village_id: string | null }>>`
+    SELECT DISTINCT village_id FROM ai.document_vectors WHERE document_id = ${documentId}
+  `;
+  return rows.map((r: { village_id: string | null }) => r.village_id);
+}
+
+export async function getDocumentPublishStatus(documentId: string): Promise<DocumentPublishStatus | null> {
+  const rows = await prisma.$queryRaw<Array<{ publish_status: string }>>`
+    SELECT DISTINCT publish_status FROM ai.document_vectors WHERE document_id = ${documentId} LIMIT 2
+  `;
+  if (rows.length === 0) return null;
+  const s = rows[0].publish_status;
+  return isValidPublishStatus(s) ? s : null;
 }
 
 
@@ -296,13 +360,17 @@ export async function searchVectors(
     // NOTE: Categories are NOT used in SQL WHERE because NLU category names
     // (e.g. "informasi_umum") often don't match stored categories (e.g. "umum", "general").
     // Using category as a hard filter causes 0 results. Vector similarity is the primary filter.
-    if (sourceTypes.includes('knowledge')) {
-      // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
-      // Actual quality filtering happens post-RRF in rerank stage.
-      const sqlMinScore = minScore;
-      const knowledgeQuery = villageId
+    // Perf (P0-1): the three vector scans below are independent DB reads, so they are
+    // launched in parallel via Promise.all. Row processing stays sequential afterwards
+    // (knowledge -> document -> variants) to preserve push order and the variant
+    // dedup semantics (variants must not duplicate direct knowledge hits).
+    // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
+    // Actual quality filtering happens post-RRF in rerank stage.
+    const sqlMinScore = minScore;
+    const knowledgeQuery = sourceTypes.includes('knowledge')
+      ? (villageId
         ? Prisma.sql`
-            SELECT 
+            SELECT
               id, content, title, category, keywords,
               1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'knowledge' as source_type, quality_score
@@ -311,53 +379,19 @@ export async function searchVectors(
               AND ${tenantScopeFilter}
           `
         : Prisma.sql`
-            SELECT 
+            SELECT
               id, content, title, category, keywords,
               1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'knowledge' as source_type, quality_score
             FROM ai.knowledge_vectors
             WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
-          `;
-
-      const knowledgeResults = await prisma.$queryRaw<VectorSearchRow[]>`
-        ${knowledgeQuery}
-        ORDER BY similarity DESC
-        LIMIT ${topK}
-      `;
-
-      for (const row of knowledgeResults) {
-        // Apply quality_score as a slight boost to similarity
-        const qualityBoost = (row.quality_score ?? 1.0) * 0.03; // max +3% boost
-        // Soft boost if category matches NLU categories
-        const categoryBoost = categories?.length && row.category
-          && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
-            || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
-          ? 0.02 : 0;
-        const adjustedScore = Math.min(1.0, row.similarity + qualityBoost + categoryBoost);
-
-        results.push({
-          id: row.id,
-          content: row.content,
-          score: adjustedScore,
-          source: row.title,
-          sourceType: 'knowledge',
-          metadata: {
-            category: row.category,
-            keywords: row.keywords,
-            qualityScore: row.quality_score,
-          },
-        });
-      }
-    }
-
-    // Search document vectors
-    if (sourceTypes.includes('document')) {
-      // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
-      const sqlMinScore = minScore;
-      const documentQuery = villageId
+          `)
+      : null;
+    const documentQuery = sourceTypes.includes('document')
+      ? (villageId
         ? Prisma.sql`
-            SELECT 
+            SELECT
               id, content, document_title as title, category,
               document_id, chunk_index, page_number, section_title, provenance_json,
               1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
@@ -365,9 +399,11 @@ export async function searchVectors(
             FROM ai.document_vectors
             WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
+              -- §5.2 publish review gate: only published documents are retrievable.
+              AND publish_status = 'published'
           `
         : Prisma.sql`
-            SELECT 
+            SELECT
               id, content, document_title as title, category,
               document_id, chunk_index, page_number, section_title, provenance_json,
               1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
@@ -375,46 +411,14 @@ export async function searchVectors(
             FROM ai.document_vectors
             WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
-          `;
-
-      const documentResults = await prisma.$queryRaw<VectorSearchRow[]>`
-        ${documentQuery}
-        ORDER BY similarity DESC
-        LIMIT ${topK}
-      `;
-
-      for (const row of documentResults) {
-        // Soft boost if category matches NLU categories
-        const categoryBoost = categories?.length && row.category
-          && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
-            || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
-          ? 0.02 : 0;
-
-        results.push({
-          id: row.id,
-          content: row.content,
-          score: row.similarity + categoryBoost,
-          source: row.title || row.document_id || row.id,
-          sourceType: 'document',
-          metadata: {
-            documentId: row.document_id,
-            chunkIndex: row.chunk_index,
-            pageNumber: row.page_number,
-            sectionTitle: row.section_title,
-            provenance: row.provenance_json,
-            category: row.category,
-          },
-        });
-      }
-    }
-
-    // Search question variants (maps back to parent knowledge entries)
-    if (sourceTypes.includes('knowledge')) {
-      try {
-        const sqlMinScore = minScore;
-        const variantQuery = villageId
-          ? Prisma.sql`
-              SELECT 
+              -- §5.2 publish review gate: only published documents are retrievable.
+              AND publish_status = 'published'
+          `)
+      : null;
+    const variantQuery = sourceTypes.includes('knowledge')
+      ? (villageId
+        ? Prisma.sql`
+              SELECT
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
                 1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity
@@ -424,8 +428,8 @@ export async function searchVectors(
                 AND qv.source_type = 'knowledge'
                 AND ((qv.village_id = ${villageId} AND qv.scope = 'village' AND qv.is_global = FALSE) OR (qv.scope = 'global' AND qv.is_global = TRUE))
             `
-          : Prisma.sql`
-              SELECT 
+        : Prisma.sql`
+              SELECT
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
                 1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity
@@ -435,35 +439,99 @@ export async function searchVectors(
                 AND qv.source_type = 'knowledge'
                 AND qv.scope = 'global'
                 AND qv.is_global = TRUE
-            `;
+            `)
+      : null;
 
-        const variantResults = await prisma.$queryRaw<any[]>`
-          ${variantQuery}
-          ORDER BY similarity DESC
-          LIMIT ${topK}
-        `;
+    const [knowledgeResults, documentResults, variantResults] = await Promise.all([
+      knowledgeQuery
+        ? perfMeasure('db.vector_query:knowledge', () => prisma.$queryRaw<VectorSearchRow[]>`
+            ${knowledgeQuery}
+            ORDER BY similarity DESC
+            LIMIT ${topK}
+          `)
+        : Promise.resolve([] as VectorSearchRow[]),
+      documentQuery
+        ? perfMeasure('db.vector_query:document', () => prisma.$queryRaw<VectorSearchRow[]>`
+            ${documentQuery}
+            ORDER BY similarity DESC
+            LIMIT ${topK}
+          `)
+        : Promise.resolve([] as VectorSearchRow[]),
+      // question_variants table may not exist yet — graceful fallback
+      variantQuery
+        ? prisma.$queryRaw<any[]>`
+            ${variantQuery}
+            ORDER BY similarity DESC
+            LIMIT ${topK}
+          `.catch(() => [] as any[])
+        : Promise.resolve([] as any[]),
+    ]);
 
-        for (const row of variantResults) {
-          // Only add if not already in results (avoid duplicates with direct knowledge match)
-          if (!results.some(r => r.id === row.source_id)) {
-            const qualityBoost = (row.quality_score ?? 1.0) * 0.03;
-            results.push({
-              id: row.source_id,
-              content: row.content,
-              score: Math.min(1.0, row.similarity + qualityBoost),
-              source: row.title,
-              sourceType: 'knowledge',
-              metadata: {
-                category: row.category,
-                keywords: row.keywords,
-                qualityScore: row.quality_score,
-                matchedVariant: row.variant_text,
-              },
-            });
-          }
-        }
-      } catch {
-        // question_variants table may not exist yet — graceful fallback
+    for (const row of knowledgeResults) {
+      // Apply quality_score as a slight boost to similarity
+      const qualityBoost = (row.quality_score ?? 1.0) * 0.03; // max +3% boost
+      // Soft boost if category matches NLU categories
+      const categoryBoost = categories?.length && row.category
+        && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
+          || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
+        ? 0.02 : 0;
+      const adjustedScore = Math.min(1.0, row.similarity + qualityBoost + categoryBoost);
+
+      results.push({
+        id: row.id,
+        content: row.content,
+        score: adjustedScore,
+        source: row.title,
+        sourceType: 'knowledge',
+        metadata: {
+          category: row.category,
+          keywords: row.keywords,
+          qualityScore: row.quality_score,
+        },
+      });
+    }
+
+    for (const row of documentResults) {
+      // Soft boost if category matches NLU categories
+      const categoryBoost = categories?.length && row.category
+        && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
+          || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
+        ? 0.02 : 0;
+
+      results.push({
+        id: row.id,
+        content: row.content,
+        score: row.similarity + categoryBoost,
+        source: row.title || row.document_id || row.id,
+        sourceType: 'document',
+        metadata: {
+          documentId: row.document_id,
+          chunkIndex: row.chunk_index,
+          pageNumber: row.page_number,
+          sectionTitle: row.section_title,
+          provenance: row.provenance_json,
+          category: row.category,
+        },
+      });
+    }
+
+    for (const row of variantResults) {
+      // Only add if not already in results (avoid duplicates with direct knowledge match)
+      if (!results.some(r => r.id === row.source_id)) {
+        const qualityBoost = (row.quality_score ?? 1.0) * 0.03;
+        results.push({
+          id: row.source_id,
+          content: row.content,
+          score: Math.min(1.0, row.similarity + qualityBoost),
+          source: row.title,
+          sourceType: 'knowledge',
+          metadata: {
+            category: row.category,
+            keywords: row.keywords,
+            qualityScore: row.quality_score,
+            matchedVariant: row.variant_text,
+          },
+        });
       }
     }
 
@@ -572,5 +640,82 @@ export async function getVectorDbStats(): Promise<{
       documentChunkCount: 0,
       uniqueDocuments: 0,
     };
+  }
+}
+
+/**
+ * Direct keyword search on knowledge_vectors using ILIKE.
+ * Last-resort fallback when vector/RAG and dashboard keyword search fail.
+ * Uses tenant scope filter for isolation.
+ * (Fix K2/K3/C3/N5: ensures KB answers are found even when semantic search misses.)
+ */
+export interface KeywordSearchResult {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+}
+
+export async function searchKnowledgeByKeywordsDirect(
+  query: string,
+  villageId?: string,
+  limit: number = 3,
+): Promise<KeywordSearchResult[]> {
+  try {
+    // Extract meaningful keywords (min 3 chars, skip stopwords).
+    const stopwords = new Set(['apa', 'yang', 'dan', 'di', 'ke', 'dari', 'untuk', 'berapa', 'gimana', 'bagaimana', 'cara', 'bikin', 'buat', 'saya', 'kamu', 'ini', 'itu', 'adalah', 'dengan', 'pada', 'sudah', 'belum', 'bisa', 'mau', 'ingin', 'tolong']);
+    const keywords = query
+      .toLowerCase()
+      .replace(/[?!.,;:()"']/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !stopwords.has(w));
+
+    if (keywords.length === 0) return [];
+
+    const tenantScopeFilter = villageId
+      ? Prisma.sql`((village_id = ${villageId} AND scope = 'village' AND is_global = FALSE) OR (scope = 'global' AND is_global = TRUE))`
+      : Prisma.sql`(scope = 'global' AND is_global = TRUE)`;
+
+    // Build OR conditions for each keyword matching title or content.
+    const keywordConditions = keywords.map(
+      (kw) => Prisma.sql`(title ILIKE ${'%' + kw + '%'} OR content ILIKE ${'%' + kw + '%'})`,
+    );
+    const whereClause = Prisma.join(keywordConditions, ' OR ');
+
+    const results = await prisma.$queryRaw<KeywordSearchResult[]>`
+      SELECT id, title, content, category
+      FROM ai.knowledge_vectors
+      WHERE ${tenantScopeFilter} AND (${whereClause})
+      ORDER BY
+        CASE WHEN ${keywords[0]} IS NOT NULL AND title ILIKE ${'%' + keywords[0] + '%'} THEN 0 ELSE 1 END,
+        LENGTH(content)
+      LIMIT ${limit}
+    `;
+
+    return results;
+  } catch (error: any) {
+    logger.error('Direct keyword search failed', { error: error.message });
+    return [];
+  }
+}
+
+/**
+ * Count KB documents for a village (for early-exit optimization).
+ * Returns 0 if village has no KB docs, avoiding expensive RAG retries.
+ */
+export async function countKnowledgeDocs(villageId?: string): Promise<number> {
+  try {
+    const tenantScopeFilter = villageId
+      ? Prisma.sql`((village_id = ${villageId} AND scope = 'village' AND is_global = FALSE) OR (scope = 'global' AND is_global = TRUE))`
+      : Prisma.sql`(scope = 'global' AND is_global = TRUE)`;
+    const result = await prisma.$queryRaw<{count: bigint}[]>`
+      SELECT COUNT(*) as count
+      FROM ai.knowledge_vectors
+      WHERE ${tenantScopeFilter}
+    `;
+    return Number(result[0]?.count || 0);
+  } catch (error: any) {
+    logger.error('KB doc count failed', { error: error.message });
+    return -1; // Unknown, do not early-exit
   }
 }

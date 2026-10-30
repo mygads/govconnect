@@ -16,6 +16,8 @@ import {
   RAGContext,
   RAGConfidence,
   RAGConflictInfo,
+  RAGFailClosedDecision,
+  RAGQualityAssessment,
   RetrievalMode,
   VectorSearchResult,
   VectorSearchOptions,
@@ -24,6 +26,9 @@ import { config } from '../config/env';
 import { generateEmbedding } from './embedding.service';
 import { searchVectors, recordBatchRetrievals } from './vector-db.service';
 import { hybridSearch, HybridSearchResult } from './hybrid-search.service';
+import { evaluateRAGQuality, recordRAGQualityMetrics } from './rag-quality-gate.service';
+import { perfSpan, perfMeasure, perfCount } from '../pipeline/perf-timer';
+import { rewriteQueryForRAG } from './query-rewrite.service';
 import {
   buildPromptMessages,
   callAIGatewayPrompt,
@@ -43,6 +48,43 @@ const DEFAULT_RERANK_MIN_SCORE = 0.2;
 const DEFAULT_RETRIEVAL_MODE: RetrievalMode = 'heuristic_rerank';
 const HYBRID_RERANK_MIN_CANDIDATES = 8;
 const HYBRID_RERANK_CLOSE_SCORE_GAP = 0.08;
+
+/**
+ * W6: post-retrieval fail-closed threshold.
+ * If the best result scores below this, the retrieval is discarded entirely
+ * (ragUnreliable=true) instead of letting the LLM answer from shaky context.
+ * Must stay aligned with RAG_QUALITY_MEDIUM_MIN in rag-quality-gate.service.ts.
+ */
+export const RAG_FAILCLOSED_MIN_SCORE = 0.65;
+
+/**
+ * W6: pure post-retrieval fail-closed decision (no I/O — unit testable).
+ *
+ * @param topScore  best similarity score, or null when there are no results
+ * @param resultCount number of results that survived filtering
+ * @param queryIntent intent from classifyQueryIntent ('skip' = greeting/smalltalk)
+ */
+export function evaluateFailClosed(
+  topScore: number | null,
+  resultCount: number,
+  queryIntent: string,
+): RAGFailClosedDecision {
+  if (resultCount === 0 || topScore === null) {
+    return { unreliable: false, reason: 'no results to evaluate' };
+  }
+  // Greetings/smalltalk never reach retrieval (early return), but guard anyway:
+  // fail-closed only applies to substantive queries.
+  if (queryIntent === 'skip') {
+    return { unreliable: false, reason: 'greeting/smalltalk exempt' };
+  }
+  if (topScore < RAG_FAILCLOSED_MIN_SCORE) {
+    return {
+      unreliable: true,
+      reason: `top score ${topScore.toFixed(3)} < fail-closed threshold ${RAG_FAILCLOSED_MIN_SCORE}`,
+    };
+  }
+  return { unreliable: false, reason: `top score ${topScore.toFixed(3)} >= threshold` };
+}
 
 function resolveRetrievalMode(mode?: RetrievalMode): RetrievalMode {
   if (mode === 'external_rerank' || mode === 'heuristic_rerank' || mode === 'raw_no_rerank') {
@@ -217,7 +259,8 @@ const OBVIOUS_REQUIRE_PATTERNS = [
 // heuristics so official domains pass while phishing shortlinks don't.
 const SPAM_PATTERNS = [
   /(.)\1{30,}/,                         // 30+ repeated single characters
-  /^[^\w\s]+$/,                         // Only symbols (no letters/numbers/spaces)
+  // [P2 FIX] Emoji-only bukan spam — user mengekspresikan emosi
+  /^[^\w\s\p{Emoji}]+$/u,               // Only symbols (no letters/numbers/spaces/emoji)
   /\b(viagra|casino|poker|judi|togel|slot|xxx|porn)\b/i,
   /\b(click\s+here|klik\s+disini|download\s+now|claim\s+now)\b/i,
   /\b(menang\s+jutaan|hadiah\s+milyar|transfer\s+sekarang|bonus\s+besar)\b/i,
@@ -269,15 +312,12 @@ interface QueryIntentResult {
 }
 
 /**
- * Classify query intent to determine RAG necessity.
- * Uses micro NLU (LLM) for intelligent classification.
- * Also returns NLU-inferred categories for smarter retrieval.
- * Falls back to 'optional' if LLM is unavailable.
+ * Sync fast pre-filter for query intent: deterministic skip/require without
+ * any I/O. Returns null when the micro-LLM classifier is needed.
+ * P0-1: extracted so callers can decide skip/require synchronously and run
+ * the async classifier in parallel with embedding/expansion work.
  */
-async function classifyQueryIntent(
-  query: string,
-  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
-): Promise<QueryIntentResult> {
+export function fastClassifyQueryIntent(query: string): QueryIntentResult | null {
   const normalizedQuery = query.trim().toLowerCase();
 
   // Fast pre-filter: trivially obvious skips (saves an LLM call)
@@ -294,8 +334,20 @@ async function classifyQueryIntent(
     }
   }
 
+  return null;
+}
+
+/**
+ * Async half of query intent classification: the micro-LLM call.
+ * The sync pre-filter MUST be consulted first (fastClassifyQueryIntent).
+ */
+async function classifyQueryIntentAsync(
+  query: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<QueryIntentResult> {
   // Use micro NLU for intelligent classification
   try {
+    perfCount('llm_call:rag_intent');
     const result = await classifyRAGIntent(query, context);
     if (result && result.confidence >= 0.6) {
       if (result.decision === 'RAG_REQUIRED') return { intent: 'required', nluCategories: result.categories };
@@ -309,6 +361,19 @@ async function classifyQueryIntent(
 
   // Fallback: if LLM unavailable, default to optional (still searches RAG)
   return { intent: 'optional' };
+}
+
+/**
+ * Classify query intent to determine RAG necessity.
+ * Uses micro NLU (LLM) for intelligent classification.
+ * Also returns NLU-inferred categories for smarter retrieval.
+ * Falls back to 'optional' if LLM is unavailable.
+ */
+async function classifyQueryIntent(
+  query: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<QueryIntentResult> {
+  return fastClassifyQueryIntent(query) ?? classifyQueryIntentAsync(query, context);
 }
 
 /**
@@ -648,7 +713,24 @@ export async function retrieveContext(
   } = options as VectorSearchOptions & { useQueryExpansion?: boolean; useHybridSearch?: boolean };
   const retrievalMode = resolveRetrievalMode(requestedRetrievalMode);
 
-  const retrievalCacheKey = getRetrievalCacheKey(query, {
+  // Step -1: Query rewriting SEBELUM retrieval (deterministik, tanpa LLM).
+  // Pertanyaan anaforis/pendek ("kapan selesainya?") digabung dengan konteks
+  // percakapan terakhir (topik aktif + entitas) menjadi query lengkap agar
+  // embedding-nya kaya konteks. Tanpa queryRewriteContext, atau bila query
+  // sudah lengkap, query diteruskan apa adanya (hemat).
+  // Cache key memakai effectiveQuery: konteks berbeda -> kunci berbeda.
+  const rewriteOutcome = rewriteQueryForRAG(query, options.queryRewriteContext);
+  const effectiveQuery = rewriteOutcome.rewritten;
+  if (rewriteOutcome.didRewrite) {
+    logger.info('RAG query rewritten before retrieval', {
+      original: query.substring(0, 80),
+      rewritten: effectiveQuery.substring(0, 120),
+      reason: rewriteOutcome.reason,
+      villageId,
+    });
+  }
+
+  const retrievalCacheKey = getRetrievalCacheKey(effectiveQuery, {
     topK,
     minScore,
     categories,
@@ -662,25 +744,79 @@ export async function retrieveContext(
   const cachedRetrieval = getCachedRetrieval(retrievalCacheKey);
   if (cachedRetrieval) {
     logger.debug('RAG retrieval cache hit', {
-      query: query.substring(0, 40),
+      query: effectiveQuery.substring(0, 40),
       villageId,
     });
     return cachedRetrieval;
   }
 
   // Step 0: Check query intent - skip RAG for greetings/simple responses
-  const queryIntentResult = await classifyQueryIntent(query, {
+  // P0-1: the sync pre-filter decides skip/require with zero I/O. The async
+  // micro-LLM half is kicked off immediately and runs IN PARALLEL with query
+  // expansion below (they are independent) — previously strictly sequential,
+  // costing one micro-LLM round-trip (~1s) on the critical path.
+  // Reuse precomputed intent if provided (avoids redundant LLM call on retries).
+  const endIntent = perfSpan('rag.intent_classify');
+  const intentContext = {
     village_id: villageId,
     wa_user_id: waUserId,
     session_id: sessionId,
     channel,
-  });
+  };
+  // Bila query di-rewrite, intent dihitung ulang dari effectiveQuery — intent
+  // yang dihitung dari query asli (tanpa konteks) bisa salah untuk query
+  // anaforis. Pre-filter sync ini murah (tanpa I/O).
+  const precomputedIntent = (rewriteOutcome.didRewrite
+    ? undefined
+    : (options as any).precomputedIntent) as QueryIntentResult | undefined;
+  const fastIntent = precomputedIntent ?? fastClassifyQueryIntent(effectiveQuery);
+  if (fastIntent && fastIntent.intent === 'skip') {
+    endIntent();
+    logger.debug('Skipping RAG for simple query', {
+      query: effectiveQuery.substring(0, 30),
+      intent: fastIntent.intent
+    });
+    return {
+      relevantChunks: [],
+      contextString: '',
+      totalResults: 0,
+      searchTimeMs: Date.now() - startTime,
+    };
+  }
+  // Async classifier in flight while expansion runs below.
+  const intentPromise = (async (): Promise<QueryIntentResult> => {
+    try {
+      return precomputedIntent
+        ?? await perfMeasure('rag.intent_llm', () => classifyQueryIntentAsync(effectiveQuery, intentContext));
+    } finally {
+      endIntent();
+    }
+  })();
+
+  const expansionContext = {
+    village_id: villageId,
+    wa_user_id: waUserId,
+    session_id: sessionId,
+    channel,
+  };
+
+  // Step 1: await the intent classifier and query expansion TOGETHER — they
+  // are independent, so the micro-LLM round-trip overlaps expansion work
+  // instead of blocking it (P0-1: previously strictly sequential).
+  const [queryIntentResult, expandedQuery] = await Promise.all([
+    intentPromise,
+    useQueryExpansion
+      ? perfMeasure('rag.query_expansion', () => expandQuery(effectiveQuery, expansionContext))
+      : Promise.resolve(effectiveQuery),
+  ]);
   const queryIntent = queryIntentResult.intent;
-  
+
+  // The async classifier may still decide 'skip' (high-confidence RAG_SKIP);
+  // honor it before any retrieval work (expansion already ran — rare path,
+  // result is simply discarded).
   if (queryIntent === 'skip') {
-    logger.debug('Skipping RAG for simple query', { 
-      query: query.substring(0, 30),
-      intent: queryIntent 
+    logger.debug('Skipping RAG per async intent classification', {
+      query: effectiveQuery.substring(0, 30),
     });
     return {
       relevantChunks: [],
@@ -704,8 +840,9 @@ export async function retrieveContext(
       : undefined;
 
   logger.info('Starting RAG retrieval', {
-    queryLength: query.length,
+    queryLength: effectiveQuery.length,
     queryIntent,
+    rewroteQuery: rewriteOutcome.didRewrite,
     topK,
     minScore: adjustedMinScore,
     categories: effectiveCategories,
@@ -716,16 +853,6 @@ export async function retrieveContext(
   });
 
   try {
-    const expansionContext = {
-      village_id: villageId,
-      wa_user_id: waUserId,
-      session_id: sessionId,
-      channel,
-    };
-
-    // Step 1: Expand query with synonyms for better recall
-    const expandedQuery = useQueryExpansion ? await expandQuery(query, expansionContext) : query;
-
     let filteredResults: VectorSearchResult[];
     let retrievalDebug: RAGContext['retrievalDebug'] | undefined;
     const rerankCandidateCount = config.rerankEnabled
@@ -734,55 +861,61 @@ export async function retrieveContext(
 
     // Step 2-4: Use Hybrid Search (Vector + Keyword) or pure Vector search
     if (useHybridSearch) {
-      const hybridResults = await hybridSearch(expandedQuery, {
+      const hybridResults = await perfMeasure('rag.hybrid_search', () => hybridSearch(expandedQuery, {
         topK: rerankCandidateCount,
         minScore: Math.max(adjustedMinScore * 0.8, MIN_EFFECTIVE_SCORE),
         categories: effectiveCategories,
         sourceTypes,
         villageId,
         useQueryExpansion: false,
-      });
+      }));
 
-      const rerankOutcome = await rerankRetrievedResults(
+      const rerankOutcome = await perfMeasure('rag.rerank', () => rerankRetrievedResults(
         hybridResults,
         expandedQuery,
         topK,
         adjustedMinScore,
         retrievalMode,
         expansionContext,
-      );
+      ));
       filteredResults = rerankOutcome.results;
-      retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults, rerankOutcome.appliedMode);
+      retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults, rerankOutcome.appliedMode, {
+        didRewrite: rewriteOutcome.didRewrite,
+        rewrittenQuery: effectiveQuery,
+      });
 
       logger.debug('Hybrid search completed', {
-        query: query.substring(0, 50),
+        query: effectiveQuery.substring(0, 50),
         resultCount: hybridResults.length,
         retrievalMode: rerankOutcome.appliedMode,
         matchTypes: hybridResults.map(r => (r as HybridSearchResult).matchType),
       });
     } else {
       // Fallback: Pure vector search
-      const queryEmbedding = await generateEmbedding(expandedQuery, {
-        taskType: 'RETRIEVAL_QUERY',
-        outputDimensionality: 768,
-        useCache: true,
-        context: expansionContext,
+      const queryEmbedding = await perfMeasure('rag.embedding', async () => {
+        perfCount('embedding_call');
+        return generateEmbedding(expandedQuery, {
+          taskType: 'RETRIEVAL_QUERY',
+          outputDimensionality: 768,
+          useCache: true,
+          context: expansionContext,
+        });
       });
 
-      const searchResults = await searchVectors(queryEmbedding.values, {
+      const searchResults = await perfMeasure('rag.vector_search', () => searchVectors(queryEmbedding.values, {
         topK: rerankCandidateCount,
         minScore: adjustedMinScore * 0.8,
         categories: effectiveCategories,
         sourceTypes,
         villageId,
-      });
+      }));
 
       if (searchResults.length === 0) {
         // Fase 1.8: Structured "why retrieval failed" trace
         logger.warn('RAG vector-only search returned 0 results — failure trace', {
           trace: 'rag_retrieval_failed',
-          query: query.substring(0, 100),
-          expandedQuery: expandedQuery !== query ? expandedQuery.substring(0, 150) : undefined,
+          query: effectiveQuery.substring(0, 100),
+          expandedQuery: expandedQuery !== effectiveQuery ? expandedQuery.substring(0, 150) : undefined,
           queryIntent,
           adjustedMinScore: adjustedMinScore * 0.8,
           topK: rerankCandidateCount,
@@ -800,24 +933,27 @@ export async function retrieveContext(
         };
       }
 
-      const rerankOutcome = await rerankRetrievedResults(
+      const rerankOutcome = await perfMeasure('rag.rerank', () => rerankRetrievedResults(
         searchResults,
         expandedQuery,
         topK,
         adjustedMinScore,
         retrievalMode,
         expansionContext,
-      );
+      ));
       filteredResults = rerankOutcome.results;
-      retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults, rerankOutcome.appliedMode);
+      retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults, rerankOutcome.appliedMode, {
+        didRewrite: rewriteOutcome.didRewrite,
+        rewrittenQuery: effectiveQuery,
+      });
     }
 
     if (filteredResults.length === 0) {
       // Fase 1.8: Structured "why retrieval failed" trace for diagnostics
       logger.warn('RAG retrieval returned 0 results — failure trace', {
         trace: 'rag_retrieval_failed',
-        query: query.substring(0, 100),
-        expandedQuery: expandedQuery !== query ? expandedQuery.substring(0, 150) : undefined,
+        query: effectiveQuery.substring(0, 100),
+        expandedQuery: expandedQuery !== effectiveQuery ? expandedQuery.substring(0, 150) : undefined,
         queryIntent,
         adjustedMinScore,
         topK,
@@ -834,6 +970,64 @@ export async function retrieveContext(
       };
     }
 
+    // W9: live RAG quality gate — runs on every retrieval.
+    const ragQuality: RAGQualityAssessment = evaluateRAGQuality(
+      filteredResults.map((r) => (typeof r.score === 'number' ? r.score : 0)),
+    );
+    if (ragQuality.level === 'LOW') {
+      logger.warn('RAG quality gate: LOW quality retrieval', {
+        trace: 'rag_quality_low',
+        query: effectiveQuery.substring(0, 100),
+        villageId,
+        top1Score: ragQuality.top1Score,
+        top2Score: ragQuality.top2Score,
+        scoreGap: ragQuality.scoreGap,
+        resultCount: ragQuality.resultCount,
+        avgScore: ragQuality.avgScore,
+        reasons: ragQuality.reasons,
+      });
+    }
+    // Persist metrics for monitoring (fire-and-forget; never breaks retrieval).
+    void recordRAGQualityMetrics({
+      villageId,
+      channel,
+      queryPreview: effectiveQuery.substring(0, 200),
+      assessment: ragQuality,
+    });
+
+    // W6: post-retrieval fail-closed assertion. If every surviving result is
+    // below the trust threshold, discard them all — never let the LLM answer
+    // from irrelevant context. The caller sees ragUnreliable=true and must
+    // answer honestly ("don't know") instead of hallucinating.
+    const failClosed = evaluateFailClosed(ragQuality.top1Score, filteredResults.length, queryIntent);
+    if (failClosed.unreliable) {
+      logger.warn('RAG fail-closed: discarding unreliable retrieval', {
+        trace: 'rag_fail_closed',
+        query: effectiveQuery.substring(0, 100),
+        villageId,
+        reason: failClosed.reason,
+        discardedCount: filteredResults.length,
+        searchTimeMs: Date.now() - startTime,
+      });
+      const failClosedResponse: RAGContext = {
+        relevantChunks: [],
+        contextString: '',
+        totalResults: 0,
+        searchTimeMs: Date.now() - startTime,
+        confidence: {
+          level: 'low',
+          score: 0,
+          reason: `Fail-closed: ${failClosed.reason}`,
+          suggestFallback: true,
+        },
+        ragUnreliable: true,
+        ragQuality,
+        retrievalDebug,
+      };
+      setCachedRetrieval(retrievalCacheKey, failClosedResponse);
+      return failClosedResponse;
+    }
+
     // Step 5: Record retrievals for analytics (fire and forget)
     const knowledgeIds = filteredResults
       .filter(r => r.sourceType === 'knowledge')
@@ -846,14 +1040,15 @@ export async function retrieveContext(
     const { context: contextString, conflicts } = buildContextString(filteredResults);
 
     // Step 7: Calculate confidence score
-    const confidence = calculateConfidence(filteredResults, query);
+    const confidence = calculateConfidence(filteredResults, effectiveQuery);
 
     const endTime = Date.now();
 
     logger.info('RAG retrieval completed', {
-      query: query.substring(0, 50),
+      query: effectiveQuery.substring(0, 50),
       intent: queryIntent,
-      expanded: expandedQuery !== query,
+      rewroteQuery: rewriteOutcome.didRewrite,
+      expanded: expandedQuery !== effectiveQuery,
       hybrid: useHybridSearch,
       retrievalMode: retrievalDebug?.retrievalMode || retrievalMode,
       totalResults: filteredResults.length,
@@ -870,6 +1065,8 @@ export async function retrieveContext(
       confidence,
       conflicts: conflicts.length > 0 ? conflicts : undefined,
       retrievalDebug,
+      ragUnreliable: false,
+      ragQuality,
     };
 
     setCachedRetrieval(retrievalCacheKey, response);
@@ -877,7 +1074,7 @@ export async function retrieveContext(
     return response;
   } catch (error: any) {
     logger.error('RAG retrieval failed', {
-      query: query.substring(0, 50),
+      query: effectiveQuery.substring(0, 50),
       error: error.message,
     });
 
@@ -900,6 +1097,7 @@ function buildHybridRetrievalDebug(
   candidates: HybridSearchResult[],
   selectedResults: VectorSearchResult[],
   retrievalMode: RetrievalMode,
+  rewrite?: { didRewrite: boolean; rewrittenQuery: string },
 ): RAGContext['retrievalDebug'] {
   const selectedById = new Map(
     selectedResults.map((result) => [
@@ -914,6 +1112,8 @@ function buildHybridRetrievalDebug(
   return {
     hybridUsed: true,
     retrievalMode,
+    rewroteQuery: rewrite?.didRewrite,
+    rewrittenQuery: rewrite?.rewrittenQuery,
     candidates: candidates.slice(0, 10).map((candidate) => ({
       id: candidate.id,
       title: candidate.source,
@@ -935,12 +1135,15 @@ function buildVectorRetrievalDebug(
   candidates: VectorSearchResult[],
   selectedResults: VectorSearchResult[],
   retrievalMode: RetrievalMode,
+  rewrite?: { didRewrite: boolean; rewrittenQuery: string },
 ): RAGContext['retrievalDebug'] {
   const selectedIds = new Set(selectedResults.map((result) => result.id));
 
   return {
     hybridUsed: false,
     retrievalMode,
+    rewroteQuery: rewrite?.didRewrite,
+    rewrittenQuery: rewrite?.rewrittenQuery,
     candidates: candidates.slice(0, 10).map((candidate, index) => ({
       id: candidate.id,
       title: candidate.source,

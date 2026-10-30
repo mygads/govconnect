@@ -179,6 +179,8 @@ export async function searchKeywords(
              @@ plainto_tsquery('simple', ${query})
           OR similarity(LOWER(COALESCE(section_title, '') || ' ' || content), ${query.toLowerCase()}) > 0.1)
           AND ${documentScopeFilter}
+          -- §5.2 publish review gate: only published documents are retrievable.
+          AND publish_status = 'published'
         ORDER BY relevance_score DESC
         LIMIT ${topK}
       `;
@@ -416,7 +418,7 @@ export async function hybridSearch(
 ): Promise<HybridSearchResult[]> {
   const {
     topK = 5,
-    minScore = 0.65,
+    minScore = 0.3,  // [FIX] Lowered from 0.65 to allow more results
     categories,
     sourceTypes = ['knowledge', 'document'],
     villageId,
@@ -429,9 +431,10 @@ export async function hybridSearch(
 
   try {
     // Generate embedding for vector search
+    // [FIX] Use 1536 dims to match stored document embeddings (text-embedding-3-small default)
     const embedding = await generateEmbedding(query, {
       taskType: 'RETRIEVAL_QUERY',
-      outputDimensionality: 768,
+      outputDimensionality: 1536,
       useCache: true,
       context: {
         village_id: villageId || null,

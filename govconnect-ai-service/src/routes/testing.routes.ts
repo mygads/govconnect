@@ -529,4 +529,54 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
   }
 });
 
+// E2E testing endpoint with PRODUCTION side effects (tools execute, real tickets created)
+// Use for full complaint flow testing. Requires x-internal-api-key header.
+router.post('/chat-e2e', verifyInternalKey, async (req: Request, res: Response) => {
+  try {
+    const { message, village_id, villageId, user_id, conversationHistory } = req.body || {};
+    const resolvedVillageId: string | undefined = typeof village_id === 'string' && village_id.length > 0
+      ? village_id
+      : typeof villageId === 'string' && villageId.length > 0
+        ? villageId
+        : undefined;
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'Message wajib diisi' });
+    }
+
+    const userId = typeof user_id === 'string' && user_id.length > 0
+      ? user_id
+      : `test_e2e_${Date.now()}`;
+
+    const safeConversationHistory = Array.isArray(conversationHistory)
+      ? conversationHistory
+          .filter((item: any) => (item?.role === 'user' || item?.role === 'assistant') && typeof item?.content === 'string')
+          .slice(-30)
+          .map((item: any) => ({ role: item.role, content: item.content }))
+      : [];
+
+    const result = await processUnifiedMessage({
+      userId,
+      message,
+      channel: 'webchat',
+      villageId: resolvedVillageId,
+      conversationHistory: safeConversationHistory,
+      isEvaluation: false,
+      sideEffectMode: 'production',
+    });
+
+    return res.json({
+      success: result.success,
+      data: result,
+    });
+  } catch (error: any) {
+    logger.error('Testing chat-e2e error', { error: error.message });
+    return res.status(500).json({
+      success: false,
+      error: 'Testing chat-e2e failed',
+      details: error.message,
+    });
+  }
+});
+
 export default router;

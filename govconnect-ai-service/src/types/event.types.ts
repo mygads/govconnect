@@ -20,6 +20,13 @@ export interface MessageReceivedEvent {
   media_file_name?: string;
   // Message IDs for tracking (single message per event)
   batched_message_ids?: string[];  // All message IDs in this batch
+  /**
+   * WhatsApp interactive button id the citizen clicked (e.g. 'confirm_send').
+   * Contract: channel-service MUST forward the button id, not just the
+   * display text. The ai-service treats the id as authoritative for the
+   * G2/G3 confirmation chain (see pipeline/confirmation.ts).
+   */
+  button_id?: string;
 }
 
 export interface AIReplyEvent {
@@ -40,6 +47,16 @@ export interface AIReplyEvent {
     organization?: string;  // e.g., "Pemadam Kebakaran", "Puskesmas"
     title?: string;         // e.g., "Hotline Darurat", "Nomor Layanan"
   }>;
+  // Optional interactive payload (buttons / list). channel-service sends it
+  // via sendButtonsMessage/sendListMessage; falls back to reply_text on
+  // failure. Shapes match the channel-service interactive convention.
+  interactive?:
+    | { type: 'buttons'; body: string;
+        buttons: Array<{ type: 'reply'; id: string; title: string }>; footer?: string }
+    | { type: 'list'; body: string; buttonText: string;
+        sections: Array<{ title?: string;
+          rows: Array<{ title: string; desc?: string; RowId?: string }> }>;
+        footer?: string };
 }
 
 export interface AIErrorEvent {

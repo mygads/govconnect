@@ -6,6 +6,8 @@
  */
 
 import logger from '../../utils/logger';
+import { assertNotAborted } from '../../pipeline/abort-guard';
+import { recordToolErrorFailure } from '../improvement-loop.service';
 import {
   getImportantContacts,
   isConfidentContactLookupResult,
@@ -28,6 +30,9 @@ import {
 } from '../case-client.service';
 import { rememberMemoryEvent, searchUserMemories } from '../hybrid-memory.service';
 import { searchDocuments, searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
+import type { QueryRewriteContext } from '../query-rewrite.service';
+import { searchKnowledgeByKeywordsDirect } from '../vector-db.service';
+import { loadSkill } from '../skill-loader.service';
 import { recordMemoryTrace } from '../runtime-observability.service';
 import { resolveServiceSlugFromSearch } from '../service-handler';
 import { resolveVillageSlugForPublicForm } from '../ump-utils';
@@ -118,8 +123,23 @@ interface ToolContext {
   userMessage?: string;
   activeServiceSlug?: string;
   activeServiceName?: string;
+  // P1-4: Per-turn tool dedup cache. Key: toolName + normalized args JSON
+  // (see buildToolDedupKey). The value is a PROMISE so that two identical
+  // calls launched concurrently in one parallel batch share a single
+  // in-flight execution instead of both missing the cache and running twice.
+  // Only successful executions stay cached; failures are evicted so a later
+  // retry in the same turn can re-attempt the tool.
+  executedTools?: Map<string, Promise<ExecutedToolCall>>;
+  // P1-5: Abort signal for turn budget. If aborted, don't start new tools
+  // and don't use results from tools that completed after abort.
+  abortSignal?: AbortSignal;
+  /**
+   * Konteks percakapan untuk query rewriting sebelum RAG retrieval
+   * (query-rewrite.service.ts). Dibangun oleh caller dari history/slots;
+   * diteruskan ke search_knowledge / search_documents.
+   */
+  rewriteContext?: QueryRewriteContext;
 }
-
 const MUTATION_TOOLS = new Set<AgentToolName>([
   'create_complaint',
   'create_service_request',
@@ -141,7 +161,7 @@ function maskPhoneLike(raw: string): string {
 export function pickArgString(args: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
     const v = args[key];
-    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'string' && v.trim() && !/^(null|undefined|none)$/i.test(v.trim())) return v.trim();
   }
   return '';
 }
@@ -221,7 +241,212 @@ function buildServiceEditGuidanceText(editUrl: string): string {
   return `Link edit permohonan:\n${editUrl}\n\nLink ini hanya berlaku satu kali dan hanya bisa dipakai oleh nomor yang membuat pengajuan.`;
 }
 
+/**
+ * P1-4 (dedup): argument keys whose value identifies a *service name* rather
+ * than free text. Their values go through canonicalizeServiceName() so that
+ * near-duplicates like "KTP" vs "pendaftaran KTP" share one dedup key.
+ * Comparison is case-insensitive on the key name.
+ */
+const SERVICE_NAME_ARG_KEYS = new Set([
+  'service_name',
+  'servicename',
+  'service',
+  'layanan',
+  'nama_layanan',
+]);
+
+/**
+ * Generic Indonesian request/action words stripped from the FRONT of a
+ * service-name argument during dedup canonicalization. Deliberately small
+ * and deterministic — no giant regex. "surat" is intentionally NOT in this
+ * list: "surat domisili" / "surat keterangan" are real service-name cores,
+ * not request verbs.
+ */
+const GENERIC_SERVICE_PREFIXES = [
+  'syarat',
+  'cara',
+  'info',
+  'informasi',
+  'tentang',
+  'pengajuan',
+  'mengajukan',
+  'permohonan',
+  'pendaftaran',
+  'mendaftar',
+  'pembuatan',
+  'membuat',
+  'pengurusan',
+  'mengurus',
+  'pengambilan',
+  'mengambil',
+  'perpanjangan',
+  'memperpanjang',
+  'bikin',
+  'buat',
+  'daftar',
+  'urus',
+  'ambil',
+  'layanan',
+  'program',
+  'bantuan',
+  'apa',
+  'bagaimana',
+  'gimana',
+  'berapa',
+];
+
+/**
+ * Tiny explicit alias map for service names. Only near-certain equivalences
+ * are listed here; anything not listed is left as-is (documented limitation:
+ * "surat domisili" vs "keterangan domisili" still execute twice).
+ */
+const SERVICE_NAME_ALIASES: Record<string, string> = {
+  'kartu tanda penduduk': 'ktp',
+  'ktp elektronik': 'ktp',
+  'ktp el': 'ktp',
+  'e ktp': 'ktp',
+  'kartu keluarga': 'kk',
+  // [P2-1 FIX] Alias layanan — sinkron dengan SERVICE_ALIAS_MAP di service-grounding.utils.ts
+  'sku': 'surat keterangan usaha',
+  'suket usaha': 'surat keterangan usaha',
+  'surat keterangan berusaha': 'surat keterangan usaha',
+  'sktm': 'surat keterangan tidak mampu',
+  'suket tidak mampu': 'surat keterangan tidak mampu',
+  'skd': 'surat keterangan domisili',
+  'suket domisili': 'surat keterangan domisili',
+  'surat domisili': 'surat keterangan domisili',
+  'akte': 'akta kelahiran',
+  'akte kelahiran': 'akta kelahiran',
+  'suket': 'surat keterangan',
+};
+
+/**
+ * P1-4: canonicalize a service-name-like argument for DEDUP KEY purposes
+ * only. The real args passed to the tool are untouched — this only decides
+ * whether two calls are "the same lookup".
+ *
+ * Examples: "KTP" → "ktp"; "pendaftaran KTP" → "ktp";
+ * "syarat bikin KTP" → "ktp"; "Kartu Tanda Penduduk" → "ktp".
+ *
+ * Honest limits (by design, deterministic & cheap — no LLM):
+ * - Only strips leading generic request verbs + the small alias map above.
+ * - Wording differences NOT covered still miss: "surat domisili" vs
+ *   "keterangan domisili", typos ("KTPp"), or paraphrases ("dokumen identitas").
+ * - Applied ONLY to service-name-like arg keys of get_service_info; every
+ *   other arg uses plain normalization (trim/collapse-whitespace/lowercase).
+ */
+export function canonicalizeServiceName(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  let s = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  let stripped = true;
+  while (stripped && s) {
+    stripped = false;
+    for (const prefix of GENERIC_SERVICE_PREFIXES) {
+      if (s === prefix) {
+        s = '';
+        stripped = true;
+        break;
+      }
+      if (s.startsWith(`${prefix} `)) {
+        s = s.slice(prefix.length + 1);
+        stripped = true;
+        break;
+      }
+    }
+  }
+  s = s.trim();
+  return SERVICE_NAME_ALIASES[s] ?? s;
+}
+
+/** Normalize one arg value for dedup-key purposes (recursive, key-sorted). */
+function normalizeArgValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeArgValue);
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value).sort()) {
+      out[k] = normalizeArgValue((value as Record<string, unknown>)[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * P1-4: Build a stable, NORMALIZED dedup key for tool+args.
+ * - Keys sorted; null/undefined/empty-string values dropped (they are
+ *   semantically "absent" for every tool here).
+ * - String values: trim + collapse inner whitespace + lowercase.
+ * - Service-name-like args of get_service_info additionally go through
+ *   canonicalizeServiceName() (near-duplicate collapsing, e.g. "KTP" vs
+ *   "pendaftaran KTP").
+ * Identical normalized keys ⇒ one execution per turn, result shared.
+ */
+export function buildToolDedupKey(toolName: string, args: Record<string, unknown>): string {
+  const normalized: Record<string, unknown> = {};
+  for (const key of Object.keys(args || {}).sort()) {
+    const rawValue = (args as Record<string, unknown>)[key];
+    if (rawValue === null || rawValue === undefined) continue;
+    let value: unknown;
+    if (toolName === 'get_service_info' && SERVICE_NAME_ARG_KEYS.has(key.toLowerCase())) {
+      value = canonicalizeServiceName(rawValue);
+    } else {
+      value = normalizeArgValue(rawValue);
+    }
+    if (value === '') continue;
+    normalized[key] = value;
+  }
+  return `${toolName}:${JSON.stringify(normalized)}`;
+}
+
 export async function executeToolCall(
+  toolName: AgentToolName,
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ExecutedToolCall> {
+  // P1-4: Per-turn dedup with in-flight sharing. Identical (normalized)
+  // tool+args within one turn execute ONCE; duplicates launched
+  // concurrently in the same parallel batch share the in-flight promise
+  // instead of both missing the cache. Callers map the shared result back
+  // to their own tool_call_id.
+  if (ctx.executedTools) {
+    const dedupKey = buildToolDedupKey(toolName, args);
+    const inFlight = ctx.executedTools.get(dedupKey);
+    if (inFlight) return inFlight;
+    const pending = runExecuteToolCall(toolName, args, ctx).then(
+      (executed) => {
+        // Cache only successes: a failed read may succeed on retry, and a
+        // failed mutation must never be silently replayed as "done".
+        if (!executed.result.success) ctx.executedTools?.delete(dedupKey);
+        return executed;
+      },
+      (err) => {
+        ctx.executedTools?.delete(dedupKey);
+        throw err;
+      },
+    );
+    // Registered synchronously, before any await, so a duplicate launched
+    // in the same tick still sees this entry.
+    ctx.executedTools.set(dedupKey, pending);
+    return pending;
+  }
+  return runExecuteToolCall(toolName, args, ctx);
+}
+
+/**
+ * One actual execution of a single tool call (no dedup layer).
+ * Never throws except on P1-5 abort; tool failures are returned as
+ * failure results so one bad tool never kills its batch siblings.
+ */
+async function runExecuteToolCall(
   toolName: AgentToolName,
   args: Record<string, unknown>,
   ctx: ToolContext,
@@ -256,8 +481,17 @@ export async function executeToolCall(
     };
   }
 
+  // P1-5: Don't start new tool if turn already aborted
+  if (ctx.abortSignal?.aborted) {
+    throw new Error('turn_aborted_before_tool_start');
+  }
+
   try {
     const result = await dispatchTool(toolName, args, ctx);
+    // P1-5: If aborted during execution, don't use the result
+    if (ctx.abortSignal?.aborted) {
+      throw new Error('turn_aborted_during_tool_execution');
+    }
     const durationMs = Date.now() - startTime;
     const trace: ToolExecutionTrace = {
       tool: toolName,
@@ -283,11 +517,13 @@ export async function executeToolCall(
       sourceKind: trace.sourceKind,
     });
 
-    return {
+    const executed: ExecutedToolCall = {
       content: JSON.stringify(result),
       trace,
       result,
     };
+
+    return executed;
   } catch (error: any) {
     const durationMs = Date.now() - startTime;
     logger.error('Agent tool execution failed', {
@@ -303,6 +539,17 @@ export async function executeToolCall(
     // that should never land in a user reply. The real details stay in
     // logs for RCA; the user gets a polite, actionable response.
     const userFacingError = buildUserFacingToolError(toolName);
+
+    // Improvement loop (additive, fail-open): tool exception adalah sinyal
+    // failure. PII di-redact di recordFailure. Tidak pernah throw.
+    recordToolErrorFailure({
+      villageId: ctx.villageId,
+      sessionId: ctx.traceId ?? ctx.userId,
+      message: ctx.userMessage,
+      toolName,
+      errorCode: userFacingError.code,
+      recordable: (ctx.sideEffectMode ?? 'production') === 'production' && !ctx.isEvaluation,
+    });
 
     return {
       content: JSON.stringify({
@@ -334,6 +581,212 @@ export async function executeToolCall(
   }
 }
 
+import { TOOL_PARALLEL_LIMIT, runWithConcurrencyLimit } from '../../gateway/tool-policy';
+/**
+ * P1-4: max concurrent tool executions inside one parallel wave, plus the
+ * bounded pool runner. Re-exported from the PURE tool-policy module (no
+ * service imports) so pipeline stages can use the concurrency bound
+ * without pulling the heavy tool-executor dependency graph at
+ * module-evaluation time.
+ */
+export { TOOL_PARALLEL_LIMIT, runWithConcurrencyLimit };
+
+export interface BatchToolCall {
+  /**
+   * Caller correlation id (e.g. the LLM's tool_call_id). Every input call
+   * gets exactly one result, in input order, so the caller can map each
+   * result back to the right tool_call_id.
+   */
+  id: string;
+  tool: AgentToolName;
+  args: Record<string, unknown>;
+}
+
+export interface BatchToolCallResult {
+  call: BatchToolCall;
+  executed: ExecutedToolCall;
+  /**
+   * True when this call was served from the per-turn dedup cache — i.e. an
+   * identical (normalized) call already ran this turn and this result is
+   * the shared one. Callers that count "tools used" (billing/telemetry)
+   * should skip deduped entries to avoid double counting.
+   */
+  deduped: boolean;
+}
+
+export interface ExecuteToolCallsOptions {
+  /** Max concurrent executions per parallel wave. Defaults to TOOL_PARALLEL_LIMIT. */
+  concurrency?: number;
+}
+
+/** Deep-collect every string value inside tool args. */
+function collectStringArgValues(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) collectStringArgValues(v, out);
+    return;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const v of Object.values(value as Record<string, unknown>)) collectStringArgValues(v, out);
+  }
+}
+
+/**
+ * P1-4: dependency detection between tool calls of the same turn.
+ * A call depends on a sibling when one of its string args references that
+ * sibling — either via a {{template}} placeholder (the only cross-call
+ * reference convention the prompts allow) or by embedding the sibling's
+ * call id verbatim. Dependent calls run in a LATER wave, sequentially in
+ * original order, so tool B can consume tool A's real output.
+ *
+ * Honest limit: if the model expresses a dependency in any other free-form
+ * way ("use the ticket from the previous call"), we cannot see it and the
+ * calls run in the same wave. Mutations are always sequential regardless.
+ */
+function callDependsOnSiblings(call: BatchToolCall, siblingIds: Set<string>): boolean {
+  if (siblingIds.size === 0) return false;
+  const strings: string[] = [];
+  collectStringArgValues(call.args, strings);
+  for (const s of strings) {
+    if (/\{\{[^}]*\}\}/.test(s)) return true;
+    const lower = s.toLowerCase();
+    for (const siblingId of siblingIds) {
+      if (siblingId.length >= 4 && lower.includes(siblingId.toLowerCase())) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Split non-mutation calls into execution waves: each wave holds the
+ * maximal subset with no dependency on still-pending siblings. A wave with
+ * an unresolvable cycle falls back to running its first call alone
+ * (progress is always guaranteed; waves ≤ number of calls).
+ */
+function planExecutionWaves(calls: BatchToolCall[]): BatchToolCall[][] {
+  const waves: BatchToolCall[][] = [];
+  let pending = [...calls];
+  while (pending.length > 0) {
+    const ready = pending.filter((call) => {
+      const siblings = new Set(pending.map((c) => c.id));
+      siblings.delete(call.id);
+      return !callDependsOnSiblings(call, siblings);
+    });
+    const wave = ready.length > 0 ? ready : [pending[0]];
+    waves.push(wave);
+    const waveIds = new Set(wave.map((c) => c.id));
+    pending = pending.filter((c) => !waveIds.has(c.id));
+  }
+  return waves;
+}
+
+function abortedToolResult(tool: AgentToolName): ExecutedToolCall {
+  const result: ToolCallResult = {
+    success: false,
+    error: 'turn_aborted_before_tool_start',
+    meta: { trustLevel: 'action_result', sourceKind: 'turn_aborted' },
+  };
+  return {
+    content: JSON.stringify(result),
+    trace: { tool, success: false, durationMs: 0, trustLevel: 'action_result', sourceKind: 'turn_aborted' },
+    result,
+  };
+}
+
+/**
+ * P1-4: execute a batch of tool calls for one turn.
+ *
+ * - DEDUP: identical (normalized) tool+args execute once per turn; the
+ *   result is shared across every duplicate call (each still mapped to its
+ *   own `id`). Near-duplicates on service-name args are collapsed via
+ *   canonicalizeServiceName() — see its docblock for honest limits.
+ * - PARALLEL: independent non-mutation calls run in waves with a bounded
+ *   concurrency pool (default 5). Calls that depend on a sibling's output
+ *   ({{placeholder}} or embedded call id) run in a later wave.
+ * - SAFETY: mutation tools (G2/G3) ALWAYS run sequentially, after all
+ *   reads, in original order. The P1-5 abort guard is checked before every
+ *   wave; an aborted turn stops launching new tools.
+ * - ISOLATION: one tool's failure never fails its independent siblings —
+ *   each call gets its own failure result, mapped to its own `id`.
+ *
+ * Returns one result per input call, in input order.
+ */
+export async function executeToolCalls(
+  calls: BatchToolCall[],
+  ctx: ToolContext,
+  opts?: ExecuteToolCallsOptions,
+): Promise<BatchToolCallResult[]> {
+  const concurrency = Math.max(1, opts?.concurrency ?? TOOL_PARALLEL_LIMIT);
+  // A per-turn dedup map is required for the batch to share executions;
+  // reuse the caller's map when provided so dedup spans the whole turn.
+  const batchCtx: ToolContext = ctx.executedTools
+    ? ctx
+    : { ...ctx, executedTools: new Map<string, Promise<ExecutedToolCall>>() };
+  const dedupMap = batchCtx.executedTools as Map<string, Promise<ExecutedToolCall>>;
+
+  const results = new Array<BatchToolCallResult>(calls.length);
+  const indexById = new Map(calls.map((c, i) => [c.id, i]));
+
+  const runOne = async (call: BatchToolCall): Promise<BatchToolCallResult> => {
+    const dedupKey = buildToolDedupKey(call.tool, call.args);
+    const deduped = dedupMap.has(dedupKey);
+    try {
+      const executed = await executeToolCall(call.tool, call.args, batchCtx);
+      return { call, executed, deduped };
+    } catch (err) {
+      // executeToolCall only throws on P1-5 abort; anything else here is
+      // belt-and-braces so one tool can never kill its batch siblings.
+      logger.error('[tool-executor] batch tool threw; isolating', {
+        tool: call.tool,
+        error: (err as Error)?.message,
+        userId: ctx.userId,
+      });
+      return { call, executed: abortedToolResult(call.tool), deduped };
+    }
+  };
+
+  const reads = calls.filter((c) => !MUTATION_TOOLS.has(c.tool));
+  const mutations = calls.filter((c) => MUTATION_TOOLS.has(c.tool));
+
+  // Reads: wave-based parallel (dependency-aware), bounded concurrency.
+  for (const wave of planExecutionWaves(reads)) {
+    // P1-5: never start a new wave once the turn budget is exhausted.
+    if (ctx.abortSignal?.aborted) {
+      for (const call of wave) {
+        results[indexById.get(call.id) as number] = { call, executed: abortedToolResult(call.tool), deduped: false };
+      }
+      // Mutations after an abort are skipped as well — fail closed.
+      for (const call of mutations) {
+        if (results[indexById.get(call.id) as number] === undefined) {
+          results[indexById.get(call.id) as number] = { call, executed: abortedToolResult(call.tool), deduped: false };
+        }
+      }
+      return results;
+    }
+    const waveResults = await runWithConcurrencyLimit(
+      wave.map((call) => () => runOne(call)),
+      concurrency,
+    );
+    for (const r of waveResults) {
+      results[indexById.get(r.call.id) as number] = r;
+    }
+  }
+
+  // Mutations: strictly sequential, original order, after all reads.
+  for (const call of mutations) {
+    if (ctx.abortSignal?.aborted) {
+      results[indexById.get(call.id) as number] = { call, executed: abortedToolResult(call.tool), deduped: false };
+      continue;
+    }
+    results[indexById.get(call.id) as number] = await runOne(call);
+  }
+
+  return results;
+}
+
 function buildUserFacingToolError(
   toolName: AgentToolName,
 ): { code: string; reply: string } {
@@ -347,7 +800,7 @@ function buildUserFacingToolError(
     };
   }
 
-  if (toolName === 'search_knowledge' || toolName === 'search_documents' || toolName === 'search_user_memory') {
+  if (toolName === 'search_knowledge' || toolName === 'search_documents' || toolName === 'search_user_memory' || toolName === 'load_skill') {
     return {
       code: `retrieval_tool_failed:${toolName}`,
       reply: 'Maaf Pak/Bu, saya belum bisa mengambil informasi lengkap saat ini. Coba tanyakan lagi sebentar ya, atau sebutkan keperluannya lebih spesifik.',
@@ -380,6 +833,8 @@ async function dispatchTool(
       return toolSearchKnowledge(args, ctx);
     case 'search_documents':
       return toolSearchDocuments(args, ctx);
+    case 'load_skill':
+      return toolLoadSkill(args, ctx);
     case 'search_user_memory':
       return toolSearchUserMemory(args, ctx);
     case 'create_complaint':
@@ -402,8 +857,19 @@ async function dispatchTool(
 }
 
 async function toolGetVillageProfile(ctx: ToolContext): Promise<ToolCallResult> {
-  const profile = await getVillageProfileSummary(ctx.villageId);
-  const contacts = ctx.villageId ? await getImportantContacts(ctx.villageId) : [];
+  // P1-13: Graceful degradation if dashboard/profile service is down
+  let profile = null;
+  let contacts: any[] = [];
+  try {
+    profile = await getVillageProfileSummary(ctx.villageId);
+  } catch (e) {
+    // Dashboard down - continue with null profile, will use fallback below
+  }
+  try {
+    contacts = ctx.villageId ? await getImportantContacts(ctx.villageId) : [];
+  } catch (e) {
+    // Contacts unavailable - continue with empty
+  }
   const officeContacts = contacts
     .filter((contact) => matchContactHints(contact, OFFICE_CONTACT_HINTS))
     .sort((a, b) => scoreOfficeContactCandidate(b) - scoreOfficeContactCandidate(a))
@@ -436,11 +902,65 @@ async function toolGetVillageProfile(ctx: ToolContext): Promise<ToolCallResult> 
       operating_hours: profile?.operating_hours || null,
       office_contacts: officeContacts,
     },
+    // P0-3: natural-language render so no caller ever needs to dump the
+    // raw data object (JSON) into a citizen reply.
+    suggested_response: buildVillageProfileResponse(profile, officeContacts),
     meta: {
       trustLevel: 'trusted_fact',
       sourceKind: 'official_village_profile',
     },
   };
+}
+
+/**
+ * P0-3 helper: render the village profile + office contacts as natural
+ * Indonesian text. Used as the tool's suggested_response so the model (or
+ * a deterministic lane) relays prose, never raw JSON.
+ */
+function formatOperatingHours(hours: unknown): string {
+  if (!hours) return '';
+  if (typeof hours === 'string') return hours;
+  if (typeof hours === 'object') {
+    const h = hours as Record<string, unknown>;
+    const labelMap: Record<string, string> = {
+      senin_jumat: 'Senin–Jumat',
+      senin_kamis: 'Senin–Kamis',
+      jumat: 'Jumat',
+      sabtu: 'Sabtu',
+      minggu: 'Minggu',
+      senin_minggu: 'Senin–Minggu',
+      catatan: 'Catatan',
+      note: 'Catatan',
+    };
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(h)) {
+      if (value === null || value === undefined || value === '') continue;
+      const label = labelMap[key] ?? key.replace(/_/g, ' ');
+      parts.push(`${label}: ${String(value)}`);
+    }
+    return parts.join(', ');
+  }
+  return String(hours);
+}
+
+function buildVillageProfileResponse(
+  profile: { name?: string | null; address?: string | null; operating_hours?: string | null } | null,
+  officeContacts: Array<{ name: string; phone: string; description?: string | null }>,
+): string {
+  const parts: string[] = [];
+  if (profile?.name) parts.push(`Profil ${profile.name}.`);
+  if (profile?.address) parts.push(`Alamat kantor desa: ${profile.address}.`);
+  const hoursText = formatOperatingHours(profile?.operating_hours);
+  if (hoursText) parts.push(`Jam operasional: ${hoursText}.`);
+  if (officeContacts.length > 0) {
+    const listed = officeContacts
+      .map((c) => `${c.name}${c.phone ? ` (${c.phone})` : ''}`)
+      .join('; ');
+    parts.push(`Kontak kantor desa: ${listed}.`);
+  }
+  return parts.length > 0
+    ? parts.join(' ')
+    : 'Profil desa belum tersedia lengkap. Silakan hubungi kantor desa langsung untuk informasi resmi.';
 }
 
 async function toolGetServiceInfo(
@@ -453,6 +973,52 @@ async function toolGetServiceInfo(
   const services = (await getServiceCatalog(ctx.villageId)).filter((service) => service.is_active);
 
   if (services.length === 0) {
+    // Fallback to KB search before giving up with generic response.
+    // (Fix K2/K3/C3/N5: "biaya bikin surat domisili berapa?" was answered generically
+    // even though KB has the exact answer.)
+    const kbQuery = serviceName || contextualServiceName || 'layanan administrasi desa';
+    try {
+      const kbResult = await searchKnowledge(kbQuery, undefined, ctx.villageId);
+      const hits = Array.isArray(kbResult?.data) ? kbResult.data : [];
+      if (hits.length > 0) {
+        return {
+          success: true,
+          data: {
+            found: true,
+            fromKnowledgeBase: true,
+            documents: hits.slice(0, 3).map((d: any) => ({
+              title: d.title,
+              content: (d.content || '').substring(0, 500),
+            })),
+          },
+          meta: {
+            trustLevel: 'trusted_fact',
+            sourceKind: 'knowledge_base_fallback',
+          },
+        };
+      }
+      // Last resort: direct keyword ILIKE search (bypasses vector + dashboard).
+      const directHits = await searchKnowledgeByKeywordsDirect(kbQuery, ctx.villageId, 3);
+      if (directHits.length > 0) {
+        return {
+          success: true,
+          data: {
+            found: true,
+            fromKnowledgeBase: true,
+            documents: directHits.map((d) => ({
+              title: d.title,
+              content: (d.content || '').substring(0, 500),
+            })),
+          },
+          meta: {
+            trustLevel: 'trusted_fact',
+            sourceKind: 'knowledge_base_direct_keyword',
+          },
+        };
+      }
+    } catch {
+      // KB fallback failed, continue to generic response below.
+    }
     return {
       success: true,
       data: {
@@ -543,7 +1109,11 @@ async function toolGetServiceInfo(
   clearPendingServiceClarification(ctx.userId);
 
   if (!resolved.service) {
-    const queriedName = (serviceName || contextualServiceName || '').trim();
+    const rawQueried = (serviceName || contextualServiceName || '').trim();
+    // E6 fix: the agent sometimes passes the literal string "null"/"undefined"
+    // as service_name. Treat those as empty so we fall back to listing
+    // services instead of emitting "layanan *null*".
+    const queriedName = /^(null|undefined|none)$/i.test(rawQueried) ? '' : rawQueried;
     if (!queriedName) {
       // No concrete service name to look up: fall back to listing active
       // services instead of emitting a blank "layanan **" not-found message.
@@ -626,6 +1196,18 @@ async function toolGetServiceInfo(
 }
 
 async function toolGetComplaintCategories(ctx: ToolContext): Promise<ToolCallResult> {
+  // P1-12: fail-closed — never list complaint categories without a village
+  // scope. Without village_id the response could mix in other villages' data.
+  if (!ctx.villageId) {
+    return {
+      success: false,
+      error: 'village_id tidak tersedia; daftar kategori tidak dapat dimuat tanpa cakupan desa.',
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'official_complaint_types',
+      },
+    };
+  }
   const categories = await getComplaintTypes(ctx.villageId);
   const complaintTypes = categories.map((category) => ({
     name: category.name,
@@ -676,6 +1258,13 @@ async function toolGetComplaintCategories(ctx: ToolContext): Promise<ToolCallRes
       category_total: groupedCategories.length,
       selection_hint: 'Utamakan type_id resmi saat membuat pengaduan. category_id hanya kategori induk.',
     },
+    // P0-3: natural-language render so no caller ever needs to dump the
+    // raw data object (JSON) into a citizen reply.
+    suggested_response: groupedCategories.length > 0
+      ? `Kategori laporan yang tersedia di desa: ${groupedCategories
+          .map((g) => g.category_name ?? 'Lainnya')
+          .join(', ')}.`
+      : 'Daftar kategori laporan belum tersedia. Silakan hubungi kantor desa langsung.',
     meta: {
       trustLevel: 'trusted_fact',
       sourceKind: 'official_complaint_types',
@@ -962,8 +1551,12 @@ async function toolSearchKnowledge(
     waUserId: ctx.userId,
     sessionId: ctx.userId,
     channel: ctx.channel,
+    rewriteContext: ctx.rewriteContext,
   });
   if (!result.context || result.total === 0) {
+    // W6: if the fail-closed assertion discarded the retrieval, tell the
+    // agent explicitly — it must NOT fabricate a specific answer.
+    const ragUnreliable = result.ragUnreliable === true;
     return {
       success: true,
       data: {
@@ -972,7 +1565,11 @@ async function toolSearchKnowledge(
         sources: [],
         confidence_level: result.confidenceLevel || 'none',
         retrieval_mode: result.retrievalMode || 'rag',
-        message: 'Tidak ditemukan informasi knowledge yang relevan.',
+        rag_unreliable: ragUnreliable || undefined,
+        rag_quality_level: result.ragQuality?.level,
+        message: ragUnreliable
+          ? 'Hasil pencarian knowledge tidak cukup dapat dipercaya (skor relevansi di bawah ambang).'
+          : 'Tidak ditemukan informasi knowledge yang relevan.',
         suggested_response: 'Saya belum menemukan informasi yang cukup akurat untuk menjawab itu. Bisa sebutkan topiknya lebih spesifik, atau saya arahkan ke kantor desa untuk konfirmasi?'
       },
       meta: {
@@ -1037,6 +1634,7 @@ async function toolSearchDocuments(
     waUserId: ctx.userId,
     sessionId: ctx.userId,
     channel: ctx.channel,
+    rewriteContext: ctx.rewriteContext,
   });
   if (!result.context || result.total === 0) {
     return {
@@ -1083,6 +1681,58 @@ async function toolSearchDocuments(
       found: true,
       confidenceLevel: result.confidenceLevel || 'medium',
     },
+  };
+}
+
+/**
+ * R4: load_skill — Level-2 progressive disclosure. Read-only (G0),
+ * village-scoped. Returns the full SKILL.md for one active skill.
+ */
+async function toolLoadSkill(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolCallResult> {
+  const slug = typeof args.slug === 'string' ? args.slug.trim().toLowerCase() : '';
+  if (!slug) {
+    return {
+      success: false,
+      error: 'Slug panduan tidak boleh kosong.',
+      data: { suggested_response: 'Sebutkan nama panduannya ya Pak/Bu.' },
+      meta: { trustLevel: 'untrusted_retrieval', sourceKind: 'skill_retrieval', found: false, confidenceLevel: 'none' },
+    };
+  }
+  if (!ctx.villageId) {
+    return {
+      success: false,
+      error: 'Konteks desa tidak tersedia.',
+      data: { suggested_response: 'Maaf, saya belum bisa membuka panduan saat ini.' },
+      meta: { trustLevel: 'untrusted_retrieval', sourceKind: 'skill_retrieval', found: false, confidenceLevel: 'none' },
+    };
+  }
+  const skill = await loadSkill(ctx.villageId, slug);
+  if (!skill) {
+    return {
+      success: true,
+      data: {
+        found: false,
+        slug,
+        message: 'Panduan tidak ditemukan atau belum aktif untuk desa ini.',
+        suggested_response: 'Panduan yang dimaksud belum tersedia. Saya jawab dari informasi umum desa saja ya Pak/Bu.',
+      },
+      meta: { trustLevel: 'untrusted_retrieval', sourceKind: 'skill_retrieval', found: false, confidenceLevel: 'none' },
+    };
+  }
+  return {
+    success: true,
+    data: {
+      found: true,
+      slug: skill.slug,
+      title: skill.title,
+      content: skill.contentMd,
+      version: skill.version,
+      usage_policy: 'Ikuti tata cara di panduan ini langkah demi langkah. Ini prosedur resmi desa (P1); bila bertentangan dengan database, database menang.',
+    },
+    meta: { trustLevel: 'untrusted_retrieval', sourceKind: 'skill_retrieval', found: true, confidenceLevel: 'high' },
   };
 }
 
@@ -1148,6 +1798,10 @@ async function toolSearchUserMemory(
       })),
       usage_policy: 'Gunakan hanya sebagai konteks personal user, bukan fakta resmi desa.',
     },
+    // P0-3: natural-language render so the model relays prose, never raw JSON.
+    suggested_response: memories.length > 0
+      ? `Dari percakapan sebelumnya saya ingat: ${memories.slice(0, 3).map((m) => m.content).join('; ')}.`
+      : 'Saya tidak menemukan catatan percakapan sebelumnya yang relevan.',
     meta: {
       trustLevel: 'trusted_record',
       sourceKind: 'user_memory',
@@ -1169,7 +1823,7 @@ async function toolCreateComplaint(
   const namaPelapor = pickString('nama_pelapor', 'reporter_name', 'reporterName', 'nama', 'name') || undefined;
   const noHp = pickString('no_hp', 'phone', 'telp', 'noHp', 'phone_number') || undefined;
   const hasComplaintHint = Boolean(rawTypeId || rawCategoryId || kategori);
-  const categoryConfig = hasComplaintHint
+  const categoryConfig = hasComplaintHint && ctx.villageId
     ? await findComplaintCategoryConfig(kategori || undefined, ctx.villageId, rawTypeId, rawCategoryId)
     : null;
   const resolvedTypeId = categoryConfig?.id || rawTypeId;
@@ -1284,90 +1938,45 @@ async function toolCreateComplaint(
       },
     };
   }
-  const complaintId = await createComplaint({
-    wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
-    channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
-    channel_identifier: ctx.channel === 'webchat' ? ctx.userId : undefined,
-    kategori: complaintNameForSubmission,
-    category_id: resolvedCategoryId,
-    type_id: resolvedTypeId,
-    deskripsi,
-    alamat,
-    rt_rw: rtRw,
-    village_id: ctx.villageId,
-    is_urgent: categoryConfig?.is_urgent === true,
-    reporter_name: reporterName,
-    reporter_phone: reporterPhone,
-  });
-
-  if (!complaintId) {
-    return {
-      success: false,
-      error: 'Gagal membuat laporan. Silakan coba lagi.',
-      data: {
-        suggested_response: 'Maaf Pak/Bu, laporan belum berhasil kami catat sekarang. Coba kirim lagi sebentar ya.',
+  // P1-5: re-check the turn abort immediately before the write. The awaits
+  // above (category resolve, profile fetch) may have taken long enough for
+  // the turn to be aborted; without this re-check the write would still land.
+  assertNotAborted(ctx.abortSignal, 'create_complaint');
+  // [P1#5 FIX] Agent tidak boleh buat tiket langsung. Delegasikan ke FSM
+  // (handleComplaintCreation) yang menegakkan alur VERIFY: nama -> alamat ->
+  // VERIFY -> YA -> tiket. Ini mencegah tiket terbit tanpa konfirmasi.
+  const { handleComplaintCreation } = await import('../complaint-handler');
+  const fsmResult = await handleComplaintCreation(
+    ctx.userId,
+    ctx.channel as 'webchat' | 'whatsapp' | 'other',
+    {
+      intent: 'CREATE_COMPLAINT',
+      fields: {
+        village_id: ctx.villageId,
+        kategori: complaintNameForSubmission,
+        deskripsi,
+        alamat: alamat || undefined,
+        rt_rw: rtRw || undefined,
       },
-    };
-  }
-
-  recordComplaintCreated(ctx.userId, slugifyCategory(complaintNameForSubmission));
-  void rememberMemoryEvent({
-    wa_user_id: ctx.userId,
-    village_id: ctx.villageId,
-    memory_type: 'complaint',
-    memory_key: complaintId,
-    importance: categoryConfig?.is_urgent === true ? 0.95 : 0.86,
-    content: `Laporan ${complaintId} dibuat untuk kategori ${complaintNameForSubmission}${alamat ? ` di ${alamat}` : ''}.`,
-    metadata_json: {
-      reference_number: complaintId,
-      kategori: complaintNameForSubmission,
-      alamat,
-      rt_rw: rtRw,
-      is_urgent: categoryConfig?.is_urgent === true,
+      reply_text: '',
     },
-  });
-
-  let importantContactsNotice = '';
-
-  if (
-    categoryConfig?.send_important_contacts
-    && categoryConfig.important_contact_category_id
-  ) {
-    importantContactsNotice = '\n\n📞 Kontak penting terkait akan saya kirim terpisah setelah laporan dibuat.';
-  } else if (categoryConfig?.send_important_contacts) {
-    logger.warn('Complaint type requests important-contact auto send without category config', {
-      userId: ctx.userId,
-      villageId: ctx.villageId,
-      kategori: categoryConfig.name,
-    });
-  }
-
-  const suggestedResponse = categoryConfig?.is_urgent === true
-    ? `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`
-    : `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`;
-
+    deskripsi || complaintNameForSubmission,
+    undefined,
+    { signal: ctx.abortSignal },
+  );
+  // handleComplaintCreation returns string | HandlerResult
+  const replyText = typeof fsmResult === 'string' ? fsmResult : fsmResult.replyText || 'Baik, laporan sedang diproses.';
+  const ticketCreated = typeof fsmResult !== 'string' && (fsmResult as any).complaintId;
   return {
-    success: true,
+    success: !!ticketCreated,
+    error: ticketCreated ? undefined : 'Menunggu kelengkapan data atau konfirmasi user.',
     data: {
-      created: true,
-      complaint_id: complaintId,
-      reference_number: complaintId,
-      type_id: resolvedTypeId || null,
-      category_id: resolvedCategoryId || null,
-      status: 'OPEN',
-      status_label: getStatusLabel('OPEN'),
-      is_urgent: categoryConfig?.is_urgent === true,
-      send_important_contacts: categoryConfig?.send_important_contacts === true,
-      important_contacts: [],
-      contacts: [],
-      message: categoryConfig?.is_urgent === true
-        ? `Laporan darurat berhasil dibuat dengan nomor ${complaintId}.`
-        : `Laporan berhasil dibuat dengan nomor ${complaintId}.`,
-      suggested_response: suggestedResponse,
+      suggested_response: replyText,
+      ...(ticketCreated ? { complaint_id: (fsmResult as any).complaintId } : {}),
     },
     meta: {
       trustLevel: 'action_result',
-      sourceKind: 'complaint_creation',
+      sourceKind: 'complaint_fsm_delegated',
     },
   };
 }
@@ -1559,6 +2168,8 @@ async function toolUpdateComplaint(
     };
   }
 
+  // P1-5: fail-closed re-check before the write (see create_complaint above).
+  assertNotAborted(ctx.abortSignal, 'update_complaint');
   const result = await updateComplaintByUser(referenceNumber, {
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -1673,6 +2284,9 @@ async function toolGetServiceRequestEditLink(
     };
   }
 
+  // P1-5: fail-closed — minting an edit token writes a token row in
+  // case-service; never start it on an aborted turn.
+  assertNotAborted(ctx.abortSignal, 'get_service_request_edit_link');
   const tokenResult = await requestServiceRequestEditToken(referenceNumber, {
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -2007,6 +2621,8 @@ async function toolCancelRequest(
         },
       };
     }
+    // P1-5: fail-closed re-check before the write (see create_complaint above).
+    assertNotAborted(ctx.abortSignal, 'cancel_complaint');
     const result = await cancelComplaint(referenceNumber, {
       wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
       channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -2071,6 +2687,8 @@ async function toolCancelRequest(
     };
   }
 
+  // P1-5: fail-closed re-check before the write (see create_complaint above).
+  assertNotAborted(ctx.abortSignal, 'cancel_service_request');
   const result = await cancelServiceRequest(referenceNumber, {
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -2156,9 +2774,19 @@ function findAmbiguousServiceAlternatives(
 
   if (!hasKtpSignal || hasSpecificKtpSignal) return [];
 
-  return ktpServices(services)
+  const candidates = ktpServices(services)
     .slice(0, 4)
     .map((service) => ({ slug: service.slug, name: service.name }));
+
+  // [P2-2 FIX] Filter kandidat yang tidak relevan dengan query
+  // Mencegah "Izin Keramaian" muncul untuk query "ktp"
+  const queryTokens = normalized.split(/\s+/).filter(t => t.length >= 2).map(t => t.replace(/[^a-z0-9]/g, '')).filter(Boolean);
+  if (queryTokens.length === 0) return candidates;
+  const filtered = candidates.filter(c => {
+    const nameLower = (c.name || '').toLowerCase();
+    return queryTokens.some(token => nameLower.includes(token));
+  });
+  return filtered.length > 0 ? filtered : candidates.slice(0, 2);
 }
 
 async function resolveServiceFromName(
@@ -2170,7 +2798,9 @@ async function resolveServiceFromName(
   service: ServiceCatalogItem | null;
   alternatives?: Array<{ slug: string; name: string }>;
 }> {
-  const normalized = serviceName.trim().toLowerCase();
+  // [P2-1 FIX] Expand alias dulu — "SKU" → "surat keterangan usaha"
+  const expandedName = canonicalizeServiceName(serviceName);
+  const normalized = expandedName.trim().toLowerCase();
   if (!normalized) {
     return { service: null };
   }
@@ -2221,10 +2851,13 @@ async function resolveServiceFromName(
 
 async function findComplaintCategoryConfig(
   kategori: string | undefined,
-  villageId?: string,
+  villageId: string,
   typeId?: string,
   categoryId?: string,
 ) {
+  // P1-12: fail-closed — never resolve complaint categories without a village
+  // scope. Without village_id the lookup could match another village's types.
+  if (!villageId) return null;
   const categories = await getComplaintTypes(villageId);
 
   if (typeId) {

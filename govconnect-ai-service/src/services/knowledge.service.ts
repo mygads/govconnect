@@ -5,15 +5,24 @@ import { isAIGatewayEnabledAsync } from './ai-gateway.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import {
   retrieveContext,
+  classifyQueryIntent,
 } from './rag.service';
-import { RAGContext } from '../types/embedding.types';
+import { searchKnowledgeByKeywordsDirect, countKnowledgeDocs } from './vector-db.service';
+import { perfSpan, perfMeasure, perfCount } from '../pipeline/perf-timer';
+import { RAGContext, RAGQualityAssessment } from '../types/embedding.types';
 import { classifyProfileQuery } from './micro-llm-matcher.service';
+import type { QueryRewriteContext } from './query-rewrite.service';
 
 interface SearchContext {
   villageId?: string;
   waUserId?: string;
   sessionId?: string;
   channel?: string;
+  /**
+   * Konteks percakapan untuk query rewriting sebelum RAG retrieval
+   * (query-rewrite.service.ts). Opsional — tanpa ini rewrite tidak jalan.
+   */
+  rewriteContext?: QueryRewriteContext;
 }
 
 function normalizeSearchContext(
@@ -26,6 +35,7 @@ function normalizeSearchContext(
       waUserId: villageOrContext.waUserId,
       sessionId: villageOrContext.sessionId,
       channel: villageOrContext.channel || channel,
+      rewriteContext: villageOrContext.rewriteContext,
     };
   }
 
@@ -57,6 +67,14 @@ interface KnowledgeSearchResult {
   avgTopScore?: number | null;
   sourceTitles?: string[];
   candidateDebug?: NonNullable<RAGContext['retrievalDebug']>['candidates'];
+  /**
+   * W6: true when the post-retrieval fail-closed assertion discarded the
+   * results (top score below trust threshold). Treat as "no relevant
+   * knowledge" — do NOT let the LLM answer from these results.
+   */
+  ragUnreliable?: boolean;
+  /** W9: live quality-gate assessment for this retrieval. */
+  ragQuality?: RAGQualityAssessment;
 }
 
 function resolveKnowledgeRetrievalMode(
@@ -78,11 +96,10 @@ interface VillageProfileSummary {
 }
 
 async function isRAGSearchEnabled(villageId?: string): Promise<boolean> {
-  const [embedEnabled, ragEnabled] = await Promise.all([
-    isAIGatewayEnabledAsync('embed', villageId ?? null),
-    isAIGatewayEnabledAsync('rag', villageId ?? null),
-  ]);
-  return embedEnabled && ragEnabled;
+  // [FIX] RAG only needs embed lane. The 'rag' (rewrite) lane is optional
+  // for query rewriting, not required for basic vector search.
+  const embedEnabled = await isAIGatewayEnabledAsync('embed', villageId ?? null);
+  return embedEnabled;
 }
 
 /**
@@ -99,7 +116,7 @@ export async function searchKnowledge(
   const searchContext = normalizeSearchContext(villageOrContext, channel);
   const { villageId } = searchContext;
   try {
-    const ragSearchEnabled = await isRAGSearchEnabled(villageId);
+    const ragSearchEnabled = await perfMeasure('kb.rag_enabled_check', () => isRAGSearchEnabled(villageId));
 
     logger.info('Searching knowledge base', {
       query: query.substring(0, 100),
@@ -138,6 +155,38 @@ export async function searchKnowledge(
 
     // Keyword-based search (fallback or when RAG is disabled)
     const keywordResult = await searchKnowledgeWithKeywords(query, categories, villageId);
+    if (keywordResult.total > 0) {
+      trackKnowledgeSearch(query, villageId, keywordResult, searchContext.channel);
+      return keywordResult;
+    }
+
+    // Last resort: direct keyword ILIKE on knowledge_vectors (bypasses dashboard).
+    // (Fix D6/K2/K3: RAG + dashboard keyword both missed existing KB docs.)
+    try {
+      const directHits = await searchKnowledgeByKeywordsDirect(query, villageId, 3);
+      if (directHits.length > 0) {
+        const directResult: KnowledgeSearchResult = {
+          data: directHits.map((h) => ({
+            id: h.id,
+            title: h.title,
+            content: h.content,
+            category: h.category,
+            keywords: [],
+            source_type: 'knowledge' as const,
+          })),
+          total: directHits.length,
+          context: directHits.map((h) => `${h.title}: ${h.content}`).join('\n\n'),
+          confidenceLevel: 'medium',
+          retrievalMode: 'keyword',
+          sourceTitles: directHits.map((h) => h.title),
+        };
+        trackKnowledgeSearch(query, villageId, directResult, searchContext.channel);
+        return directResult;
+      }
+    } catch (directError: any) {
+      logger.warn('Direct keyword search fallback failed', { error: directError.message });
+    }
+
     trackKnowledgeSearch(query, villageId, keywordResult, searchContext.channel);
     return keywordResult;
   } catch (error: any) {
@@ -168,7 +217,7 @@ export async function searchDocuments(
   const searchContext = normalizeSearchContext(villageOrContext, channel);
   const { villageId } = searchContext;
   try {
-    const ragSearchEnabled = await isRAGSearchEnabled(villageId);
+    const ragSearchEnabled = await perfMeasure('kb.rag_enabled_check', () => isRAGSearchEnabled(villageId));
     if (!ragSearchEnabled) {
       const empty = {
         data: [],
@@ -189,6 +238,7 @@ export async function searchDocuments(
       waUserId: searchContext.waUserId,
       sessionId: searchContext.sessionId,
       channel: searchContext.channel,
+      queryRewriteContext: searchContext.rewriteContext,
     });
 
     if (ragContext.totalResults === 0) {
@@ -351,6 +401,33 @@ function trackKnowledgeSearch(
   }
 }
 
+// P0-1 FIX: cache positive KB doc counts (TTL 5 min) to avoid a COUNT(*) query
+// on every KB search. Only positive counts are cached (fail-open); a 0 result
+// is never cached so newly uploaded docs are visible immediately.
+const KB_COUNT_CACHE = new Map<string, { count: number; expiresAt: number }>();
+const KB_COUNT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export function clearKnowledgeDocCountCache(villageId?: string): void {
+  if (villageId) {
+    KB_COUNT_CACHE.delete(villageId);
+  } else {
+    KB_COUNT_CACHE.clear();
+  }
+}
+
+async function countKnowledgeDocsCached(villageId?: string): Promise<number> {
+  const cacheKey = villageId ?? '__global__';
+  const cached = KB_COUNT_CACHE.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.count;
+  }
+  const count = await countKnowledgeDocs(villageId);
+  if (count > 0) {
+    KB_COUNT_CACHE.set(cacheKey, { count, expiresAt: Date.now() + KB_COUNT_CACHE_TTL_MS });
+  }
+  return count;
+}
+
 /**
  * Search curated knowledge using RAG (semantic search with embeddings)
  * 
@@ -360,75 +437,66 @@ function trackKnowledgeSearch(
 async function searchKnowledgeWithRAG(query: string, categories?: string[], context?: string | SearchContext): Promise<KnowledgeSearchResult> {
   const searchContext = normalizeSearchContext(context);
   const { villageId } = searchContext;
+  
+  // P0-1 FIX: Early-exit if village has 0 KB docs (avoids wasted RAG retrieval + LLM intent classification)
+  try {
+    const kbCount = await perfMeasure('kb.count_docs', () => countKnowledgeDocsCached(villageId));
+    if (kbCount === 0) {
+      logger.debug('KB early-exit: village has 0 documents, skipping RAG', { villageId });
+      return { data: [], total: 0, context: '' };
+    }
+  } catch (e) {
+    // If count fails, proceed with normal RAG (fail-open for safety)
+  }
   // Let retrieveContext() handle category inference via its internal NLU (classifyQueryIntent).
   // Only pass explicit categories if the caller already knows them (e.g. from a prior NLU call).
   const effectiveCategories = categories && categories.length > 0 ? categories : undefined;
 
-  // First attempt: use NLU-inferred categories (better precision when correct)
-  let ragContext = await retrieveContext(query, {
+  // Perf optimization: compute query intent ONCE and reuse across retries
+  // (avoids 4x redundant LLM calls when KB is empty or no results found)
+  let precomputedIntent = null;
+  try {
+    precomputedIntent = await perfMeasure('kb.intent_classify', () => classifyQueryIntent(query, {
+      village_id: villageId,
+      wa_user_id: searchContext.waUserId,
+      session_id: searchContext.sessionId,
+      channel: searchContext.channel,
+    }));
+  } catch (e) {
+    // If intent classification fails, let retrieveContext handle it per-call
+  }
+
+  // Perf (P0-1): collapsed recall-first single pass.
+  // The old 4-attempt chain only differed in minScore (0.55/0.45/0.35/0.35)
+  // and a +0.02 category soft-boost; W6 fail-closed (top1 < 0.65 -> discard)
+  // dominates, so a higher threshold can never produce a passing hit that the
+  // lower threshold would miss. One call at minScore 0.35 preserves recall
+  // with ~1/4 of the embedding + DB round-trips on the miss path.
+  const ragContext = await perfMeasure('kb.retrieve_attempt:1', () => retrieveContext(query, {
     topK: 5,
-    minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
+    minScore: 0.35,
     categories: effectiveCategories,
     sourceTypes: ['knowledge'],
     villageId,
     waUserId: searchContext.waUserId,
     sessionId: searchContext.sessionId,
     channel: searchContext.channel,
-  });
+    precomputedIntent,
+    queryRewriteContext: searchContext.rewriteContext,
+    useQueryExpansion: false,  // Perf: skip LLM query expansion for fallback searches
+    useHybridSearch: false,    // Perf: skip hybrid rerank for fallback searches
+  }));
 
-  // Fallback: if NLU category filtering is too strict, retry WITHOUT category filter.
-  // This improves recall for generic KB (e.g., glossary/5W1H) that may not match NLU categories.
-  if (ragContext.totalResults === 0 && effectiveCategories && effectiveCategories.length > 0) {
-      logger.debug('Knowledge RAG fallback: retrying without category filter', {
-        effectiveCategories,
-      });
-
-    ragContext = await retrieveContext(query, {
-      topK: 5,
-      minScore: 0.45,
-      categories: undefined,
-      sourceTypes: ['knowledge'],
-      villageId,
-      waUserId: searchContext.waUserId,
-      sessionId: searchContext.sessionId,
-      channel: searchContext.channel,
-    });
-  }
-
-  // Second fallback: if still no results, retry with even lower threshold (broad recall).
-  if (ragContext.totalResults === 0) {
-    ragContext = await retrieveContext(query, {
-      topK: 5,
-      minScore: 0.35,
-      categories: undefined,
-      sourceTypes: ['knowledge'],
-      villageId,
-      waUserId: searchContext.waUserId,
-      sessionId: searchContext.sessionId,
-      channel: searchContext.channel,
-    });
-  }
-
-  // Final fallback: bypass hybrid/rerank and use raw vector retrieval.
-  if (ragContext.totalResults === 0) {
-    ragContext = await retrieveContext(query, {
-      topK: 5,
-      minScore: 0.35,
-      categories: undefined,
-      sourceTypes: ['knowledge'],
-      villageId,
-      waUserId: searchContext.waUserId,
-      sessionId: searchContext.sessionId,
-      channel: searchContext.channel,
-      useHybridSearch: false,
-    });
-  }
 
   if (ragContext.totalResults === 0) {
     return {
       data: [],
       total: 0,
       context: '',
+      // W6: propagate fail-closed flag so callers know this is "unreliable",
+      // not merely "no results".
+      ragUnreliable: ragContext.ragUnreliable,
+      ragQuality: ragContext.ragQuality,
     };
   }
 
@@ -461,6 +529,8 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
     avgTopScore: calculateAverageTopScore(ragContext),
     sourceTitles: items.map((item) => item.title).filter(Boolean).slice(0, 5),
     candidateDebug: ragContext.retrievalDebug?.candidates,
+    ragUnreliable: ragContext.ragUnreliable,
+    ragQuality: ragContext.ragQuality,
   };
 }
 
@@ -575,6 +645,8 @@ export async function getRAGContext(query: string, categories?: string[], villag
     categories: effectiveCategories,
     sourceTypes: ['knowledge'],
     villageId,
+    // getRAGContext tidak punya konteks percakapan caller (standalone
+    // convenience fn): rewrite tidak jalan di sini (fail-safe).
   });
 
   // Track whether DB data was injected for auto-resolution
@@ -726,7 +798,7 @@ function formatProfileAsContext(profile: VillageProfileSummary): string {
 
 // In-memory cache for village profiles (M4 optimization)
 const _villageProfileCache = new Map<string, { data: VillageProfileSummary | null; ts: number }>();
-const VILLAGE_PROFILE_TTL = 15 * 60 * 1000; // 15 minutes
+const VILLAGE_PROFILE_TTL = 5 * 60 * 1000; // 5 minutes (reduced from 15 to minimize stale data)
 
 export async function getVillageProfileSummary(villageId?: string): Promise<VillageProfileSummary | null> {
   if (!villageId) return null;

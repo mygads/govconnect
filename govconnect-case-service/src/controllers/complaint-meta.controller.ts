@@ -146,6 +146,16 @@ async function findImportantContactCategoryForVillage(id: string, villageId: str
 }
 
 // ===== Complaint Categories =====
+// P1-12 — Village scoping rule (explicit):
+// Complaint categories/types are ALWAYS per-village; there are NO global
+// categories (schema: complaint_categories.village_id is NOT NULL, and
+// complaint_types inherit their village via category.village_id).
+// Reads:
+// - village_admin → must send x-village-id; a conflicting ?village_id is
+//   rejected with 403; results are filtered to that village only.
+// - superadmin    → must pass ?village_id OR scope=all. scope=all is an
+//   explicit cross-village aggregate for superadmin dashboards only and is
+//   never served to citizens (the AI pipeline always sends a village_id).
 export async function handleGetComplaintCategories(req: Request, res: Response) {
   try {
     const village_id = resolveAdminCollectionVillageScope(req, res);
@@ -258,6 +268,10 @@ export async function handleDeleteComplaintCategory(req: Request, res: Response)
 }
 
 // ===== Complaint Types =====
+// P1-12 — same village scoping rule as categories above: types are filtered
+// through category.village_id, so a type always belongs to exactly one
+// village. ?category_id is additionally intersected with the village scope,
+// so a category_id from another village yields no rows (never a leak).
 export async function handleGetComplaintTypes(req: Request, res: Response) {
   try {
     const category_id = getQuery(req, 'category_id');
@@ -275,6 +289,38 @@ export async function handleGetComplaintTypes(req: Request, res: Response) {
       include: { category: true },
       orderBy: { created_at: 'asc' },
     });
+    if (data.length === 0 && !category_id) {
+      const categories = await prisma.complaintCategory.findMany({
+        where: {
+          ...(village_id ? { village_id } : {}),
+          is_active: true,
+        },
+        orderBy: { created_at: 'asc' },
+      });
+      const fallbackData = categories.map((cat) => ({
+        id: cat.id,
+        category_id: cat.id,
+        name: cat.name,
+        name_key: cat.name_key,
+        description: cat.description,
+        is_urgent: false,
+        require_address: true,
+        send_important_contacts: false,
+        important_contact_category: null,
+        important_contact_category_id: null,
+        created_at: cat.created_at,
+        updated_at: cat.updated_at,
+        category: {
+          id: cat.id,
+          village_id: cat.village_id,
+          name: cat.name,
+          name_key: cat.name_key,
+          description: cat.description,
+          is_active: cat.is_active,
+        },
+      }));
+      return res.json({ data: fallbackData, fallback: 'categories' });
+    }
     return res.json({ data });
   } catch (error: any) {
     logger.error('Get complaint types error', { error: error.message });

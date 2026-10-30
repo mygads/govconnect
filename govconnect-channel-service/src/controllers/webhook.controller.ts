@@ -24,6 +24,7 @@ import prisma from '../config/database';
 import { config } from '../config/env';
 import { getQuery } from '../utils/http';
 import { parseWebhookBody, webhookCandidateFromBody } from '../utils/webhook-payload';
+import { extractInteractiveResponseIdFromMessage } from '../utils/interactive-response';
 import {
   GenfityWebhookPayload,
 } from '../types/webhook.types';
@@ -731,6 +732,9 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // Parse genfity-wa webhook payload
     const { message, from, messageId, timestamp } = parseGenfityPayload(payload);
     const waMetadata = normalizeWaMetadata(payload);
+    // P0-1: forward the interactive button/row id (authoritative for the
+    // G2/G3 confirmation chain). The display text alone is not enough.
+    const buttonId = extractInteractiveResponseIdFromMessage(payload.event?.Message ?? null);
 
     logger.debug('Parsed payload result', {
       from,
@@ -1045,6 +1049,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       },
       spamResult,
       replyDelaySeconds,
+      { buttonId },
     );
     
     logger.info('Message forwarded to AI for processing', {

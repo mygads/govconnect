@@ -1,0 +1,1369 @@
+/**
+ * process-message-v2 — the new pipeline entry point.
+ *
+ * Flow (arsitektur-final §2):
+ *   ingress (rate limit lives in ai-orchestrator today)
+ *   → stage-router (deterministic)
+ *   → stage-assessor (fuzzy transitions only)
+ *   → staged-agent (bounded single-agent loop / deterministic fast lanes)
+ *   → verify + never-silent fallback
+ *
+ * Returns a ProcessMessageResult-compatible shape so the orchestrator can
+ * adopt it without rewriting the send path.
+ */
+
+import crypto from 'crypto';
+import { routeMessage } from './stage-router';
+import type { Stage } from './stage-types';
+import { assessStage, shouldSuggestHandoff } from './stage-assessor';
+import { runStagedTurn, createPipelineContext, stripSystemMarkers } from './staged-agent';
+import { normalizeWithGlossary, loadGlossary } from './glossary';
+import { detectLanguage, shouldUseRegionalFallback, REGIONAL_FALLBACK_COPY, languageLabel, type AssessorLanguageHint } from './language-fallback';
+import { detectLanguage as assessLanguage } from '../services/language-detection.service';
+import { scheduleDocReminder } from './doc-reminders';
+import { transitionsFrom } from './stage-graph';
+import { isTakeoverActive } from './takeover';
+import { resolveServiceSlug } from './micro-assessor';
+import { processImageMedia } from './media-pipeline';
+import {
+  createKtpVerification, getVerifiedIdentity, prefillSlotsFromVerifiedIdentity,
+  KTP_RECEIVED_COPY, MAX_KTP_PHOTO_BYTES,
+} from './ktp-verification';
+import { isVoiceNote, handleVoiceNote } from './voice-pipeline';
+import { enqueueComplaintToLapor } from './lapor-bridge';
+import { resolveIdentityLevel, auditIdentityLevel } from './identity-ladder';
+import { checkBudget } from './cost-guard';
+import { isCostSaverMode, collapseTurnMessages } from './cost-saver';
+import { ingressCheck } from './ingress-guard';
+import { isVillageKilled, KILL_SWITCH_REPLY } from './kill-switch';
+import { faqCacheLookup, faqCacheStore } from '../services/faq-cache.service';
+import { applyMemoryPolicy } from './memory-policy';
+import { issueFallback } from './fallback-policy';
+import { sanitizeOutboundText } from './outbound-sanitizer';
+import {
+  confirmButtons, categoryList, validateInteractive, type InteractivePayload,
+  resolveTriageCategory,
+} from './wa-interactive';
+
+/** Stage-native interactive attachments (degrade to plain text). */
+function interactiveForTurn(turn: {
+  stage: string; terminalState: string; response: string;
+}): InteractivePayload | undefined {
+  if (turn.terminalState !== 'SUCCEEDED' || !turn.response) return undefined;
+  if (turn.stage === 'VERIFY') {
+    const p = confirmButtons(turn.response);
+    return validateInteractive(p) ? p : undefined;
+  }
+  if ((turn.stage === 'TRIAGE' || turn.stage === 'COLLECT') && /kategori/i.test(turn.response)) {
+    const p = categoryList(turn.response);
+    return validateInteractive(p) ? p : undefined;
+  }
+  return undefined;
+}
+import {
+  extractSlotsDeterministic, mergeSlots, classifySlotIntent, isServiceConfirmation,
+  nextMissingSlot, isCollectComplete, renderVerifySummary, isCancellation,
+  isCorrectionRequest, isAnaphoricLocation,
+  INTENT_SLOT_KEY, COLLECT_ATTEMPTS_KEY, type SlotIntent, type Slots,
+} from './slot-fsm';
+import {
+  resolveConfirmation, isPendingMutation, type PendingMutation,
+  STALE_CONFIRMATION_COPY, CONFIRM_EDIT_COPY, CONFIRM_CANCEL_COPY,
+} from './confirmation';
+import {
+  appendAudit, idempotencyCheck, idempotencyStore,
+  loadTurnState, saveTurnState, clearTurnState,
+} from './pipeline-store';
+import { PROMPT_VERSION } from './prompt-builder';
+import type { ProcessMessageInput, ProcessMessageResult } from '../services/ump-types';
+import { redactForLog } from '../gateway/pii-gateway';
+import { extractTopicKey } from '../services/kb-suggester-core';
+import { maybeRecordUserCorrection } from '../services/improvement-loop.service';
+import { checkOutboundForCanary, CANARY_SAFE_REPLY } from '../security/canary-docs';
+import { answerCsatSurvey, CSAT_THANKS } from '../services/csat.service';
+import { getVillageIdentity } from '../services/village-identity.service';
+import logger from '../utils/logger';
+// §10: per-resolution billing — v2 accrues per turn (v1 parity) and debits
+// per verified resolution via recordResolution (see maybeBillV2Resolution below).
+import {
+  startAiBillingTurn, finishAiBillingTurn, type AiBillingTurnHandle,
+} from '../services/ai-turn-billing.service';
+import {
+  recordResolution, type ResolutionType,
+} from '../services/ai-resolution-billing.service';
+// Cross-session memory: lazy session-end detection → auto-save session summary.
+// Fail-open & never throws; skipped outside production (shadow/eval/knowledge_test).
+import {
+  checkSessionEnd, noteSessionTurn, summarizeTurnForSession, TICKET_REF_RE,
+} from '../services/session-summary.service';
+
+/**
+ * Idempotency key (P1-2): scoped per tenant+user+channel, then message
+ * identity. Two different citizens sending identical text must NEVER share
+ * a key (cross-user replay could leak another citizen's ticket data).
+ * Same user + same text within 10 min → same response (desired dedup).
+ */
+export function buildIdempotencyKey(input: {
+  villageId?: string; userId?: string; channel?: string;
+  messageId?: string; message?: string;
+}): string {
+  const channel = input.channel === 'webchat' ? 'webchat' : 'whatsapp';
+  const msgHash = crypto.createHash('sha256')
+    .update(input.message ?? '').digest('hex').slice(0, 16);
+  return `msg:${input.villageId ?? ''}:${input.userId ?? ''}:${channel}:${input.messageId ?? 'noid'}:${msgHash}`;
+}
+
+/** Idempotency key: same tenant+user+channel+message within 10 min → same response. */
+function idemKey(input: ProcessMessageInput): string {
+  return buildIdempotencyKey(input);
+}
+
+/**
+ * Upper bound for the village-name lookup per turn. The name only
+ * personalizes prompt copy, so a slow dashboard service must never stall
+ * the turn: on timeout we fall back to the placeholder and the profile
+ * cache (15 min TTL in knowledge.service) keeps later turns fast.
+ */
+const VILLAGE_NAME_TIMEOUT_MS = 800;
+
+/**
+ * Module-level name cache (5 min TTL). The name is cosmetic prompt copy —
+ * caching even the 'Desa' fallback during a dashboard outage is an
+ * accepted trade-off so an outage can't add 800ms to every turn.
+ */
+const villageNameCache = new Map<string, { name: string; ts: number }>();
+const VILLAGE_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Track A2: resolve the real village name for prompts (DB-first).
+ * getVillageProfileSummary is cached per village; fail-soft to the neutral
+ * placeholder 'Desa' so a dashboard-service outage never blocks the turn.
+ * Never cross-tenant: the lookup is keyed by this turn's tenantId only.
+ *
+ * The import is dynamic on purpose: knowledge.service pulls a heavy
+ * transitive graph (rag.service, embedding stack) that must not join the
+ * pipeline entry point's static import graph, and any load/lookup failure
+ * degrades to the placeholder instead of breaking the turn.
+ */
+export async function resolveVillageName(villageId: string): Promise<string> {
+  const cached = villageId ? villageNameCache.get(villageId) : undefined;
+  if (cached && Date.now() - cached.ts < VILLAGE_NAME_CACHE_TTL_MS) return cached.name;
+
+  let name = 'Desa';
+  try {
+    const { getVillageProfileSummary } = await import('../services/knowledge.service');
+    const profile = await Promise.race([
+      getVillageProfileSummary(villageId || undefined),
+      new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('village name lookup timeout')), VILLAGE_NAME_TIMEOUT_MS),
+      ),
+    ]);
+    const resolved = profile?.short_name?.trim() || profile?.name?.trim();
+    if (resolved) name = resolved;
+  } catch (err) {
+    logger.warn('[process-message-v2] village name lookup failed, using placeholder', {
+      error: redactForLog((err as Error)?.message ?? String(err)),
+    });
+  }
+  if (villageId) villageNameCache.set(villageId, { name, ts: Date.now() });
+  return name;
+}
+
+/**
+ * Track A2: DB-first reconciliation for v2.
+ *
+ * v1 calls reconcile() inside the orchestrator; v2's choke point is the
+ * processMessageV2 wrapper so EVERY response — semantic-cache hits,
+ * deterministic fast lanes, agent-loop answers — is fact-checked against
+ * the DB before it leaves the pipeline. DB wins over RAG/documents on
+ * phone numbers, hours, addresses, fees, durations, modes, availability,
+ * and requirements.
+ *
+ * Skipped when side effects are disallowed (shadow/evaluation): the
+ * reconciler writes guardrail records, which are production state.
+ * Non-blocking: reconciler failure never breaks the send path.
+ */
+export async function applyDbRagReconcile(params: {
+  villageId: string;
+  userId: string;
+  channel: 'whatsapp' | 'webchat';
+  userMessage: string;
+  result: ProcessMessageResult;
+  sideEffectsAllowed: boolean;
+}): Promise<ProcessMessageResult> {
+  const { villageId, userId, channel, userMessage, result, sideEffectsAllowed } = params;
+  if (!sideEffectsAllowed || !result.response?.trim()) return result;
+  const traceId = result.metadata?.traceId ?? '';
+  try {
+    // Dynamic import: the reconciler pulls knowledge.service → rag.service →
+    // the embedding stack. Kept out of the pipeline entry point's static
+    // import graph so a load failure here can only skip reconciliation —
+    // never break the send path (fail-soft contract of this function).
+    const { reconcile: reconcileDbRag } = await import('../services/db-rag-reconciler.service');
+    const reconciliation = await reconcileDbRag({
+      villageId,
+      userMessage,
+      result,
+      toolsUsed: result.metadata?.toolsUsed ?? [],
+    });
+    if (!reconciliation.ok && reconciliation.replacement) {
+      // Audit carries mismatch KINDS only — never raw offending values
+      // (they may contain phone numbers / PII).
+      void appendAudit({
+        tenantId: villageId, traceId, userId, channel,
+        stage: 'CLOSE', event: 'db_rag_reconciler_rewrite',
+        payload: {
+          isEvaluation: false,
+          mismatchKinds: reconciliation.mismatches.map((m) => m.kind),
+          mismatchCount: reconciliation.mismatches.length,
+        },
+      });
+      return {
+        ...reconciliation.replacement,
+        // The reconciler's replacement already carries a guardrail marker
+        // (stage 'db_rag_reconciler', action 'rewritten'); keep it and
+        // restore this turn's traceId.
+        metadata: {
+          ...reconciliation.replacement.metadata,
+          traceId,
+        },
+      };
+    }
+  } catch (err) {
+    logger.warn('[process-message-v2] db-rag reconciliation failed (response untouched)', {
+      traceId, error: redactForLog((err as Error)?.message ?? String(err)),
+    });
+  }
+  return result;
+}
+
+export async function processMessageV2Inner(input: ProcessMessageInput): Promise<ProcessMessageResult> {
+  const started = Date.now();
+  const traceId = crypto.randomUUID();
+  const tenantId = input.villageId ?? '';
+  const channel = input.channel === 'webchat' ? 'webchat' : 'whatsapp';
+  const ctx = createPipelineContext({
+    traceId,
+    userId: input.userId,
+    tenantId: input.villageId,
+    channel,
+    messageId: input.messageId,
+    isEvaluation: input.isEvaluation,
+    sideEffectMode: input.sideEffectMode,
+  });
+
+  // P1-1: shadow/evaluation guard. Non-production modes (shadow runner,
+  // eval harness) MUST NOT write production state: turn state, idempotency
+  // store, memory policy, fallback tickets, LAPOR outbox, semantic cache.
+  // Writes are gated on `sideEffectsAllowed`; audit events always carry
+  // `isEvaluation` so shadow and production are distinguishable in the trail.
+  const sideEffectsAllowed = (input.sideEffectMode ?? 'production') === 'production';
+  const isEvaluation = input.isEvaluation ?? !sideEffectsAllowed;
+
+  // Improvement loop (additive, fail-open): user mengoreksi jawaban agent
+  // ("bukan itu maksud saya") adalah sinyal failure yang kuat. Dicatat
+  // sekali per turn di ingress; tidak pernah throw / blokir pipeline.
+  maybeRecordUserCorrection({
+    villageId: input.villageId,
+    sessionId: traceId,
+    message: input.message,
+    recordable: sideEffectsAllowed && !isEvaluation,
+  });
+
+  const audit = (stage: string, event: string, payload?: Record<string, unknown>) => {
+    void appendAudit({
+      tenantId, traceId, userId: input.userId, channel,
+      stage, event, payload: { isEvaluation, ...(payload ?? {}) },
+    });
+  };
+
+  try {
+    // 0a. Takeover: a human owns this conversation → stay quiet.
+    const takeover = await isTakeoverActive(tenantId, input.userId, channel);
+    if (takeover.active) {
+      audit('INGRESS', 'takeover_active', { takenBy: takeover.takenBy ?? null });
+      return {
+        success: true,
+        response: '',
+        intent: 'takeover',
+        metadata: {
+          processingTimeMs: Date.now() - started,
+          hasKnowledge: false,
+          agentMode: 'single_orchestrator',
+          traceId,
+        },
+      };
+    }
+
+    // P1-8: strip literal system-authority markers ("[SISTEM]",
+    // "[ATURAN SUMBER]") from user input before anything else sees it —
+    // routing, slots, idempotency key, classifier, and the prompt. Our own
+    // system notes use those markers with role:'system'; a user typing the
+    // same literal must not borrow that authority.
+    input.message = stripSystemMarkers(input.message);
+
+    // R9: VILLAGE_KILL_SWITCH — operator kill switch per village. When
+    // active, short-circuit with a static never-silent reply: no LLM, no
+    // tools, no cost. Checked BEFORE idempotency so a lifted switch never
+    // serves a stale cached maintenance reply, and this path never writes
+    // the idempotency cache.
+    if (isVillageKilled(tenantId)) {
+      audit('INGRESS', 'village_kill_switch_active', {});
+      return {
+        success: true,
+        response: KILL_SWITCH_REPLY,
+        intent: 'maintenance',
+        metadata: {
+          processingTimeMs: Date.now() - started,
+          hasKnowledge: false,
+          agentMode: 'single_orchestrator',
+          traceId,
+        },
+      };
+    }
+
+    // 0b. Idempotency: duplicate delivery → replay stored response.
+    // Skipped in shadow/evaluation (P1-1): shadow must compute fresh, and
+    // must not read production idempotency results as its own.
+    const key = idemKey(input);
+    if (sideEffectsAllowed) {
+      const seen = await idempotencyCheck(tenantId, key);
+      if (seen.hit) {
+        audit('INGRESS', 'idempotent_replay', {});
+        const r = seen.response as ProcessMessageResult;
+        return { ...r, metadata: { ...(r.metadata ?? {}), traceId } };
+      }
+    }
+
+    // 0c. Restore multi-turn state (stage + slots survive across turns).
+    // (R12 CSAT hook runs before this: a consumed survey short-circuits.)
+    if (sideEffectsAllowed) {
+      // R12: CSAT answer — a pending survey plus a lone 1-5 digit is
+      // consumed deterministically here, before the staged turn. Anything
+      // else flows through normally and the survey stays pending.
+      const csat = await answerCsatSurvey({
+        villageId: tenantId,
+        userId: input.userId,
+        message: input.message ?? '',
+        traceId,
+      });
+      if (csat.consumed) {
+        audit('INGRESS', 'csat_answer_consumed', { rating: csat.rating, complaint_id: csat.complaintId });
+        return {
+          success: true,
+          response: csat.response ?? CSAT_THANKS,
+          intent: 'csat',
+          metadata: {
+            processingTimeMs: Date.now() - started,
+            hasKnowledge: false,
+            agentMode: 'single_orchestrator',
+            traceId,
+          },
+        };
+      }
+    }
+    // Perf (P0-1): launch independent pre-agent reads in parallel. Each is
+    // awaited below at the exact point the original sequential code needed it,
+    // so ordering, early-returns and error semantics are unchanged — only the
+    // DB round-trips overlap. (CSAT stays awaited above: a consumed survey must
+    // short-circuit BEFORE the ingress rate-limit counter is touched.)
+    const turnStatePromise = loadTurnState(tenantId, input.userId, channel);
+    const identityLevelPromise = resolveIdentityLevel({ tenantId, userId: input.userId, channel });
+    const budgetPromise = checkBudget(tenantId);
+    const glossaryPromise = loadGlossary(tenantId).catch(() => []);
+    const prior = await turnStatePromise;
+    if (prior) {
+      ctx.slots = { ...(prior.slots as Record<string, unknown>) };
+      ctx.assessorConfidences = [...(prior.assessorConfidences ?? [])];
+      audit('INGRESS', 'turn_state_restored', { stage: prior.stage });
+    }
+
+    // Confidence-clarification answer handling (additive): jika turn sebelumnya
+    // meminta klarifikasi, parse jawaban user dan route ke stage yang dipilih.
+    // Jika tidak dikenali, lanjut flow normal (fail-open).
+    let clarificationChosenStage: string | null = null;
+    if (ctx.slots['__clarification_pending'] === true) {
+      const candidates = ctx.slots['__clarification_candidates'] as
+        Array<{ label: string; stage: string }> | undefined;
+      // Bersihkan state klarifikasi agar tidak loop.
+      delete ctx.slots['__clarification_pending'];
+      delete ctx.slots['__clarification_candidates'];
+      if (candidates && candidates.length > 0) {
+        try {
+          const { parseClarificationAnswer } = await import(
+            '../services/confidence-clarification.service'
+          );
+          const chosen = parseClarificationAnswer(input.message, candidates);
+          if (chosen && chosen !== 'OTHER') {
+            audit('TRIAGE', 'clarification_answered', { chosen });
+            clarificationChosenStage = chosen;
+          } else if (chosen === 'OTHER') {
+            audit('TRIAGE', 'clarification_other', {});
+          }
+          // Jika null (tidak dikenali) -> fail-open, lanjut normal.
+        } catch {
+          // Fail-open.
+        }
+      }
+    }
+
+    // 0b. R1: Triage list id binding. When the citizen taps a category in the
+    // interactive triage list, channel-service forwards the row id as buttonId.
+    // Bind it deterministically to the category instead of re-classifying text.
+    const triageCategory = resolveTriageCategory(input.buttonId);
+    if (triageCategory) {
+      audit('TRIAGE', 'category_selected', {
+        categoryId: triageCategory.id,
+        categoryTitle: triageCategory.title,
+        typeKey: triageCategory.typeKey,
+      });
+      // Pre-fill the category slot so the COLLECT stage skips re-asking.
+      ctx.slots['kategori'] = triageCategory.title;
+      ctx.slots['kategori_id'] = triageCategory.id;
+      ctx.slots['kategori_type_key'] = triageCategory.typeKey;
+      // Rewrite the message to the category title for downstream routing —
+      // the id is authoritative, the text is just for the LLM context.
+      input.message = triageCategory.title;
+    }
+
+    // 0c. Ingress guard: rate limit + anomaly quarantine (never-silent).
+    const ingress = await ingressCheck({
+      tenantId, userId: input.userId, channel, traceId, message: input.message,
+    });
+    if (ingress.action !== 'allow') {
+      return {
+        success: false,
+        response: ingress.userReply ?? 'Pesan diterima.',
+        intent: ingress.action === 'rate_limited' ? 'rate_limited' : 'quarantined',
+        metadata: {
+          processingTimeMs: Date.now() - started,
+          hasKnowledge: false,
+          agentMode: 'single_orchestrator',
+          traceId,
+        },
+      };
+    }
+
+    // 0c2. Deterministic confirmation handling (P0-1: G2/G3 chain).
+    // button.id is authoritative; typed text ("Ya") never executes a
+    // mutation — it re-enters VERIFY so the citizen sees the buttons again.
+    // The router is bypassed here because VERIFY is a conversational state,
+    // not a fresh-routing decision.
+    const pendingForConfirm: PendingMutation | null = isPendingMutation(prior?.slots?.pendingTool)
+      ? (prior!.slots!.pendingTool as PendingMutation)
+      : null;
+    const confirmation = resolveConfirmation({
+      buttonId: input.buttonId ?? null,
+      confirmed: input.confirmed,
+      message: input.message,
+      pending: pendingForConfirm,
+      channel,
+    });
+    const confirmationMeta = {
+      processingTimeMs: Date.now() - started,
+      hasKnowledge: false,
+      agentMode: 'single_orchestrator' as const,
+      traceId,
+    };
+    if (confirmation.kind === 'stale') {
+      // Stale/replayed confirm click: reject deterministically, never route
+      // fresh (a fresh route would misread the button title as a new intent).
+      audit('VERIFY', 'stale_confirmation_rejected', { buttonId: input.buttonId ?? null });
+      return {
+        success: true,
+        response: STALE_CONFIRMATION_COPY,
+        intent: 'stale_confirmation',
+        metadata: { ...confirmationMeta },
+      };
+    }
+    if (confirmation.kind === 'edit') {
+      // Citizen wants to fix the data: drop the pending mutation, keep the
+      // slots, ask which part to correct (mirrors the VERIFY correction copy).
+      delete ctx.slots.pendingTool;
+      audit('VERIFY', 'confirmation_edit_requested', {});
+      if (sideEffectsAllowed) {
+        void saveTurnState(tenantId, input.userId, {
+          stage: 'COLLECT',
+          slots: ctx.slots,
+          assessorConfidences: ctx.assessorConfidences,
+        }, channel).catch(() => undefined);
+      }
+      return {
+        success: true,
+        response: CONFIRM_EDIT_COPY,
+        guidanceText: 'Menunggu koreksi warga.',
+        intent: 'correction',
+        metadata: { ...confirmationMeta },
+      };
+    }
+    if (confirmation.kind === 'cancel') {
+      audit('VERIFY', 'confirmation_cancelled', { buttonId: input.buttonId ?? null });
+      if (sideEffectsAllowed) {
+        void clearTurnState(tenantId, input.userId, channel).catch(() => undefined);
+      }
+      return {
+        success: true,
+        response: CONFIRM_CANCEL_COPY,
+        intent: 'cancelled',
+        metadata: { ...confirmationMeta },
+      };
+    }
+
+    // 0d. Identity ladder (deterministic, never LLM): L0/L1/L2.
+    // (launched in parallel at 0c-bis; resolved here, after the ingress gate)
+    const [identityLevel, budget] = await Promise.all([identityLevelPromise, budgetPromise]);
+    ctx.identityLevel = identityLevel;
+    await auditIdentityLevel({
+      tenantId, userId: input.userId, channel, traceId, level: ctx.identityLevel,
+    });
+
+    // 0e. Budget guard: no LLM spend when the tenant's daily budget is out.
+    // (budget resolved from the parallel batch at 0d)
+    if (!budget.allowed) {
+      audit('INGRESS', 'budget_exceeded', { spentUsd: budget.spentUsd });
+      const fbInput = {
+        stage: 'TRIAGE' as const, terminalState: 'BUDGET_EXHAUSTED' as const,
+        userId: input.userId, traceId, tenantId, channel,
+      };
+      const fb = await issueFallback(fbInput, { persist: sideEffectsAllowed });
+      return {
+        success: false,
+        response: fb.response,
+        intent: 'budget_exhausted',
+        metadata: {
+          processingTimeMs: Date.now() - started,
+          hasKnowledge: false,
+          agentMode: 'single_orchestrator',
+          traceId,
+        },
+        error: 'daily_budget_exceeded',
+      };
+    }
+
+    // 0f. Voice note: transcribe → text pipeline BEFORE routing (P1-6).
+    // Previously transcription happened after routeMessage() and the COLLECT
+    // slot-FSM ran, so stage decision + intent + slots were computed from an
+    // empty/placeholder message and the transcript never entered the slots.
+    // Now the transcript replaces input.message before routing, slot
+    // extraction, and the agent loop all see it. Deterministic never-silent
+    // reply when Whisper is not configured.
+    if (isVoiceNote(input.mediaType) && input.mediaUrl) {
+      const voice = await handleVoiceNote({
+        tenantId, userId: input.userId, channel, traceId, audioUrl: input.mediaUrl,
+      });
+      if (voice.reply) {
+        return {
+          success: false,
+          response: voice.reply,
+          intent: 'voice_note_unsupported',
+          metadata: {
+            processingTimeMs: Date.now() - started,
+            hasKnowledge: false,
+            agentMode: 'single_orchestrator',
+            traceId,
+          },
+        };
+      }
+      if (voice.transcript) {
+        input.message = `[transkrip voice note] ${voice.transcript}`;
+      }
+    }
+
+    // 0f. A2 glossary normalization: local terms → standard Indonesian BEFORE
+    // intent routing / slot extraction. Fail-open: no glossary = unchanged.
+    try {
+      // (glossary entries pre-fetched in parallel at 0c-bis; fail-open preserved)
+      const entries = await glossaryPromise;
+      if (entries.length > 0 && input.message) {
+        const norm = normalizeWithGlossary(input.message, entries);
+        if (norm.applied.length > 0) {
+          audit('INGRESS', 'glossary_normalized', {
+            applied: norm.applied.map((a) => `${a.istilah}→${a.bentukBaku}`),
+          });
+          input.message = norm.text;
+        }
+      }
+    } catch {
+      // fail-open: message flows through unchanged
+    }
+
+    // 0g. A3 regional-language fallback: light heuristic AFTER glossary
+    // normalization, plus the language assessor as a second opinion.
+    // On detection we do NOT guess intent — friendly reply asking to
+    // continue in Indonesian. Fail-open on weak signals.
+    try {
+      const det = detectLanguage(input.message ?? '');
+      let assessor: AssessorLanguageHint | undefined;
+      try {
+        const a = assessLanguage(input.message ?? '');
+        assessor = {
+          regional: a.primary !== 'indonesian',
+          confidence: a.confidence,
+          language: a.primary,
+        };
+      } catch {
+        assessor = undefined; // assessor failure → heuristic only
+      }
+      if (shouldUseRegionalFallback(det, assessor)) {
+        audit('INGRESS', 'regional_language_fallback', {
+          language: languageLabel(det.language),
+          confidence: Math.round(det.confidence * 100) / 100,
+          markers: det.markers,
+          assessorLanguage: assessor?.language,
+          assessorConfidence: assessor ? Math.round(assessor.confidence * 100) / 100 : undefined,
+        });
+        return {
+          success: true,
+          response: REGIONAL_FALLBACK_COPY,
+          intent: 'regional_language_fallback',
+          metadata: {
+            processingTimeMs: Date.now() - started,
+            hasKnowledge: false,
+            agentMode: 'single_orchestrator',
+            traceId,
+          },
+        };
+      }
+    } catch {
+      // fail-open: continue to routing
+    }
+
+    // 1. Deterministic routing.
+    let decision = routeMessage({ message: input.message });
+    // Confidence-clarification: jika user menjawab pertanyaan klarifikasi,
+    // route langsung ke stage pilihan (skip assessor).
+    if (clarificationChosenStage) {
+      decision = {
+        stage: clarificationChosenStage as Stage,
+        source: 'deterministic',
+        confidence: 0.95,
+        reasons: ['clarification_answer'],
+        hints: {},
+      };
+    }
+    if (confirmation.kind === 'execute') {
+      // Bound confirm_send → skip fresh routing, go straight to EXECUTE.
+      // For webchat text confirmation, mark confirmed so the EXECUTE stage
+      // (which gates on input.confirmed) can proceed.
+      if (channel === 'webchat' && !input.confirmed) {
+        (input as { confirmed?: boolean }).confirmed = true;
+      }
+      audit('VERIFY', 'confirmation_bound', { tool: pendingForConfirm?.tool ?? null });
+      decision = {
+        stage: 'EXECUTE',
+        source: 'deterministic',
+        confidence: 1,
+        reasons: ['confirmed_button_bound_to_pending_mutation'],
+      };
+    } else if (confirmation.kind === 'reverify') {
+      // Affirmative text → re-enter VERIFY to re-show summary + buttons.
+      audit('VERIFY', 'affirmative_text_reconfirm', {});
+      decision = {
+        stage: 'VERIFY',
+        source: 'deterministic',
+        confidence: 1,
+        reasons: ['affirmative_text_reconfirm'],
+      };
+    } else if (
+      // P1-11: anaphoric question during VERIFY. The prior turn left the
+      // citizen at VERIFY with a minted pending mutation, and this message
+      // is not a button click, explicit confirmation, cancellation, or
+      // correction — most likely a question about the item under
+      // verification ("kapan selesainya?"). The assessor (LLM) decides:
+      // stay in VERIFY (answer with the pending context, mutation kept) or
+      // re-route as a genuinely new topic. Never executes, never drops.
+      prior?.stage === 'VERIFY' &&
+      pendingForConfirm !== null &&
+      !isCancellation(input.message) &&
+      !isCorrectionRequest(input.message)
+    ) {
+      const assessed = await assessStage({
+        message: input.message,
+        fromStage: 'VERIFY',
+        verifyPending: true,
+      });
+      ctx.assessorConfidences.push(assessed.confidence);
+      audit('VERIFY', 'verify_interruption_assessed', {
+        stage: assessed.stage,
+        confidence: assessed.confidence,
+        reasons: assessed.reasons,
+      });
+      if (assessed.stage === 'VERIFY') {
+        decision = {
+          stage: 'VERIFY',
+          source: assessed.source,
+          confidence: assessed.confidence,
+          reasons: assessed.reasons,
+          hints: { verifyQuestion: true },
+        };
+      } else {
+        // Assessor judged it a genuinely new topic: leave `decision` as the
+        // routeMessage verdict (TRIAGE + needsAssessor) so the normal fuzzy
+        // assessment below classifies it into COLLECT / INFORMATION /
+        // STATUS_CHECK / HANDOFF exactly as if VERIFY had never interrupted.
+      }
+    }
+
+    // 2. Fuzzy transition → assessor (micro-LLM or deterministic fallback).
+    if (decision.hints?.needsAssessor && !clarificationChosenStage) {
+      const hasFuzzy = transitionsFrom(decision.stage).some((t) => t.kind === 'fuzzy');
+      if (hasFuzzy) {
+        // Active-COLLECT awareness: if a complaint/service-request is mid-collection
+        // (slots incomplete), tell the assessor so weak keyword drift cannot abandon it.
+        const activeIntent = ctx.slots[INTENT_SLOT_KEY] as SlotIntent | undefined;
+        const collectActive =
+          (activeIntent === 'complaint' || activeIntent === 'service_request') &&
+          !isCollectComplete(activeIntent, ctx.slots as unknown as Slots);
+        const assessed = await assessStage({
+          message: input.message,
+          fromStage: decision.stage,
+          activeCollectIntent: collectActive ? activeIntent : null,
+        });
+        ctx.assessorConfidences.push(assessed.confidence);
+        if (shouldSuggestHandoff(ctx.assessorConfidences)) {
+          decision = {
+            stage: 'HANDOFF', source: 'deterministic', confidence: 0.9,
+            reasons: ['two_low_confidence_assessments'],
+          };
+        } else {
+          decision = assessed;
+
+          // Confidence-based clarification (additive): jika assessor ragu
+          // (confidence < 0.6 tapi >= 0.3), jangan ngarang — tanya klarifikasi
+          // SPESIFIK dengan opsi konkret. Tidak mengubah flow jika confidence tinggi.
+          // Skip jika: handoff, emergency, atau ada active COLLECT (jangan interupsi).
+          const skipClarify =
+            decision.stage === 'HANDOFF' ||
+            decision.stage === 'EMERGENCY' ||
+            collectActive;
+          if (!skipClarify && decision.stage !== 'TRIAGE') {
+            try {
+              const { shouldClarify } = await import('../services/confidence-clarification.service');
+              const candidates = transitionsFrom(decision.stage)
+                .filter((t) => t.kind === 'fuzzy')
+                .map((t) => t.to)
+                .slice(0, 2);
+              const clar = shouldClarify(assessed.confidence, decision.stage, candidates);
+              if (clar.needed && clar.question && clar.candidates) {
+                // Simpan kandidat di slots agar jawaban user bisa di-parse turn berikutnya.
+                ctx.slots['__clarification_candidates'] = clar.candidates;
+                ctx.slots['__clarification_pending'] = true;
+                // Return early dengan pertanyaan klarifikasi.
+                // Simpan turn state agar kandidat tersedia di turn berikutnya.
+                try {
+                  const { saveTurnState } = await import('./pipeline-store');
+                  await saveTurnState(tenantId, input.userId, {
+                    stage: 'TRIAGE',
+                    slots: ctx.slots,
+                    assessorConfidences: ctx.assessorConfidences,
+                  }, channel);
+                } catch {
+                  // Best effort.
+                }
+                return {
+                  success: true,
+                  response: clar.question,
+                  intent: 'clarification',
+                  metadata: {
+                    processingTimeMs: Date.now() - started,
+                    hasKnowledge: false,
+                    agentMode: 'deterministic_fact_router',
+                  },
+                };
+              }
+            } catch {
+              // Clarification gagal -> lanjut flow normal (fail-open, additive).
+            }
+          }
+        }
+      }
+    }
+
+    if (input.onStageChange) {
+      try { input.onStageChange(decision.stage.toLowerCase(), 0.5); } catch { /* best effort */ }
+    }
+
+    // 2b. Deterministic COLLECT: classify intent, extract + merge slots.
+    // The FSM owns slot state; the LLM only proposes values conversationally.
+    if (decision.stage === 'COLLECT') {
+      const priorIntent = ctx.slots[INTENT_SLOT_KEY] as SlotIntent | undefined;
+      const classified = classifySlotIntent(input.message);
+      // C2 parity: ambiguous affirmative ("ok saya mau bikin") after service
+      // info → service_request, not the complaint default.
+      const intent = priorIntent ?? classified ??
+        (isServiceConfirmation(input.message) ? 'service_request' : 'complaint');
+      ctx.slots[INTENT_SLOT_KEY] = intent;
+      const attempts = Number(ctx.slots[COLLECT_ATTEMPTS_KEY] ?? 0) + 1;
+      ctx.slots[COLLECT_ATTEMPTS_KEY] = attempts;
+
+      // Tell the extractor which slot we're asking for so free-text answers
+      // (e.g. the description) can be captured deterministically.
+      // P1-10: pass the already-recorded slots so the extractor never
+      // clobbers a filled slot with a generic keyword hit from an
+      // unrelated answer (e.g. a description containing "jalan" must not
+      // overwrite the recorded location).
+      const expectedSlot = nextMissingSlot(intent, ctx.slots as unknown as Slots)?.name ?? null;
+      const extracted = extractSlotsDeterministic(
+        input.message, intent, expectedSlot, ctx.slots as unknown as Slots,
+      );
+      const { slots, errors } = mergeSlots(intent, ctx.slots as unknown as Slots, extracted);
+      ctx.slots = { ...slots, [INTENT_SLOT_KEY]: intent, [COLLECT_ATTEMPTS_KEY]: attempts };
+      if (errors.length > 0) {
+        audit('COLLECT', 'slot_validation_errors', { errors });
+      }
+
+      // service_request: resolve the villager's phrasing to an official
+      // service_slug via micro-LLM (deterministic slot, LLM-assisted match).
+      if (intent === 'service_request' && !ctx.slots.service_slug) {
+        const slug = await resolveServiceSlug(input.message, tenantId, input.userId);
+        if (slug) {
+          ctx.slots.service_slug = slug;
+          audit('COLLECT', 'service_slug_resolved', { slug });
+        }
+      }
+
+      // 2x failed collection → deterministic handoff (SOP rule).
+      if (attempts > 2 && !isCollectComplete(intent, ctx.slots as unknown as Slots)) {
+        audit('COLLECT', 'handoff_after_repeated_failure', { attempts });
+        decision = {
+          stage: 'HANDOFF', source: 'deterministic', confidence: 0.95,
+          reasons: ['collect_failed_twice'],
+        };
+      } else if (isCollectComplete(intent, ctx.slots as unknown as Slots)) {
+        // All required slots present → VERIFY with deterministic summary.
+        audit('COLLECT', 'collect_complete', { intent });
+        decision = {
+          stage: 'VERIFY', source: 'deterministic', confidence: 1,
+          reasons: ['all_required_slots_filled'],
+        };
+      } else {
+        const missing = nextMissingSlot(intent, ctx.slots as unknown as Slots);
+        audit('COLLECT', 'slot_missing', { slot: missing?.name ?? null, attempts });
+      }
+    }
+
+    // 3. Staged agent turn (bounded, never-silent inside).
+    // For incomplete COLLECT, give the agent loop the deterministic slot status
+    // so its question matches the FSM (the FSM remains authoritative).
+    const turnFacts: string[] = [];
+    // 2d. Media intake (image): privacy-first — hash, EXIF strip, redaction
+    // check. Raw pixels never reach the LLM; only the signal fact does.
+    if (input.mediaUrl && /image|photo|jpeg|jpg|png/i.test(input.mediaType ?? '')) {
+      try {
+        // KTP verification intake takes precedence over generic media
+        // handling: identity L2 was requested and the citizen now sends a
+        // photo → create a PENDING manual review request. Automatic OCR is
+        // PARKED (user decision 2026-09-29) and is never called here.
+        const ktpSlotSet = ctx.slots._awaitingKtpPhoto === true;
+        if (ktpSlotSet && ctx.identityLevel === 'L2') {
+          // Verified between turns — stale request marker, drop it.
+          delete ctx.slots._awaitingKtpPhoto;
+        }
+        const awaitingKtp = ktpSlotSet && ctx.identityLevel !== 'L2';
+        const media = await processImageMedia({
+          tenantId, userId: input.userId, channel, traceId,
+          mediaUrl: input.mediaUrl, mediaType: input.mediaType, messageId: input.messageId,
+          retainBytes: awaitingKtp,
+        });
+        if (awaitingKtp) {
+          delete ctx.slots._awaitingKtpPhoto;
+          let reply = KTP_RECEIVED_COPY;
+          let ktpIntent = 'ktp_verification_submitted';
+          const bytes = media.retainedBytes;
+          if (bytes && bytes.length <= MAX_KTP_PHOTO_BYTES && sideEffectsAllowed) {
+            const created = await createKtpVerification({
+              villageId: tenantId, userId: input.userId, channel,
+              photoBytes: bytes, photoMime: input.mediaType,
+            });
+            if (!created) {
+              ctx.slots._awaitingKtpPhoto = true; // keep waiting — retryable
+              reply = 'Maaf, foto KTP belum dapat kami terima saat ini. Silakan coba kirim ulang beberapa saat lagi.';
+              ktpIntent = 'ktp_verification_failed';
+            }
+          } else {
+            ctx.slots._awaitingKtpPhoto = true; // keep waiting — retryable
+            reply = bytes
+              ? 'Maaf, ukuran foto terlalu besar. Silakan kirim ulang foto KTP yang lebih kecil.'
+              : 'Maaf, foto tidak dapat kami unduh. Silakan kirim ulang foto KTP yang jelas.';
+            ktpIntent = 'ktp_verification_failed';
+          }
+          audit('INGRESS', 'ktp_photo_intake', { intent: ktpIntent });
+          if (sideEffectsAllowed) {
+            await saveTurnState(tenantId, input.userId, {
+              stage: 'COLLECT',
+              slots: ctx.slots,
+              assessorConfidences: ctx.assessorConfidences,
+            }, channel).catch(() => undefined);
+          }
+          return {
+            success: true,
+            response: reply,
+            intent: ktpIntent,
+            metadata: {
+              processingTimeMs: Date.now() - started,
+              hasKnowledge: false,
+              agentMode: 'single_orchestrator',
+              traceId,
+            },
+          };
+        }
+        if (media.promptFact) turnFacts.push(media.promptFact);
+        // A4: persist fraud signals WITH the evidence audit event so admins
+        // can review them later. Never auto-rejects; heuristic only.
+        audit('INGRESS', 'media_signal', {
+          hasImage: media.hasImage, duplicate: media.duplicate,
+          redaction: media.redaction, exifStripped: media.exifStripped,
+          fraud_signals: media.fraudSignals,
+          sha256: media.sha256 ?? null,
+        });
+        // 2d-bis. R14 KTP OCR pre-fill: PARKED by user decision (2026-09-29).
+        // The on-prem ocr-service sidecar and ocr-ktp.ts are kept for a
+        // future dashboard "isi otomatis" assist feature. The pipeline NEVER
+        // calls OCR automatically — manual admin verification is the path.
+      } catch (err) {
+        logger.debug('[processMessageV2] media intake failed', {
+          error: String((err as Error)?.message ?? err).slice(0, 120),
+        });
+      }
+    }
+    // 2d-ter. Verified identity pre-fill (manual KTP review outcome — NOT OCR).
+    // Fills empty identity slots from the admin-approved record so the
+    // citizen is not asked for data the village already verified.
+    if (decision.stage === 'COLLECT' && ctx.identityLevel === 'L2') {
+      try {
+        const verified = await getVerifiedIdentity(tenantId, input.userId);
+        if (verified) {
+          const filled = prefillSlotsFromVerifiedIdentity(
+            ctx.slots as unknown as Record<string, unknown>, verified,
+          );
+          if (filled.length > 0) {
+            turnFacts.push(
+              '[SISTEM] Data identitas warga sudah terverifikasi petugas: ' +
+              filled.join(', ') + ' — jangan tanyakan lagi.',
+            );
+            audit('COLLECT', 'verified_identity_prefill', { filled });
+          }
+        }
+      } catch {
+        // fail-open: citizen just answers the questions
+      }
+    }
+    if (decision.stage === 'COLLECT') {
+      const intent = ctx.slots[INTENT_SLOT_KEY] as SlotIntent | undefined;
+      if (intent) {
+        const missing = nextMissingSlot(intent, ctx.slots as unknown as Slots);
+        const filled = Object.entries(ctx.slots as unknown as Slots)
+          .filter(([k]) => !k.startsWith('_'))
+          .map(([k, v]) => `${k}=${v}`).join(', ') || '(belum ada)';
+        // P1-10: mark the missing slot as wajib/opsional so the question
+        // copy matches the FSM's required-vs-optional contract.
+        turnFacts.push(
+          `[Slot status] terisi: ${filled}; ` +
+          (missing ? `yang masih kurang: ${missing.label} (${missing.required ? 'wajib' : 'opsional'}) — tanyakan: ${missing.prompt}` : 'semua slot wajib terisi'),
+        );
+        // P1-10: anaphoric location ("di sana"/"di situ") can never be
+        // stored — ask for a specific location instead of looping the
+        // generic prompt.
+        if (
+          intent === 'complaint' &&
+          isAnaphoricLocation(input.message) &&
+          !(ctx.slots as unknown as Slots).location
+        ) {
+          turnFacts.push(
+            '[SISTEM] Warga menjawab lokasi dengan kata ganti ("di sana"/"di situ") yang tidak bisa dipetakan — ' +
+            'minta lokasi SPESIFIK: nama jalan/dusun/RT-RW atau patokan (contoh: depan balai desa). ' +
+            'Jangan menyimpan kata ganti tersebut sebagai lokasi.',
+          );
+        }
+      }
+    }
+    // 2b. FAQ cache: informational answers only, lookup before the agent.
+    // Exact-normalized match first, fuzzy (token-set Jaccard) fallback —
+    // village-scoped, so answers never leak across villages. VERIFY/COLLECT
+    // stages never reach this branch (no caching mid multi-turn flow).
+    if (decision.stage === 'INFORMATION') {
+      const cached = await faqCacheLookup(tenantId, input.message);
+      if (cached) {
+        audit('INFORMATION', 'semantic_cache_hit', { matchType: cached.matchType });
+        return {
+          success: true,
+          response: cached.answer,
+          intent: 'information_cached',
+          metadata: {
+            processingTimeMs: Date.now() - started,
+            hasKnowledge: true,
+            agentMode: 'single_orchestrator',
+            traceId,
+          },
+        };
+      }
+    }
+
+    // Track A2: real village name (DB-first, cached), fail-soft to 'Desa'.
+    // Identitas AI per desa (pengaturan admin desa): nama, disclosure, persona.
+    // Fail-open ke default (transparan, "Gana") bila dashboard tak terjangkau.
+    // Perf (P0-1): independent reads, resolved in parallel.
+    const [villageName, aiIdentity] = await Promise.all([
+      resolveVillageName(tenantId),
+      getVillageIdentity(tenantId),
+    ]);
+    const turn = await runStagedTurn({
+      message: input.message,
+      decision,
+      ctx,
+      villageName,
+      confirmed: input.confirmed,
+      summary: undefined,
+      language: 'id',
+      facts: turnFacts,
+      identity: aiIdentity,
+    });
+
+    // KTP verification trigger: the turn hit an L2 identity denial, so the
+    // citizen has been asked to verify. The next photo they send is treated
+    // as a KTP submission for manual admin review (see media intake above).
+    const identityDeniedForL2 = turn.toolTrace.some(
+      (t) => t.blocked && t.blockReason?.startsWith('identity_level_insufficient'),
+    );
+    if (identityDeniedForL2 && ctx.identityLevel !== 'L2') {
+      ctx.slots._awaitingKtpPhoto = true;
+      audit('COLLECT', 'ktp_photo_requested', {});
+    }
+
+    const metadata: ProcessMessageResult['metadata'] = {
+      processingTimeMs: Date.now() - started,
+      model: 'staged-agent-v2',
+      hasKnowledge: turn.toolsUsed.some((t) => t.startsWith('search_') || t.startsWith('get_')),
+      agentMode: 'single_orchestrator',
+      sideEffectMode: input.sideEffectMode,
+      toolsUsed: turn.toolsUsed,
+      toolTrace: turn.toolTrace.map((t) => ({
+        tool: t.tool,
+        success: t.success,
+        durationMs: t.durationMs,
+        trustLevel: 'action_result' as const,
+      })),
+      traceId,
+      routing: {
+        action: decision.stage,
+        confidence: String(decision.confidence),
+        primaryIntent: turn.intent,
+        mixedSignals: false,
+        reasons: decision.reasons,
+      },
+    };
+
+    // W14: cost saver — enforce exactly 1 message per turn. Merge guidance
+    // into the reply BEFORE building the interactive payload, so buttons/list
+    // bodies carry the merged text and WA length limits are still validated.
+    // Content is never dropped silently, only merged (audited below).
+    let responseText = turn.response;
+    let guidanceText = turn.guidanceText;
+    if (isCostSaverMode() && (guidanceText ?? '').trim()) {
+      const collapsed = collapseTurnMessages(responseText, guidanceText);
+      responseText = collapsed.text;
+      guidanceText = undefined;
+      audit('SEND', 'cost_saver_collapsed', { mergedGuidance: collapsed.mergedGuidance });
+    }
+
+    const interactive = interactiveForTurn({ ...turn, response: responseText });
+
+    const result: ProcessMessageResult = {
+      success: turn.terminalState === 'SUCCEEDED',
+      response: responseText,
+      guidanceText,
+      intent: turn.intent,
+      fields: { ...turn.fields, ...(interactive ? { interactive } : {}) },
+      metadata,
+      ...(turn.degraded ? { error: turn.degradationReason ?? 'degraded' } : {}),
+    };
+
+    // 4. Persist: idempotency + multi-turn state (best-effort, never blocks).
+    // P1-1: skipped entirely in shadow/evaluation — no production writes.
+    if (sideEffectsAllowed) {
+      void idempotencyStore(tenantId, key, result, 10 * 60 * 1000).catch(() => undefined);
+      if (turn.terminalState === 'SUCCEEDED' && turn.stage !== 'CLOSE') {
+        void saveTurnState(tenantId, input.userId, {
+          stage: turn.stage,
+          slots: ctx.slots,
+          assessorConfidences: ctx.assessorConfidences,
+        }, channel).catch(() => undefined);
+      } else if (turn.stage === 'CLOSE') {
+        void clearTurnState(tenantId, input.userId, channel).catch(() => undefined);
+      }
+    }
+
+    // 5. FAQ cache store (informational, non-personal answers only).
+    // P1-1: shadow must not pollute the production cache.
+    if (sideEffectsAllowed && turn.terminalState === 'SUCCEEDED') {
+      void faqCacheStore(tenantId, input.message, turn.response, decision.stage)
+        .catch(() => undefined);
+    }
+
+    const mutationRefs = Array.from(
+      turn.response.matchAll(/\b(?:LAP|TMP|SRV|REQ)-\d{4}\d{2}\d{2}-\d{2,6}\b/g),
+    ).map((m) => m[0]);
+
+    // 6. Durable memory policy (ADD/UPDATE/INVALIDATE/SKIP, never throws).
+    // P1-1: shadow must not mutate real user memory.
+    if (sideEffectsAllowed) {
+      void applyMemoryPolicy({
+        tenantId, userId: input.userId, channel, traceId,
+        terminalState: turn.terminalState,
+        toolsUsed: turn.toolsUsed,
+        mutationRefs,
+        summary: `[${turn.intent}] ${redactForLog(turn.response).slice(0, 400)}`,
+      }).catch(() => undefined);
+    }
+
+    // 7. LAPOR! outbox: forward filed complaints (config-gated sender).
+    // P1-1: shadow must not enqueue real outbox items.
+    if (sideEffectsAllowed && turn.toolsUsed.includes('create_complaint') && mutationRefs.length > 0) {
+      const s = ctx.slots as unknown as Record<string, unknown>;
+      void enqueueComplaintToLapor({
+        villageId: tenantId,
+        complaintRef: mutationRefs[0],
+        category: typeof s.category === 'string' ? s.category : undefined,
+        description: typeof s.description === 'string' ? s.description : turn.response.slice(0, 500),
+        location: typeof s.location === 'string' ? s.location : undefined,
+        reporterContact: input.userId,
+        hasImage: Boolean(input.mediaUrl),
+      }).catch(() => undefined);
+      // R16: no supporting document attached → schedule the H+3 reminder
+      // (idempotent; one row per ticket).
+      if (!input.mediaUrl) {
+        void scheduleDocReminder({
+          villageId: tenantId, userId: input.userId, channel,
+          ticketRef: String(mutationRefs[0]),
+        }).catch(() => undefined);
+      }
+    }
+    audit(turn.stage, 'turn_completed', {
+      terminalState: turn.terminalState,
+      degraded: turn.degraded,
+      toolsUsed: turn.toolsUsed,
+      // W16: prompt version that produced this turn's answer — bumped only
+      // when the static system prompt text changes (see PROMPT_VERSION).
+      // Suffix identitas AI: varian disclosure/nama ikut tercatat karena
+      // mengubah teks static prompt (prefix cache per varian).
+      promptVersion: `${PROMPT_VERSION}+id${aiIdentity.disclosure ? 1 : 0}:${aiIdentity.personaName}`,
+      // R5: deterministic topic key (from PII-redacted text) so the KB
+      // suggester can cluster "10× tanya X" without reading raw messages.
+      topic: extractTopicKey(redactForLog(input.message)),
+    });
+
+    return result;
+  } catch (err) {
+    // Absolute last resort: this should be unreachable (runStagedTurn never
+    // throws past its own failover), but defense in depth.
+    logger.error('[processMessageV2] unexpected exception', {
+      traceId, error: redactForLog(String((err as Error)?.message ?? err)),
+    });
+    return {
+      success: false,
+      response:
+        'Mohon maaf, sistem kami sedang mengalami gangguan. Silakan coba lagi beberapa saat, atau hubungi kantor desa langsung.',
+      intent: 'error',
+      metadata: {
+        processingTimeMs: Date.now() - started,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId,
+      },
+      error: 'v2_unexpected_exception',
+    };
+  }
+}
+
+/**
+ * R6: outbound canary tripwire — the single choke point for every response
+ * leaving the pipeline (all early returns funnel through here). If a canary
+ * token leaked into the response, substitute a safe static reply and audit
+ * `canary_token_leaked`. Never silent, never throws.
+ */
+export async function processMessageV2(input: ProcessMessageInput): Promise<ProcessMessageResult> {
+  // §10 billing (integrator wiring): v2 accrues this turn's token cost
+  // (v1 parity — unified-message-processor does the same) so the
+  // per-resolution debit has accrued costs to sum. Skipped outside
+  // production: shadow/eval/knowledge_test must not write production
+  // billing state (P1-1).
+  const billable = (input.sideEffectMode ?? 'production') === 'production' && !input.isEvaluation;
+  const villageId = input.villageId ?? null;
+
+  // Cross-session memory: lazy session-end detection. Bila turn terakhir user
+  // lebih lama dari SESSION_IDLE_TIMEOUT_MS, session lama dianggap berakhir
+  // dan ringkasannya di-save (fail-open, sekali per session).
+  const trackSession = billable;
+  if (trackSession && input.userId) {
+    checkSessionEnd(input.userId, input.villageId ?? undefined);
+  }
+
+  const messageId = input.messageId ?? `${input.channel}:${input.userId}:${Date.now().toString(36)}`;
+  const billingGroupId = villageId
+    ? `msg:${villageId}:${messageId}`
+    : `${input.channel}:${input.userId}:${messageId}`;
+  const billingTurn: AiBillingTurnHandle | null = billable
+    ? startAiBillingTurn({
+        village_id: villageId,
+        message_id: messageId,
+        trace_id: '',
+        billing_group_id: billingGroupId,
+        batched_message_ids: input.batchedMessageIds ?? [],
+        wa_user_id: input.channel === 'whatsapp' ? input.userId : null,
+        session_id: input.channel === 'webchat' ? input.userId : null,
+        channel: input.channel,
+      })
+    : null;
+
+  let result: ProcessMessageResult | undefined;
+  try {
+    result = await processMessageV2Inner(input);
+
+    // Track A2: DB-first reconciliation — v2's equivalent of the v1
+    // orchestrator's reconcile() call. Runs on every response leaving the
+    // pipeline, before the canary safety net.
+    result = await applyDbRagReconcile({
+      villageId: input.villageId ?? '',
+      userId: input.userId,
+      channel: input.channel === 'webchat' ? 'webchat' : 'whatsapp',
+      userMessage: input.message,
+      result,
+      sideEffectsAllowed: (input.sideEffectMode ?? 'production') === 'production',
+    });
+
+    try {
+      // traceId lives on the result metadata, not the input.
+      const traceId = result.metadata?.traceId ?? '';
+      const check = await checkOutboundForCanary(result.response ?? '', input.villageId ?? '', traceId);
+      if (check.leaked) {
+        result = {
+          ...result,
+          success: true,
+          response: CANARY_SAFE_REPLY,
+          metadata: { ...(result.metadata ?? {}), canaryLeakBlocked: true },
+        };
+      }
+    } catch (err) {
+      logger.warn('[processMessageV2] canary outbound check failed (fail-open on the check, response untouched)', {
+        traceId: result.metadata?.traceId, error: (err as Error)?.message ?? String(err),
+      });
+    }
+
+    // P0-3: raw-JSON tripwire — the same choke point also guarantees no raw
+    // JSON / debug structure ever leaves as a citizen reply. The sanitizer
+    // never throws and never returns empty (never-silent).
+    const sanitized = sanitizeOutboundText(result.response ?? '');
+    if (sanitized.substituted) {
+      result = {
+        ...result,
+        response: sanitized.text,
+        metadata: { ...(result.metadata ?? {}), rawJsonBlocked: true },
+      };
+    }
+  } finally {
+    // Finalize accrual BEFORE resolution accounting: recordResolution sums
+    // rows with billing_status='accrued' for this billing group.
+    // R9 anomaly detection is wired inside finalizeAiBillingTurn (fire-and-forget).
+    if (billingTurn) {
+      await finishAiBillingTurn(billingTurn).catch(() => undefined);
+    }
+
+    // Cross-session memory: snapshot turn ini untuk auto-save saat session
+    // berakhir (lazy detection di checkSessionEnd pada turn berikutnya).
+    // Fail-open: tidak pernah melempar ke alur pesan.
+    if (trackSession && result) {
+      const toolsUsed: string[] = result.metadata?.toolsUsed ?? [];
+      noteSessionTurn({
+        userKey: input.userId,
+        wa_user_id: input.userId,
+        village_id: input.villageId ?? undefined,
+        summary: summarizeTurnForSession(result),
+        appendSummary: true,
+        hasOutcome:
+          TICKET_REF_RE.test(result.response ?? '') ||
+          toolsUsed.some((t) => t.startsWith('create_')),
+      });
+    }
+  }
+
+  // §10: debit the village wallet exactly once per VERIFIED resolution.
+  // Fire-and-forget; never throws into the message path.
+  if (billable) {
+    void maybeBillV2Resolution({ input, result, billingGroupId, villageId }).catch(() => undefined);
+  }
+  return result;
+}
+
+/**
+ * §10 integrator: map a finished v2 turn to a verified resolution and debit
+ * per resolution (never per message). Conservative by design: only turns with
+ * deterministic evidence (tool traces, ticket refs, DB lookups) count.
+ * Greetings, cancellations, confirmations-pending and failed turns are NOT
+ * resolutions — the vendor absorbs those turns (the §10 incentive).
+ */
+async function maybeBillV2Resolution(params: {
+  input: ProcessMessageInput;
+  result: ProcessMessageResult;
+  billingGroupId: string;
+  villageId: string | null;
+}): Promise<void> {
+  try {
+    const { input, result, billingGroupId, villageId } = params;
+    if (!result.success) return;
+    const meta = (result.metadata ?? {}) as Record<string, any>;
+    const toolsUsed: string[] = Array.isArray(meta.toolsUsed) ? meta.toolsUsed : [];
+    const stage: string = meta.routing?.action ?? '';
+    const intent: string = result.intent ?? '';
+    const response = result.response ?? '';
+    const ticketRefs = Array.from(
+      response.matchAll(/\b(?:LAP|TMP|SRV|REQ|LAY)-\d{4}\d{2}\d{2}-\d{2,6}\b/g),
+    ).map((m) => m[0]);
+
+    let type: ResolutionType | null = null;
+    let evidenceRef: string | null = null;
+    if (toolsUsed.includes('create_complaint') && ticketRefs.length > 0) {
+      type = 'complaint_created'; evidenceRef = ticketRefs[0];
+    } else if (toolsUsed.includes('create_service_request') && ticketRefs.length > 0) {
+      type = 'service_request_created'; evidenceRef = ticketRefs[0];
+    } else if (intent === 'information_cached') {
+      // Served from the semantic cache: the cached answer was verified when stored.
+      type = 'info_answered'; evidenceRef = 'semantic_cache';
+    } else if (stage === 'INFORMATION'
+      && toolsUsed.some((t) => t.startsWith('search_') || t.startsWith('get_'))) {
+      type = 'info_answered';
+    } else if (stage === 'STATUS_CHECK') {
+      type = 'status_delivered';
+    } else if (stage === 'EMERGENCY') {
+      type = 'info_answered'; evidenceRef = 'emergency';
+    }
+    if (!type) return;
+
+    const traceId: string = meta.traceId ?? '';
+    await recordResolution({
+      villageId,
+      waUserId: input.channel === 'whatsapp' ? input.userId : null,
+      sessionId: input.channel === 'webchat' ? input.userId : null,
+      channel: input.channel,
+      traceId,
+      resolutionType: type,
+      evidenceRef,
+      evidence: {
+        pipeline: 'v2', stage, intent,
+        toolsUsed, ticketRefs,
+        // PII-safety: refs are ticket IDs, never raw citizen data.
+      },
+      billingGroupIds: [billingGroupId],
+      // Stable across turn retries (messageId-based), so a retried turn
+      // cannot double-bill the same resolution.
+      resolutionKey: `msg:${villageId ?? 'novillage'}:${input.messageId ?? traceId}:${type}:${evidenceRef ?? 'noref'}`,
+      metadata: { pipeline: 'v2' },
+    });
+  } catch (err) {
+    logger.warn('[processMessageV2] resolution billing failed (non-blocking)', {
+      error: (err as Error)?.message ?? String(err),
+    });
+  }
+}
+
+// Test-only exports (do not use in production code).
+export const __test_only__v2 = { maybeBillV2Resolution };

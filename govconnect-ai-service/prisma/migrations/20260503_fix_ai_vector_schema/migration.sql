@@ -1,4 +1,11 @@
 CREATE SCHEMA IF NOT EXISTS ai;
+-- Fresh installs: baseline created the vector extension in public; repo intent is ai schema.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector' AND n.nspname <> 'ai') THEN
+    ALTER EXTENSION vector SET SCHEMA ai;
+  END IF;
+END $$;
 CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA ai;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 

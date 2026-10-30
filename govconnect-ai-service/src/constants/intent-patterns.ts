@@ -103,7 +103,7 @@ export const CREATE_COMPLAINT_PATTERNS = [
 export const SERVICE_INFO_PATTERNS = [
   /\b(syarat|persyaratan|prosedur|biaya|tarif)\b/i,
   /\b(apa\s+saja)\s+(syarat|dokumen|berkas)\b/i,
-  /\b(cara|proses)\s+(buat|bikin|urus|daftar)\b/i,
+  /\b(cara|proses)\s+(buat|bikin|urus|ngurus|daftar)\b/i,
 ];
 
 export const CREATE_SERVICE_REQUEST_PATTERNS = [
@@ -122,6 +122,10 @@ export const UPDATE_SERVICE_REQUEST_PATTERNS = [
 export const UPDATE_COMPLAINT_PATTERNS = [
   /\b(ubah|ganti|perbarui|update)\s+(laporan|pengaduan|keluhan)\b/i,
   /\b(ubah|ganti)\s+(alamat|deskripsi|keterangan)\s+laporan\b/i,
+  // Fix A1: "tambah info ke LAP-xxx" / "tambah keterangan"
+  /\b(tambah|tambahkan)\s+(info|informasi|keterangan|detail|catatan)\b/i,
+  // [P1 FIX] "tambahin info untuk LAP-xxx"
+  /\b(tambahin|tambahin\s+info)\b/i,
 ];
 
 // ==================== STATUS CHECK PATTERNS ====================
@@ -140,6 +144,9 @@ export const CANCEL_PATTERNS = [
   /\b(batalkan|cancel|batal)\s+(laporan|pengaduan)\b/i,
   /\b(mau|ingin)\s+(batalkan|cancel|batal)\b/i,
   /\b(hapus)\s+(laporan|pengaduan)\b/i,
+  // Fix C6: frasa natural pembatalan tanpa objek eksplisit.
+  /^\s*(batal|cancel|batalkan)\s*(aja|saja)?\s*[.!]?\s*$/i,
+  /\b(nggak|gak|ga|tidak)\s+(jadi|usah)\b/i,
 ];
 
 export const CANCEL_SERVICE_PATTERNS = [
@@ -176,7 +183,7 @@ export const KNOWLEDGE_QUERY_PATTERNS = [
   
   // Process questions
   /\b(bagaimana|gimana)\s+(cara|proses|prosedur)\b/i,
-  /\b(cara|proses|prosedur|langkah)\s+(buat|bikin|urus|daftar)\b/i,
+  /\b(cara|proses|prosedur|langkah)\s+(buat|bikin|urus|ngurus|daftar)\b/i,
   /\b(berapa\s+lama|durasi|waktu\s+proses)\b/i,
   
   // Service list questions
@@ -223,8 +230,8 @@ export function detectIntentFromPatterns(message: string): IntentType | null {
   }
   
   // Other intents
-  if (matchesAnyPattern(lowerMessage, CHECK_STATUS_PATTERNS)) return 'CHECK_STATUS';
   if (matchesAnyPattern(lowerMessage, UPDATE_COMPLAINT_PATTERNS)) return 'UPDATE_COMPLAINT';
+  if (matchesAnyPattern(lowerMessage, CHECK_STATUS_PATTERNS)) return 'CHECK_STATUS';
   if (matchesAnyPattern(lowerMessage, CANCEL_SERVICE_PATTERNS)) return 'CANCEL_SERVICE_REQUEST';
   if (matchesAnyPattern(lowerMessage, CANCEL_PATTERNS)) return 'CANCEL_COMPLAINT';
   if (matchesAnyPattern(lowerMessage, HISTORY_PATTERNS)) return 'HISTORY';

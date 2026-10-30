@@ -1,2 +1,2 @@
-ALTER TABLE "services_dynamic"
+ALTER TABLE cases."services_dynamic"
 ADD COLUMN "citizen_fields_json" JSONB;

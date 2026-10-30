@@ -370,9 +370,17 @@ export async function debitVillageWalletForUsage(input: {
 
 }
 
-export async function debitVillageWalletForMessageBilling(input: {
+/**
+ * R9 / §10: debit the village wallet for one VERIFIED RESOLUTION.
+ *
+ * arsitektur-final §10: "Wallet: tagih per resolusi terverifikasi — selaras
+ * insentif." The old per-message debit (reference_type 'ai_message_billing')
+ * is retired: turn finalization only accrues cost, and the wallet moves only
+ * here, keyed by the resolution id (idempotent).
+ */
+export async function debitVillageWalletForResolution(input: {
   villageId?: string | null;
-  messageBillingId: string;
+  resolutionId: string;
   adjustedCostUsd: number;
   actualCostUsd?: number;
   marginUsd?: number;
@@ -383,8 +391,8 @@ export async function debitVillageWalletForMessageBilling(input: {
     adjustedCostUsd: input.adjustedCostUsd,
     actualCostUsd: input.actualCostUsd,
     marginUsd: input.marginUsd,
-    referenceType: 'ai_message_billing',
-    referenceId: input.messageBillingId,
+    referenceType: 'ai_resolution',
+    referenceId: input.resolutionId,
     metadata: input.metadata,
   });
 }

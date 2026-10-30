@@ -11,7 +11,7 @@ import axios from 'axios';
 import { config } from '../config/env';
 import { extractNameViaNLU, analyzeAddress, matchComplaintType } from './micro-llm-matcher.service';
 import { getVillageProfileSummary } from './knowledge.service';
-import { getComplaintTypes } from './case-client.service';
+import { getComplaintTypes, getComplaintCategories } from './case-client.service';
 import type { ChannelType } from './ump-formatters';
 import { conversationHistoryCache, complaintTypeCache } from './ump-state';
 
@@ -103,6 +103,13 @@ export function appendToHistoryCache(userId: string, role: 'user' | 'assistant',
     }
     cached.timestamp = Date.now();
     conversationHistoryCache.set(userId, cached);
+  } else {
+    // C1/C2/E6: create cache entry if none exists (e.g. webchat testing
+    // where channel service has no stored messages yet).
+    conversationHistoryCache.set(userId, {
+      history: [{ role, content }],
+      timestamp: Date.now(),
+    });
   }
 }
 
@@ -128,6 +135,20 @@ export function deriveLastDiscussedServiceContext(
       if (!candidate) continue;
       if (/^(?:LAY|LAP)-\d/i.test(candidate)) continue;
       return { serviceName: candidate };
+    }
+    // C1: detect service names directly from messages (e.g. "surat domisili")
+    const serviceKeywords: Array<{ pattern: RegExp; slug: string; name: string }> = [
+      { pattern: /\bdomisili\b/i, slug: 'surat-domisili', name: 'Surat Keterangan Domisili' },
+      { pattern: /\bktp\b/i, slug: 'ktp', name: 'KTP' },
+      { pattern: /\bkk\b|kartu keluarga\b/i, slug: 'kk', name: 'Kartu Keluarga' },
+      { pattern: /\bakta kelahiran\b/i, slug: 'akta-kelahiran', name: 'Akta Kelahiran' },
+      { pattern: /\bsktm\b/i, slug: 'sktm', name: 'SKTM' },
+      { pattern: /\bsurat pindah\b/i, slug: 'surat-pindah', name: 'Surat Pindah' },
+    ];
+    for (const svc of serviceKeywords) {
+      if (svc.pattern.test(content)) {
+        return { serviceSlug: svc.slug, serviceName: svc.name };
+      }
     }
   }
   return {};
@@ -240,6 +261,12 @@ export async function extractAddressFromMessage(currentMessage: string, userId: 
 
 // ==================== COMPLAINT TYPE RESOLUTION ====================
 
+/**
+ * P1-12 — Village scoping rule: complaint types are always per-village (see
+ * getComplaintTypes in case-client.service.ts). There are no global types.
+ * A call without village_id returns [] immediately (fail-closed) — it never
+ * queries or caches unscoped data.
+ */
 export async function getCachedComplaintTypes(villageId?: string): Promise<any[]> {
   if (!villageId) return [];
 
@@ -312,4 +339,59 @@ export async function resolveVillageSlugForPublicForm(villageId?: string): Promi
     // ignore
   }
   return 'desa';
+}
+
+/**
+ * P1-2: Normalize a raw kategori string to the canonical complaint category
+ * name from the DB. This ensures the `kategori` column stores e.g.
+ * "Lampu Penerangan" instead of raw user input like "lampu jalan rt 05 mati".
+ *
+ * Strategy:
+ * 1. Exact (case-insensitive) match against category names → return canonical.
+ * 2. Micro-LLM semantic match against category names → return canonical if
+ *    confidence >= 0.5.
+ * 3. Fallback: return the original string unchanged (never block creation).
+ */
+export async function resolveComplaintCategoryName(
+  kategori: string | undefined,
+  villageId?: string
+): Promise<string | undefined> {
+  if (!kategori || !villageId) return kategori;
+
+  const categories = await getComplaintCategories(villageId);
+  if (!categories.length) return kategori;
+
+  const normalized = kategori.trim().toLowerCase();
+
+  // 1. Exact match (case-insensitive)
+  const exact = categories.find(c => c.name.trim().toLowerCase() === normalized);
+  if (exact) return exact.name;
+
+  // 2. Micro-LLM semantic match
+  try {
+    const options = categories
+      .filter(c => c?.id && c?.name)
+      .map(c => ({ id: c.id, name: c.name, categoryName: c.name }));
+    const { matchComplaintType } = await import('./micro-llm-matcher.service');
+    const result = await matchComplaintType(kategori, options as any);
+    if (result?.matched_id && result.confidence >= 0.5) {
+      const matched = categories.find(c => c.id === result.matched_id);
+      if (matched) {
+        logger.debug('resolveComplaintCategoryName: matched', {
+          kategori,
+          matchedName: matched.name,
+          confidence: result.confidence,
+        });
+        return matched.name;
+      }
+    }
+  } catch (error: any) {
+    logger.warn('resolveComplaintCategoryName: micro-LLM failed', {
+      error: error.message,
+      kategori,
+    });
+  }
+
+  // 3. Fallback: original unchanged
+  return kategori;
 }

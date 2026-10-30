@@ -3,7 +3,7 @@ import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { rabbitmqConfig } from '../config/rabbitmq';
-import { sendTextMessage, sendContactMessage } from './wa.service';
+import { sendTextMessage, sendContactMessage, sendButtonsMessage, sendListMessage } from './wa.service';
 import { saveOutgoingMessage } from './message.service';
 import { updateConversation, clearAIStatus, setAIError, setAIPendingBalance, isUserInTakeover } from './takeover.service';
 import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.service';
@@ -372,6 +372,81 @@ interface AIReplyEvent {
     organization?: string;  // e.g., "Pemadam Kebakaran", "Puskesmas"
     title?: string;         // e.g., "Hotline Darurat", "Nomor Layanan"
   }>;
+  // Optional interactive payload (buttons / list) from ai-service.
+  // Shapes mirror normalizeInteractivePayload in livechat.controller.ts.
+  interactive?: unknown;
+}
+
+type InteractiveButtonsPayload = {
+  type: 'buttons';
+  body: string;
+  buttons: Array<{ type: string; title: string; id?: string }>;
+  footer?: string;
+};
+
+type InteractiveListPayload = {
+  type: 'list';
+  body: string;
+  buttonText: string;
+  sections: Array<{ title?: string; rows: Array<{ title: string; desc?: string; RowId?: string }> }>;
+  footer?: string;
+};
+
+type InteractivePayload = InteractiveButtonsPayload | InteractiveListPayload;
+
+/**
+ * Validate an interactive payload from ai-service.
+ * Mirrors normalizeInteractivePayload (livechat.controller.ts) but returns a
+ * typed payload instead of gateway params. Returns null → plain text.
+ */
+function validateInteractivePayload(value: unknown): InteractivePayload | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const type = v.type === 'list' ? 'list' : v.type === 'buttons' ? 'buttons' : null;
+  if (!type) return null;
+  const body = typeof v.body === 'string' ? v.body.trim() : '';
+  const footer = typeof v.footer === 'string' ? v.footer.trim() : undefined;
+  if (!body) return null;
+  if (type === 'buttons') {
+    const buttons = (Array.isArray(v.buttons) ? v.buttons : [])
+      .map((b: any) => {
+        if (!b || typeof b !== 'object') return null;
+        const title = typeof b.title === 'string' ? b.title.trim() : '';
+        if (!title || title.length > 20) return null;
+        return {
+          type: 'reply',
+          title,
+          id: typeof b.id === 'string' && b.id.trim() ? b.id.trim() : undefined,
+        };
+      })
+      .filter(Boolean) as InteractiveButtonsPayload['buttons'];
+    if (buttons.length === 0 || buttons.length > 3) return null;
+    return { type, body, buttons, footer };
+  }
+  const sections = (Array.isArray(v.sections) ? v.sections : [])
+    .map((s: any) => {
+      if (!s || typeof s !== 'object') return null;
+      const rows = (Array.isArray(s.rows) ? s.rows : [])
+        .map((r: any) => {
+          if (!r || typeof r !== 'object') return null;
+          const title = typeof r.title === 'string' ? r.title.trim() : '';
+          if (!title) return null;
+          const desc = typeof r.desc === 'string' ? r.desc.trim()
+            : typeof r.description === 'string' ? r.description.trim() : '';
+          const rowId = typeof r.RowId === 'string' ? r.RowId.trim()
+            : typeof r.rowId === 'string' ? r.rowId.trim()
+            : typeof r.id === 'string' ? r.id.trim() : '';
+          return { title, desc: desc || undefined, RowId: rowId || undefined };
+        })
+        .filter(Boolean);
+      if (rows.length === 0 || rows.length > 10) return null;
+      const title = typeof s.title === 'string' ? s.title.trim() : undefined;
+      return { title, rows };
+    })
+    .filter(Boolean) as InteractiveListPayload['sections'];
+  const buttonText = typeof v.buttonText === 'string' ? v.buttonText.trim() : '';
+  if (sections.length === 0 || !buttonText || buttonText.length > 20) return null;
+  return { type, body, buttonText, sections, footer };
 }
 
 function resolveConversationTarget(payload: {
@@ -456,6 +531,21 @@ export async function startConsumingAIReply(): Promise<void> {
         
         const replyText = formatText(payload.reply_text);
         const guidanceText = formatText(payload.guidance_text || '');
+
+        // W14: cost saver — exactly 1 WhatsApp message per AI reply event.
+        // The v2 pipeline already merges guidance into reply_text when the
+        // flag is on; for any other producer, merge here for the text path.
+        // The separate guidance bubble below is skipped entirely when on.
+        const costSaverMode = process.env.WA_COST_SAVER_MODE === 'true';
+        const effectiveReplyText = costSaverMode && guidanceText.trim()
+          ? `${replyText}\n\n${guidanceText.trim()}`.trim()
+          : replyText;
+        if (costSaverMode && guidanceText.trim()) {
+          logger.info('W14 cost saver: guidance merged into single message', {
+            wa_user_id: channelIdentifier,
+            village_id: payload.village_id,
+          });
+        }
         
         logger.info('📨 AI reply event received', {
           village_id: payload.village_id,
@@ -495,7 +585,8 @@ export async function startConsumingAIReply(): Promise<void> {
             channel: 'WHATSAPP',
             channel_identifier: channelIdentifier,
             message_id: localMsgId,
-            message_text: replyText,
+            // W14: persist what was actually sent (merged single text).
+            message_text: effectiveReplyText,
             source: 'AI',
             delivery_status: 'sent',
           },
@@ -507,7 +598,9 @@ export async function startConsumingAIReply(): Promise<void> {
         );
 
         let guidancePersisted = true;
-        if (guidanceText && guidanceText.trim()) {
+        // W14: skipped when cost saver is on — guidance is merged into the
+        // single reply text above, so there is no second message to persist.
+        if (guidanceText && guidanceText.trim() && !costSaverMode) {
           const localGuidanceMsgId = `local-guidance-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           guidancePersisted = await persistSentAIMessage(
             {
@@ -529,7 +622,64 @@ export async function startConsumingAIReply(): Promise<void> {
         }
 
         // Send main reply message via WhatsApp, then persist the provider-backed message id.
-        const result = await sendTextMessage(channelIdentifier, replyText, payload.village_id);
+        // Interactive (buttons/list) is preferred when the payload is valid;
+        // any interactive failure falls back to plain text (never-silent).
+        let result;
+        let interactive = validateInteractivePayload(payload.interactive);
+        // W14: if guidance reached the consumer alongside an interactive
+        // payload (non-v2 producer), merge it into the body and re-validate
+        // so the single message still carries it; else fall back to text.
+        if (costSaverMode && guidanceText.trim() && interactive) {
+          const merged = validateInteractivePayload({
+            ...interactive,
+            body: `${interactive.body}\n\n${guidanceText.trim()}`.trim(),
+          });
+          if (merged) {
+            interactive = merged;
+          } else {
+            logger.warn('W14 cost saver: merged interactive body invalid, using text', {
+              wa_user_id: channelIdentifier,
+            });
+            interactive = null;
+          }
+        }
+        if (interactive?.type === 'buttons') {
+          result = await sendButtonsMessage({
+            to: channelIdentifier,
+            body: interactive.body,
+            buttons: interactive.buttons.map((b) => ({ type: b.type, title: b.title, id: b.id })),
+            footer: interactive.footer,
+            villageId: payload.village_id,
+          });
+          if (!result.success) {
+            logger.warn('⚠️ Interactive buttons send failed, falling back to text', {
+              wa_user_id: channelIdentifier,
+              error: result.error,
+            });
+            result = await sendTextMessage(channelIdentifier, effectiveReplyText, payload.village_id);
+          }
+        } else if (interactive?.type === 'list') {
+          result = await sendListMessage({
+            to: channelIdentifier,
+            body: interactive.body,
+            buttonText: interactive.buttonText,
+            sections: interactive.sections.map((s) => ({
+              title: s.title,
+              rows: s.rows.map((r) => ({ title: r.title, desc: r.desc, RowId: r.RowId })),
+            })),
+            footer: interactive.footer,
+            villageId: payload.village_id,
+          });
+          if (!result.success) {
+            logger.warn('⚠️ Interactive list send failed, falling back to text', {
+              wa_user_id: channelIdentifier,
+              error: result.error,
+            });
+            result = await sendTextMessage(channelIdentifier, effectiveReplyText, payload.village_id);
+          }
+        } else {
+          result = await sendTextMessage(channelIdentifier, effectiveReplyText, payload.village_id);
+        }
 
         if (result.success) {
           logger.info('✅ AI reply sent to WhatsApp successfully', {
@@ -546,7 +696,8 @@ export async function startConsumingAIReply(): Promise<void> {
                 channel: 'WHATSAPP',
                 channel_identifier: channelIdentifier,
                 message_id: result.message_id,
-                message_text: replyText,
+                // W14: persist what was actually sent (merged single text).
+                message_text: effectiveReplyText,
                 source: 'AI',
                 delivery_status: 'sent',
               },
@@ -559,7 +710,8 @@ export async function startConsumingAIReply(): Promise<void> {
           }
 
           // If there's a guidance message, send it as a separate bubble after a short delay.
-          if (guidanceText && guidanceText.trim()) {
+          // W14: skipped entirely when cost saver is on (merged into the single text above).
+          if (guidanceText && guidanceText.trim() && !costSaverMode) {
             // Small delay to ensure messages appear in order
             await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -647,11 +799,11 @@ export async function startConsumingAIReply(): Promise<void> {
           }
 
           if (isBalanceExhausted) {
-            await updateConversation(channelIdentifier, replyText, undefined, false, payload.village_id, 'WHATSAPP');
+            await updateConversation(channelIdentifier, effectiveReplyText, undefined, false, payload.village_id, 'WHATSAPP');
             await setAIPendingBalance(channelIdentifier, payload.message_id, payload.village_id, 'WHATSAPP');
           } else {
             // Update conversation summary with AI response and reset unread count (AI handled it)
-            await updateConversation(channelIdentifier, replyText, undefined, 'reset', payload.village_id, 'WHATSAPP');
+            await updateConversation(channelIdentifier, effectiveReplyText, undefined, 'reset', payload.village_id, 'WHATSAPP');
             await clearAIStatus(channelIdentifier, payload.village_id, 'WHATSAPP');
 
             // Clear bubble state so next messages start fresh (not superseded)

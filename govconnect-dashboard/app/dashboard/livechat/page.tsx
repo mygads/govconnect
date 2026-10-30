@@ -57,6 +57,7 @@ import {
   SmilePlus,
   Clock3,
 } from "lucide-react"
+import { HandoffSummaryCard } from "@/components/dashboard/HandoffSummaryCard"
 
 interface Conversation {
   id: string
@@ -2328,6 +2329,12 @@ export default function LiveChatPage() {
                   {formatTakeoverReason(currentTakeover.reason) ? ` — ${formatTakeoverReason(currentTakeover.reason)}` : ''}
                 </div>
               )}
+
+              {/* A1: AI handoff summary — context for staff taking over */}
+              <HandoffSummaryCard
+                userId={selectedConversation.wa_user_id || selectedConversation.channel_identifier || ""}
+                channel={isWebchatConversation(selectedConversation) ? "webchat" : "whatsapp"}
+              />
 
               {messageError && (
                 <div className="border-t bg-red-50 px-4 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">

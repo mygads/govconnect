@@ -2,7 +2,8 @@ import { AsyncLocalStorage } from 'async_hooks';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
-import { debitVillageWalletForMessageBilling, InsufficientAIWalletBalanceError } from './ai-wallet.service';
+import { appendAudit } from '../pipeline/pipeline-store';
+import { checkTurnCostAnomaly, checkDailySpendAnomaly } from './cost-anomaly.service';
 
 export interface AiBillingTurnContext {
   village_id?: string | null;
@@ -105,12 +106,81 @@ export async function withAiBillingTurn<T>(context: AiBillingTurnContext, handle
   });
 }
 
+interface TurnCostTotals {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  actual_cost_usd: number;
+  adjusted_cost_usd: number;
+  margin_usd: number;
+}
+
+/**
+ * R9 / §10: cost per turn, visible in the pipeline audit trail.
+ *
+ * arsitektur-final §10 mandates per-RESOLUTION billing ("tagih per resolusi
+ * terverifikasi — selaras insentif"). Therefore this finalizer only ACCRUES
+ * the turn cost (ai_message_billings.status = 'accrued'): it records what the
+ * turn cost, but NEVER moves the wallet. The wallet is debited later, once,
+ * by recordResolution() (ai-resolution-billing.service.ts) when the turn
+ * (sequence) reaches a verified resolution. Turns that never resolve are
+ * never debited — the vendor absorbs that cost, which is the §10 incentive
+ * alignment (paid on delivered value, not per message).
+ *
+ * The billing tables own the money; the 'turn_cost_recorded' event mirrors
+ * the finalized turn cost into pipeline_audit_events (joinable via trace_id /
+ * billing_group_id) so the quality dashboard and cost monitoring can read
+ * cost-per-turn without joining billing internals. Never throws: audit must
+ * not break billing.
+ */
+async function emitTurnCostAudit(
+  context: AiBillingTurnContext,
+  totals: TurnCostTotals,
+  callCount: number,
+  billingStatus: string,
+): Promise<void> {
+  try {
+    await appendAudit({
+      tenantId: context.village_id ?? '',
+      traceId: context.trace_id,
+      userId: context.wa_user_id ?? context.session_id ?? '',
+      channel: context.channel ?? 'whatsapp',
+      stage: 'SEND',
+      event: 'turn_cost_recorded',
+      payload: {
+        billing_group_id: context.billing_group_id,
+        input_tokens: totals.input_tokens,
+        output_tokens: totals.output_tokens,
+        total_tokens: totals.total_tokens,
+        call_count: callCount,
+        actual_cost_usd: Number(totals.actual_cost_usd.toFixed(8)),
+        adjusted_cost_usd: Number(totals.adjusted_cost_usd.toFixed(8)),
+        margin_usd: Number(totals.margin_usd.toFixed(8)),
+        billing_status: billingStatus,
+      },
+    });
+  } catch (err) {
+    logger.warn('[ai-turn-billing] turn_cost_recorded audit failed', {
+      billingGroupId: context.billing_group_id,
+      error: (err as Error)?.message ?? String(err),
+    });
+  }
+}
+
 export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
+  // Terminal statuses: 'billed' (legacy per-message path), 'accrued' (cost
+  // recorded, awaiting resolution), 'resolved' (consumed by a resolution),
+  // 'skipped_no_village'. Never reprocess.
   const existingBilling = await prisma.ai_message_billings.findUnique({
     where: { billing_group_id: context.billing_group_id },
   });
 
-  if (existingBilling?.status === 'billed' || existingBilling?.status === 'skipped_no_village') {
+  if (
+    existingBilling?.status === 'billed' ||
+    existingBilling?.status === 'accrued' ||
+    existingBilling?.status === 'resolved' ||
+    existingBilling?.status === 'skipped_no_village'
+  ) {
     return existingBilling;
   }
 
@@ -145,7 +215,9 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
     margin_usd: 0,
   });
 
-  const status = !context.village_id ? 'skipped_no_village' : 'pending';
+  // §10: accrue only — never debit here. The wallet moves exactly once per
+  // verified resolution via recordResolution().
+  const status = !context.village_id ? 'skipped_no_village' : 'accrued';
 
   const billing = await prisma.ai_message_billings.upsert({
     where: { billing_group_id: context.billing_group_id },
@@ -169,7 +241,7 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
       metadata_json: {
         usage_ids: usageRows.map(row => row.id),
       } as Prisma.InputJsonValue,
-      billed_at: status === 'pending' ? null : new Date(),
+      billed_at: status === 'accrued' ? null : new Date(),
     },
     update: {
       village_id: context.village_id ?? null,
@@ -190,60 +262,27 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
       metadata_json: {
         usage_ids: usageRows.map(row => row.id),
       } as Prisma.InputJsonValue,
-      billed_at: status === 'pending' ? null : new Date(),
+      billed_at: status === 'accrued' ? null : new Date(),
       error_message: null,
     },
   });
 
-  if (status !== 'pending') {
-    await markUsageRowsFinalized(context.billing_group_id, status, usageRows.map(row => row.id));
-    return billing;
-  }
+  await markUsageRowsFinalized(context.billing_group_id, status, usageRows.map(row => row.id));
+  await emitTurnCostAudit(context, totals, usageRows.length, status);
 
-  try {
-    const debitResult = await debitVillageWalletForMessageBilling({
+  // R9 anomaly detection (fire-and-forget, never blocks billing, never debits).
+  if (status === 'accrued' && context.village_id) {
+    const adjustedCostUsd = Number(totals.adjusted_cost_usd.toFixed(8));
+    void checkTurnCostAnomaly({
       villageId: context.village_id,
-      messageBillingId: billing.id,
-      adjustedCostUsd: billing.adjusted_cost_usd,
-      actualCostUsd: billing.actual_cost_usd,
-      marginUsd: billing.margin_usd,
-      metadata: {
-        billing_group_id: context.billing_group_id,
-        message_id: context.message_id ?? null,
-        trace_id: context.trace_id,
-        call_count: usageRows.length,
-        channel: context.channel ?? null,
-        session_id: context.session_id ?? null,
-        wa_user_id: context.wa_user_id ?? null,
-      } as Prisma.InputJsonValue,
-    });
-
-    const billedAt = new Date();
-    const updatedBilling = await prisma.ai_message_billings.update({
-      where: { id: billing.id },
-      data: {
-        status: 'billed',
-        ledger_entry_id: debitResult?.ledgerEntry.id ?? billing.ledger_entry_id,
-        billed_at: billedAt,
-        error_message: null,
-      },
-    });
-
-    await markUsageRowsFinalized(context.billing_group_id, 'billed', usageRows.map(row => row.id), billedAt);
-    return updatedBilling;
-  } catch (error: any) {
-    const status = error instanceof InsufficientAIWalletBalanceError
-      ? 'failed_insufficient_balance'
-      : 'failed';
-    await prisma.ai_message_billings.update({
-      where: { id: billing.id },
-      data: {
-        status,
-        error_message: error?.message || 'Message billing debit failed',
-      },
-    });
-    throw error;
+      billingGroupId: context.billing_group_id,
+      traceId: context.trace_id,
+      adjustedCostUsd,
+    }).catch(() => undefined);
+    void checkDailySpendAnomaly(context.village_id).catch(() => undefined);
   }
+
+  return billing;
 }
 
 async function markUsageRowsFinalized(

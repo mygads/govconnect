@@ -5,6 +5,7 @@ import {
   getUserHistory,
 } from './case-client.service';
 import { updateConversationUserProfile } from './channel-client.service';
+import { assertNotAborted } from '../pipeline/abort-guard';
 import { rememberMemoryEvent } from './hybrid-memory.service';
 import { handleCancellationRequest, handleComplaintCreation, handlePendingAddressConfirmation } from './complaint-handler';
 import { classifyConfirmation } from './confirmation-classifier.service';
@@ -57,6 +58,8 @@ import {
 } from './ump-utils';
 import { getAutoFillSuggestionsWithFallback, updateProfile } from './user-profile.service';
 import {
+  getImportantContacts,
+  type ImportantContact,
   isConfidentContactLookupResult as isConfidentContactLookupResultFromLookup,
   isContactDirectoryLookup,
   lookupImportantContacts,
@@ -106,6 +109,57 @@ export type PreAgentRouteResult =
   | { kind: 'handled'; result: ProcessMessageResult }
   | { kind: 'defer'; reason: string }
   | { kind: 'release_and_defer'; reason: string; releasedState: string[] };
+
+/**
+ * E3: Parse a correction message into draft field updates.
+ * Handles: "maksudnya X" (location), "bukan di X" (location),
+ * "bukan Y, tapi Z" (category), "salah, Z" (category).
+ */
+function parseDraftCorrection(message: string): { alamat?: string; kategori?: string } {
+  const trimmed = (message || '').trim();
+  const result: { alamat?: string; kategori?: string } = {};
+
+  // "bukan <old>, tapi <new>" -> category correction
+  const bukanTapi = trimmed.match(/bukan\s+[^,]+,\s*(?:tapi|melainkan)\s+(.+)$/i);
+  if (bukanTapi) {
+    result.kategori = bukanTapi[1].trim();
+    return result;
+  }
+
+  // "maksudnya <location>" / "maksud saya <location>" -> location correction
+  const maksudnya = trimmed.match(/(?:maksud(?:nya| saya|ku)?|yang\s+benar)\s+(.+)$/i);
+  if (maksudnya) {
+    const loc = maksudnya[1].trim();
+    // If it looks like a location (contains gang/jalan/rt/rw/desa/dusun), treat as alamat
+    if (/\b(gang|jalan|jl\.?|rt|rw|dusun|desa|kelurahan|depan|belakang|samping)\b/i.test(loc)) {
+      result.alamat = loc;
+    } else {
+      result.kategori = loc;
+    }
+    return result;
+  }
+
+  // "bukan di <location>" -> location correction
+  const bukanDi = trimmed.match(/bukan\s+di\s+(.+)$/i);
+  if (bukanDi) {
+    result.alamat = bukanDi[1].trim();
+    return result;
+  }
+
+  // "salah, <new>" / "ganti ke <new>" / "ubah ke <new>"
+  const ganti = trimmed.match(/(?:salah|ganti|ubah|rubah|koreksi|revisi)[,:]?\s+(?:ke\s+|jadi\s+)?(.+)$/i);
+  if (ganti) {
+    const val = ganti[1].trim();
+    if (/\b(gang|jalan|jl\.?|rt|rw|dusun|desa|kelurahan)\b/i.test(val)) {
+      result.alamat = val;
+    } else {
+      result.kategori = val;
+    }
+    return result;
+  }
+
+  return result;
+}
 
 function buildGuardResult(input: {
   startTime: number;
@@ -163,6 +217,11 @@ function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncer
     /^(ya|iya|yes)\s+(lanjut|boleh|setuju|batalkan|proses|silakan)$/i,
     /^(oke|ok|siap)\s+(ya|iya|lanjut|batalkan)$/i,
     /^boleh(\s+ya)?$/i,
+    // C2 fix: "ok saya mau bikin" / "ya mau lanjut" after a form-link offer
+    // is a clear affirmative. Safe here because this detector is only used
+    // in pending-offer/confirmation context.
+    /^(ok|oke|ya|iya|siap|boleh)\s+(saya\s+)?mau\s+(bikin|buat|lanjut|aju(kan)?|proses|daftar)/i,
+    /^saya\s+mau\s+(bikin|buat|lanjut|aju(kan)?)/i,
   ];
 
   const explicitNoPatterns = [
@@ -190,14 +249,14 @@ function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncer
 // Audit (2026-05-10): previously a bare "polisi" or "banjir" was enough to
 // route to emergency/complaint; this misrouted asks like "nomor polsek",
 // "program edukasi sampah", or "nomor KTP hilang".
-const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|jalan berlubang|jalan(?:\s+\w+){1,4}\s+(?:rusak|berlubang|amblas|ambles)|berlubang|banyak\s+lubang|lubang(?:\s+\w+){0,2}\s+(?:di jalan|jalan)|lampu(?:\s+\w+){0,2}\s+mati|lampu jalan|penerangan jalan|pju\s+mati|sampah menumpuk|sampah berserakan|drainase|selokan mampet|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|amblas|kecelaka+an|kebakaran|orang pingsan|ledakan)\b/i;
+const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|dalan(?:e)? rusak|dalan(?:e)? berlubang|jalan berlubang|jalan(?:\s+\w+){1,4}\s+(?:rusak|berlubang|amblas|ambles)|berlubang|banyak\s+lubang|lubang(?:\s+\w+){0,2}\s+(?:di jalan|jalan|dalan)|lampu(?:\s+\w+){0,2}\s+mati|lampu jalan|penerangan jalan|pju\s+mati|sampah menumpuk|sampah berserakan|drainase|selokan mampet|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|amblas|kecelaka+an|kebakaran|ledakan|air\s+pam\s+mati|pam\s+mati|air\s+mati|air\s+macet|air\s+tidak\s+(?:keluar|mengalir)|sound\s*system|berisik|bising|kebisingan|hajatan.*(?:berisik|bising|kenceng)|pungli|pungutan\s+liar|dimintai[n]?\s+uang|oknum.*(?:uang|minta)|kambing|domba|ternak(?:\s+lepas)?|hewan\s+ternak|pelayanan\s+(?:lambat|buruk)|nggak\s+jadi-jadi|tidak\s+kunjung\s+(?:jadi|selesai)|petugas.*susah\s+ditemui|petugas\s+tidak\s+ada|komplain|mengeluh|keluhan\s+tentang)\b/i;
 const COMPLAINT_INFO_QUERY_PATTERN = /\b(pengaduan|keluhan|laporan)\b/i;
 const COMPLAINT_INFO_HINT_PATTERN = /\b(apa|bagaimana|gimana|jelaskan|contoh|format|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i;
-const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengantar)\b/i;
-const EMERGENCY_KEYWORDS = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|pencurian|darurat|bencana|longsor|gempa|tsunami|evakuasi|ledakan)\b/i;
+const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|sku|suket|skd|layanan|permohonan|pengantar)\b/i;
+const EMERGENCY_KEYWORDS = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|orang pingsan|pingsan|kecelakaan|pencurian|darurat|bencana|banjir|longsor|gempa|tsunami|evakuasi|ledakan|air masuk rumah|tenggelam)\b/i;
 
 /** Active-event signal: user is *reporting* something happening now. */
-const ACTIVE_EVENT_SIGNAL = /\b(tolong|segera|help|help\s*me|bantu|bantuin|terjadi|sedang\s+terjadi|barusan|baru\s+saja|lagi|ada\s+(?:yang|yg)|di\s*sini\s+ada|telah\s+terjadi|baru\s+terjadi|kejadian|ya\s*allah|ya\s*tuhan|astaga|gawat|bahaya|amblas)\b/i;
+const ACTIVE_EVENT_SIGNAL = /\b(tolong|segera|help|help\s*me|bantu|bantuin|terjadi|sedang\s+terjadi|barusan|baru\s+saja|lagi|ada(\s+(?:yang|yg))?|di\s*sini\s+ada|telah\s+terjadi|baru\s+terjadi|kejadian|ya\s*allah|ya\s*tuhan|astaga|gawat|bahaya|amblas)\b/i;
 
 /** Explicit "I want to report" — this alone is enough to enter complaint flow. */
 const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|mau lapor|saya lapor|saya mau lapor|buat laporan|buat pengaduan|laporkan|aduan)\b/i;
@@ -221,13 +280,58 @@ export function matchesComplaintIncident(normalized: string): boolean {
     return false;
   }
   // Guard: if the user is asking for a contact number, not reporting.
-  if (CONTACT_DIRECTORY_SIGNAL.test(normalized)) return false;
+  // [P1 FIX] "no 15" dalam alamat (jl merdeka no 15) bukan query kontak.
+  // Hanya anggap kontak jika tidak ada indikator alamat.
+  const hasAddressIndicator = /\b(jl|jalan|rt|rw|dusun|desa|gang|nomor rumah)\b/i.test(normalized);
+  if (CONTACT_DIRECTORY_SIGNAL.test(normalized) && !hasAddressIndicator) return false;
   // A specific incident keyword that survived the informational + contact guards is
   // self-evidently a complaint ("lampu jalan mati seminggu", "sampah menumpuk bau"),
   // even without an explicit "lapor" verb or urgency word. Route it to the
   // deterministic complaint FSM rather than the flaky agent path. The FSM only asks
   // for a location next, so a rare false positive is low-harm (user can ignore).
   return true;
+}
+
+/**
+ * [P1-3 FIX] Multi-intent detection.
+ * Mendeteksi ketika user menyebut 2+ hal berbeda dalam satu pesan.
+ */
+const MULTI_INTENT_COMPLAINT_RE = /\b(jalan\s+rusak|berlubang|lampu\s+mati|sampah\s+(?:menumpuk|numpuk|bau)|air\s+(?:mati|macet)|banjir|drainase)\b/gi;
+const MULTI_INTENT_SERVICE_RE = /\b(syarat|persyaratan|biaya|berapa\s+lama|\bktp\b|\bkk\b|kartu\s+keluarga|sktm|domisili|surat\s+keterangan|akta\s+kelahiran)\b/i;
+
+export interface MultiIntentDetection {
+  isMulti: boolean;
+  intents: string[];
+  topics: string[];
+}
+
+export function detectMultiIntent(message: string): MultiIntentDetection {
+  const text = message || '';
+  const intents: string[] = [];
+  const topics: string[] = [];
+
+  const complaintMatches = text.match(MULTI_INTENT_COMPLAINT_RE);
+  if (complaintMatches && complaintMatches.length > 0) {
+    intents.push('complaint');
+    topics.push(...complaintMatches.map(m => m.trim()));
+  }
+  if (MULTI_INTENT_SERVICE_RE.test(text)) {
+    intents.push('service_info');
+    const svcMatch = text.match(/\b(ktp|kk|kartu\s+keluarga|sktm|domisili|surat\s+keterangan\s+\w+|akta\s+kelahiran)\b/gi);
+    if (svcMatch) topics.push(...svcMatch.map(m => m.trim()));
+  }
+
+  const uniqueIntents = [...new Set(intents)];
+  const uniqueTopics = [...new Set(topics.map(t => t.toLowerCase()))];
+
+  const isMulti = uniqueIntents.length >= 2 || uniqueTopics.length >= 2;
+  return { isMulti, intents: uniqueIntents, topics: [...new Set(topics)] };
+}
+
+export function buildMultiIntentResponse(detection: MultiIntentDetection): string {
+  const items = detection.topics.slice(0, 5).map((t, i) => `${i + 1}. ${t}`);
+  if (items.length === 0) items.push('1. Topik yang disebutkan');
+  return `Wah, sepertinya ada beberapa hal yang ingin dibahas sekaligus ya, Pak/Bu. Biar saya bantu satu per satu:\n\n${items.join('\n')}\n\nMau mulai dari yang mana dulu? Balas dengan nomornya ya.`;
 }
 
 /**
@@ -245,7 +349,8 @@ function matchesActiveEmergency(normalized: string): boolean {
   }
   if (!EMERGENCY_KEYWORDS.test(normalized)) return false;
   // Rare severe-event keywords carry enough signal by themselves.
-  if (/\b(kebakaran|ledakan|gempa|tsunami|longsor)\b/i.test(normalized)) return true;
+  // [FIX] pingsan/orang pingsan adalah emergency medis, tidak butuh signal tambahan
+  if (/\b(kebakaran|ledakan|gempa|tsunami|longsor|pingsan|orang\s+pingsan)\b/i.test(normalized)) return true;
   return ACTIVE_EVENT_SIGNAL.test(normalized);
 }
 
@@ -273,6 +378,14 @@ const OUT_OF_SCOPE_STRONG_SIGNALS = [
   // Math tutoring explicit
   /\b(kerjain|bantu|tolong)\s+(soal|pr|tugas)\s+(matematika|fisika|kimia)\b/i,
   /^\s*\d+\s*[+\-*/x]\s*\d+\s*(?:=\s*)?\s*(?:\?|berapa|hasil|sama dengan|result|ya)?[\s?.]*$/i,
+  // [P1-2 FIX] Layanan pemerintah pusat - BUKAN wewenang desa
+  /\b(perpanjang|bikin|buat|urus|pengajuan)\s+(sim|surat\s+izin\s+mengemudi)\b/i,
+  /\bsim\b.*\b(bisa|dapat|diurus|dibuat|nggak|ngga|tidak)\b/i,
+  /\b(paspor|passport)\b/i,
+  /\b(stnk|bpkb)\b/i,
+  /\bbpjs\b/i,
+  /\b(npwp)\b/i,
+  /\bsertifikat\s+(tanah|rumah)\b/i,
 ];
 const SERVICE_INFORMATIONAL_LINK_PATTERN = /\b(ada\s+(link|tautan|form|formulir)(?:nya)?|(link|tautan|form|formulir)(?:nya)?\s+ada|link\s+online|form\s+online|tautan\s+online)\b/i;
 const SERVICE_EXPLICIT_ACTION_PATTERN = /\b((kirim(?:kan)?|tolong kirim|minta|mana)\s+(link|tautan|form|formulir)(?:nya)?|(link|tautan|form|formulir)(?:nya)?\s+(mana|sekarang|saja)|lanjut(?:kan)?\s+(ajukan|pengajuan|permohonan)|ajukan(?:kan)?\s+(layanan|permohonan|pengajuan)|buat(?:kan)?\s+(pengajuan|permohonan)|isi\s+formulir)\b/i;
@@ -299,6 +412,31 @@ function isPendingServiceFollowUp(message: string): boolean {
 
 function isExplicitServiceActionRequest(message: string): boolean {
   return SERVICE_EXPLICIT_ACTION_PATTERN.test((message || '').toLowerCase());
+}
+
+// J1/J3/J4: detect explicit human handoff requests (mirrors unified processor)
+function isExplicitHumanHandoffRequest(message: string): boolean {
+  const text = (message || '').toLowerCase().trim();
+  if (!text) return false;
+  return [
+    /\bcs\s+manusia\b/,
+    /\b(?:petugas|admin|operator)\s+(?:asli|manusia|desa)\b/,
+    /^operator[\s!.,?]*$/,
+    /\b(?:minta|mohon)\s+(?:petugas|admin|operator|manusia)\b/,
+    /\b(?:minta|mohon|tolong|ingin|mau|butuh|perlu)\b.*\b(?:dibantu|disambungkan|dialihkan|diteruskan|bicara|ngobrol|ngomong|chat)\b.*\b(?:petugas|admin|operator|manusia|orang)\b/,
+    /\b(?:hubungkan|sambungkan|disambungkan|alih(?:kan)?|dialihkan|teruskan|diteruskan)\b.*\b(?:petugas|admin|operator|manusia|orang)\b/,
+    /\b(?:mau|ingin|butuh|perlu)\s+(?:orang|manusia|petugas|admin|operator)\b/,
+    // [P0#3 FIX] "mau ngomong sama orang", "panggilkan petugas"
+    /\bmau\s+(?:bicara|ngomong|ngobrol)\s+(?:sama|dengan|ke)\s+(?:orang|petugas|admin|operator|manusia)\b/,
+    /\b(?:panggilkan|panggil|hadirkan)\s+(?:petugas|admin|operator|orang|manusia)\b/,
+    // [P1 FIX] "panggilkan manusia", "mau sama orang aja", "bisa bicara dengan petugasnya"
+    /\b(?:panggilkan|panggil)\s+(?:segera\s+)?(?:manusia|orang)\b.*(?:sekarang|dong|aja|saja)?/,
+    /\bmau\s+(?:sama|dengan)\s+(?:orang|manusia|petugas)\b/,
+    /\b(?:bisa|boleh)\s+(?:bicara|ngomong)\s+(?:dengan|sama)\s+(?:petugas|admin|operator)(?:nya|kah)?\b/,
+    // [P1 FIX] Frustrasi: "AI bodoh!", "ribet amat"
+    /\b(?:ai|bot|kamu|kau)\s+(?:bodoh|bego|goblok|tolol|lemot)\b/,
+    /\bribet\s+(?:amat|banget|sekali)\b.*\b(?:orang|manusia|petugas)\b/,
+  ].some((pattern) => pattern.test(text));
 }
 
 function isInformationalServiceLinkInquiry(message: string): boolean {
@@ -352,7 +490,34 @@ function isClearlyDifferentIntent(message: string): boolean {
   if (VILLAGE_PROFILE_TOPIC_PATTERN.test(normalized)) return true;
   if (isNonOfficeLocalKnowledgeQuery(message)) return true;
   if (STATUS_CANCEL_EDIT_TOPIC_PATTERN.test(normalized)) return true;
-  if (CORRECTION_TOPIC_SHIFT_PATTERN.test(normalized)) return true;
+  // [P1-5 FIX] "maksudnya X" / "bukan, maksudnya Y":
+  // - Jika X/Y adalah layanan yang BERBEDA dari yang sedang dibahas -> TOPIC SHIFT (clear state)
+  // - Jika X/Y adalah detail tambahan untuk topik yang sama -> CORRECTION (pertahankan state)
+  // Deteksi: jika pesan menyebut nama layanan spesifik yang berbeda, anggap topic shift.
+  // (Fix E4 dipertahankan: "eh maksudnya jembatan rusak" saat lapor jalan = koreksi lokasi,
+  //  bukan ganti topik, karena keduanya complaint infrastruktur.)
+  if (CORRECTION_TOPIC_SHIFT_PATTERN.test(normalized)) {
+    // Ekstrak layanan yang disebut dalam koreksi
+    const serviceMentions = normalized.match(/\b(ktp|kk|kartu keluarga|sktm|surat keterangan usaha|sku|domisili|surat domisili|akta kelahiran|surat pindah|izin keramaian|surat kematian|pengantar skck)\b/gi) || [];
+    // Jika menyebut layanan spesifik, kemungkinan besar ingin ganti topik
+    // (kecuali keduanya complaint infrastruktur yang mirip)
+    if (serviceMentions.length > 0) {
+      // Cek apakah ini complaint-to-complaint (jalan -> jembatan) = koreksi
+      const isComplaintCorrection = /\b(jalan|jembatan|rusak|lampu|mati|air|sampah|banjir|drainase|got|selokan)\b/i.test(normalized)
+        && !/\b(ktp|kk|surat|sktm|domisili|akta)\b/i.test(normalized);
+      if (isComplaintCorrection) return false;
+      // Service-to-service yang berbeda = topic shift
+      return true;
+    }
+    const complaintKeywords = /\b(jalan|jembatan|rusak|lampu|mati|air|sampah|banjir|drainase|got|selokan|posyandu|bansos|pkh|blt)\b/i;
+    if (complaintKeywords.test(normalized)) return false;
+    return true;
+  }
+  // [P1-5 FIX] "kalau X?" / "bagaimana dengan X?" / "kalo X gimana?" setelah bahas topik lain
+  // = user ingin ganti topik ke X. Deteksi jika X adalah layanan spesifik.
+  const topicSwitchPattern = /\b(kalau|kalo|bagaimana dengan|gimana dengan|terus kalau)\s+(surat|ktp|kk|sktm|domisili|akta|izin|pengantar)\b/i;
+  if (topicSwitchPattern.test(normalized)) return true;
+
   return /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|lapor jalan|lampu mati|sampah|darurat|kebakaran|kecelaka+an|pohon tumbang)\b/i.test(normalized);
 }
 
@@ -641,6 +806,14 @@ export function decideFastIntent(input: {
   // "badhe damel KK"). When the classifier is null (timeout/lane down) or
   // low-confidence, we fall through to the deterministic regex branches, so
   // there is never a stall — regex is the safety net, NLU is the lead.
+  //
+  // [P0#1 FIX] Safety-critical override: komplain serius (pungli/oknum) BYPASS
+  // NLU dan agent LLM — LLM mengembalikan output kosong untuk konten sensitif,
+  // langsung ke complaint FSM deterministik.
+  const strongComplaintEarly = /\b(pungli|pungutan\s+liar|dimintai[n]?\s+uang|oknum)\b/i.test(normalized);
+  if (strongComplaintEarly) {
+    return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: 'handle_pre_agent', confidence: 'high', mixedSignals: false, reasons: ['strong_complaint_safety_override'], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
+  }
   if (input.unified?.routing_intent && (input.unified.routing_confidence ?? 0) >= 0.7) {
     const nluIntent = input.unified.routing_intent;
     const regexAgrees = (
@@ -688,11 +861,52 @@ export function decideFastIntent(input: {
     mixedSignals,
     stateAffinity: stateActive ? 'unclear' : undefined,
     reasons: input.unified?.reason ? [`classifier:${input.unified.reason}`] : ['no_hard_route'],
+    // Hint saja, bukan pengganti klasifikasi: bila pesan menyebut kata kunci layanan
+    // (mis. SKU/SKTM), beri tahu agent agar mempertimbangkan get_service_info.
+    allowedToolHints: serviceSignal ? ['get_service_info', 'search_knowledge'] : undefined,
   });
 }
 
 function buildOutOfScopeRedirect(): string {
   return 'Maaf Pak/Bu, saya fokus membantu layanan desa dan penggunaan GovConnect. Kalau ada pertanyaan soal administrasi desa, pengaduan, status layanan, atau cara pakai GovConnect, saya bantu ya.';
+}
+
+/**
+ * [P1-2 FIX] Penolakan jujur dan spesifik untuk layanan pemerintah pusat.
+ */
+const GOVT_SERVICE_REDIRECTS: Array<{ pattern: RegExp; response: string }> = [
+  {
+    pattern: /\bsim\b|surat\s+izin\s+mengemudi/i,
+    response: 'Maaf Pak/Bu, perpanjangan/pembuatan SIM bukan wewenang desa. Silakan urus di Polres terdekat atau layanan SIM Keliling/Samsat.',
+  },
+  {
+    pattern: /\bpaspor|passport\b/i,
+    response: 'Maaf Pak/Bu, pembuatan paspor bukan wewenang desa. Silakan urus di Kantor Imigrasi terdekat atau via aplikasi M-Paspor.',
+  },
+  {
+    pattern: /\bstnk|bpkb\b/i,
+    response: 'Maaf Pak/Bu, pengurusan STNK/BPKB bukan wewenang desa. Silakan urus di Samsat terdekat.',
+  },
+  {
+    pattern: /\bbpjs\b/i,
+    response: 'Maaf Pak/Bu, pengurusan BPJS bukan wewenang desa. Silakan hubungi kantor BPJS terdekat atau via aplikasi Mobile JKN.',
+  },
+  {
+    pattern: /\bnpwp\b/i,
+    response: 'Maaf Pak/Bu, pengurusan NPWP bukan wewenang desa. Silakan urus di Kantor Pelayanan Pajak (KPP) terdekat.',
+  },
+  {
+    pattern: /\bsertifikat\s+(tanah|rumah)\b/i,
+    response: 'Maaf Pak/Bu, penerbitan sertifikat tanah bukan wewenang desa (wewenang BPN/ATR). Desa bisa membantu surat keterangan kepemilikan tanah sebagai dokumen pendukung.',
+  },
+];
+
+export function buildGovtServiceRedirect(message: string): string | null {
+  const text = message || '';
+  for (const { pattern, response } of GOVT_SERVICE_REDIRECTS) {
+    if (pattern.test(text)) return response;
+  }
+  return null;
 }
 
 interface PendingServiceInfoReplyContext {
@@ -946,15 +1160,71 @@ export function tryHandleOutOfScopeGuard(input: {
   traceId: string;
   startTime: number;
 }): ProcessMessageResult | null {
-  if (isOutOfScopeGeneralQuestion(input.message)) {
+  // [P1-2 FIX] Cek layanan pemerintah pusat DULU, independen dari isOutOfScopeGeneralQuestion.
+  // "di desa bisa perpanjang SIM nggak?" sering terklasifikasi SERVICE_INFO,
+  // sehingga gate shouldHardBlockOutOfScope tidak terpicu.
+  const govtRedirectEarly = buildGovtServiceRedirect(input.message);
+  if (govtRedirectEarly) {
     return buildGuardResult({
       startTime: input.startTime,
       traceId: input.traceId,
-      response: buildOutOfScopeRedirect(),
+      response: govtRedirectEarly,
       intent: 'QUESTION',
     });
   }
 
+  if (isOutOfScopeGeneralQuestion(input.message)) {
+    const govtRedirect = buildGovtServiceRedirect(input.message);
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response: govtRedirect || buildOutOfScopeRedirect(),
+      intent: 'QUESTION',
+    });
+  }
+
+  return null;
+}
+
+/**
+ * P1-4: NIK format validation guard.
+ *
+ * When a user provides a NIK (e.g. "NIK saya 12345"), validate that it is
+ * exactly 16 numeric digits. If invalid, respond with a correction request
+ * instead of letting the message fall through to complaint classification.
+ *
+ * Returns a guard result if the message contains an invalid NIK, null otherwise.
+ */
+export function tryHandleNikValidation(input: {
+  message: string;
+  traceId: string;
+  startTime: number;
+}): ProcessMessageResult | null {
+  const message = input.message || '';
+
+  // Detect NIK mention: "nik", "nomor induk kependudukan", "no ktp", etc.
+  const nikMentionPattern = /\b(nik|nomor\s+induk\s+kependudukan|no\.?\s*ktp|nomor\s+ktp)\b/i;
+  if (!nikMentionPattern.test(message)) return null;
+
+  // Extract all digits from the message
+  const digitsOnly = (message.match(/\d/g) || []).join('');
+
+  // If no digits found, let it fall through (user might be asking about NIK)
+  if (!digitsOnly) return null;
+
+  // Validate: must be exactly 16 digits
+  const isValidNik = /^\d{16}$/.test(digitsOnly);
+
+  if (!isValidNik) {
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response: 'Mohon maaf Pak/Bu, NIK yang Anda masukkan tidak valid. NIK harus terdiri dari 16 digit angka.\n\nSilakan periksa kembali dan kirim ulang NIK Anda.',
+      intent: 'IDENTITY_CHECK',
+    });
+  }
+
+  // Valid NIK format — let it proceed to normal handling
   return null;
 }
 
@@ -1005,11 +1275,62 @@ const THANKS_ONLY_PATTERN = /^(terima\s*kasih|makasih|maksih|mksh|thx|thanks?|tq
 
 interface GreetingShortcutInput {
   message: string;
+  userId?: string;
   userName?: string | null;
   villageName?: string | null;
   traceId: string;
   startTime: number;
   hasActiveState: boolean;
+}
+
+/**
+ * [P1-4 FIX] Spam guard: lacak pesan identik berulang dari user yang sama.
+ * Jika user mengirim pesan yang sama 3+ kali dalam 60 detik, anggap spam
+ * dan berikan respons yang meminta klarifikasi (bukan mengulang template).
+ */
+interface SpamTrackerEntry {
+  lastMessage: string;
+  count: number;
+  firstSeen: number;
+  warned: boolean;
+}
+
+const spamTracker = new Map<string, SpamTrackerEntry>();
+const SPAM_WINDOW_MS = 60_000; // 60 detik
+const SPAM_THRESHOLD = 3; // 3x pesan identik = spam
+
+function normalizeForSpam(text: string): string {
+  return (text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function checkSpamGuard(userId: string, message: string): { isSpam: boolean; count: number } {
+  if (!userId || !message) return { isSpam: false, count: 0 };
+
+  const normalized = normalizeForSpam(message);
+  // Hanya lacak pesan pendek (sapaan, dll). Pesan panjang tidak dianggap spam.
+  if (normalized.length > 40) return { isSpam: false, count: 0 };
+
+  const now = Date.now();
+  const key = `${userId}`;
+  const entry = spamTracker.get(key);
+
+  if (!entry || entry.lastMessage !== normalized || (now - entry.firstSeen) > SPAM_WINDOW_MS) {
+    // Pesan baru atau window expired, reset
+    spamTracker.set(key, { lastMessage: normalized, count: 1, firstSeen: now, warned: false });
+    return { isSpam: false, count: 1 };
+  }
+
+  entry.count += 1;
+  const isSpam = entry.count >= SPAM_THRESHOLD;
+  return { isSpam, count: entry.count };
+}
+
+export function clearSpamTracker(userId?: string): void {
+  if (userId) {
+    spamTracker.delete(userId);
+  } else {
+    spamTracker.clear();
+  }
 }
 
 /**
@@ -1024,6 +1345,26 @@ export function tryHandleGreetingShortcut(
   if (input.hasActiveState) return null;
   const normalized = (input.message || '').trim().toLowerCase();
   if (!normalized || normalized.length > 40) return null;
+
+  // [P1-4 FIX] Spam guard: jika pesan identik 3+ kali dalam 60 detik,
+  // jangan ulangi template, minta klarifikasi kebutuhan
+  if (input.userId) {
+    const spamCheck = checkSpamGuard(input.userId, input.message);
+    if (spamCheck.isSpam) {
+      return buildGuardResult({
+        startTime: input.startTime,
+        traceId: input.traceId,
+        response: 'Sepertinya pesannya terkirim beberapa kali, Pak/Bu. Ada yang bisa saya bantu? Silakan tulis kebutuhan Anda, misalnya "mau bikin KTP" atau "lapor jalan rusak".',
+        intent: 'GREETING',
+        guardrail: {
+          stage: 'pre_agent_shortcut',
+          type: 'spam_guard',
+          action: 'deflect',
+          reason: `repeated_message_${spamCheck.count}x`,
+        },
+      });
+    }
+  }
 
   const isGreeting = GREETING_ONLY_PATTERN.test(normalized);
   const isThanks = THANKS_ONLY_PATTERN.test(normalized);
@@ -1345,6 +1686,8 @@ interface PendingOfferInput {
   startTime: number;
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   runWithMicroBudget: MicroBudgetRunner;
+  /** P1-5: per-turn abort signal — checked before every mutation write. */
+  signal?: AbortSignal;
 }
 
 export async function tryHandlePendingOffers(
@@ -1359,6 +1702,7 @@ export async function tryHandlePendingOffers(
     startTime,
     sideEffectMode,
     runWithMicroBudget,
+    signal,
   } = input;
 
   const pendingCancel = await getPendingCancelConfirmationWithFallback(userId);
@@ -1383,6 +1727,8 @@ export async function tryHandlePendingOffers(
       setPendingCancelConfirmation(userId, recoveredCancel);
 
       if (recoveredCancel.type === 'laporan') {
+        // P1-5: fail-closed — no write after the turn was aborted.
+        assertNotAborted(signal, 'cancel_complaint');
         const result = await cancelComplaint(
           recoveredCancel.id,
           buildChannelParams(channel, userId),
@@ -1399,6 +1745,8 @@ export async function tryHandlePendingOffers(
         });
       }
 
+      // P1-5: fail-closed — no write after the turn was aborted.
+      assertNotAborted(signal, 'cancel_service_request');
       const serviceResult = await cancelServiceRequest(
         recoveredCancel.id,
         buildChannelParams(channel, userId),
@@ -1574,7 +1922,7 @@ export async function tryHandlePendingOffers(
         ...(pendingEmergency.village_id ? { village_id: pendingEmergency.village_id } : {}),
       },
       reply_text: '',
-    }, message);
+    }, message, undefined, { signal, isUrgentOverride: true });
     const normalized = normalizeHandlerResult(complaintResult);
     return buildGuardResult({
       startTime,
@@ -1614,6 +1962,8 @@ interface LatePreAgentInput {
   runWithMicroBudget: MicroBudgetRunner;
   tracker: TrackerLike;
   notifyStage: (stage: string, progress: number) => void;
+  /** P1-5: per-turn abort signal — checked before every mutation write. */
+  signal?: AbortSignal;
 }
 
 export async function tryHandleLatePreAgentState(
@@ -1630,12 +1980,104 @@ export async function tryHandleLatePreAgentState(
     runWithMicroBudget,
     tracker,
     notifyStage,
+    signal,
   } = input;
 
   const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
   const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
   // Extract the latest user turn from a potentially batched/timestamped message
   const latestTurn = message.split(/\n/).pop()?.trim().replace(/^\[\d{2}[.:]\d{2}[.:]\d{2}\]\s*/, '').trim() || message.trim();
+
+  // J1/J3/J4: explicit human handoff request — handle before any draft logic
+  // can hijack the turn.
+  if (isExplicitHumanHandoffRequest(latestTurn)) {
+    // Release any active draft so it doesn't block the handoff
+    try {
+      clearPendingComplaintData(userId);
+      clearPendingAddressRequest(userId);
+    } catch {}
+    // J2 fix: set durable HANDOFF_PENDING state via startTakeoverForUser
+    // (previously the pre-agent bypassed the state machine entirely).
+    try {
+      const { startTakeoverForUser } = await import('./channel-client.service');
+      await startTakeoverForUser(userId, {
+        village_id: villageId,
+        channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+        admin_id: 'system-auto-handoff',
+        admin_name: 'Petugas Desa',
+        reason: 'user_requested_human_agent',
+        enrichment: {
+          intent: 'TAKEOVER',
+          last_user_message: latestTurn,
+          conversation_summary: null,
+          escalation_reason: 'user_requested_human_agent',
+          channel,
+          village_id: villageId || null,
+        },
+      });
+    } catch (err) {
+      logger.warn('pre-agent handoff: startTakeoverForUser failed', { userId, error: String(err) });
+    }
+    tracker.complete();
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: 'Baik, percakapan ini kami teruskan ke petugas agar dibantu lebih lanjut. Mohon tunggu sebentar ya.',
+      intent: 'TAKEOVER',
+      guardrail: {
+        stage: 'pre_agent_handoff',
+        type: 'explicit_handoff_request',
+        action: 'handoff_started',
+        reason: 'user_requested_human_agent',
+      },
+    });
+  }
+
+  // C1: explicit "kirim link formulirnya" without a pending offer — resolve
+  // the service from conversation history (last discussed service).
+  if (isExplicitServiceActionRequest(latestTurn)) {
+    try {
+      const { deriveLastDiscussedServiceContext } = await import('./ump-utils');
+      const hist = await fetchConversationHistoryFromChannel(userId, villageId);
+      const svcCtx = deriveLastDiscussedServiceContext(hist || []);
+      if (svcCtx.serviceName) {
+        tracker.preparing();
+        notifyStage('preparing', 80);
+        const linkReply = await handleServiceRequestCreation(userId, channel, {
+          intent: 'CREATE_SERVICE_REQUEST',
+          fields: {
+            service_name: svcCtx.serviceName,
+            service_query: svcCtx.serviceName,
+            _original_message: svcCtx.serviceName,
+            ...(villageId ? { village_id: villageId } : {}),
+          },
+          reply_text: '',
+        });
+        const normalized = normalizeHandlerResult(linkReply);
+        tracker.complete();
+        // Only return if we got a real link response, not an error
+        if (normalized.replyText && !/tidak ditemukan|sebutkan nama layanan/i.test(normalized.replyText)) {
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: normalized.replyText,
+            guidanceText: normalized.guidanceText,
+            intent: 'CREATE_SERVICE_REQUEST',
+            guardrail: {
+              stage: 'pre_agent_service_link',
+              type: 'service_link_from_history',
+              action: 'created',
+              reason: 'explicit_action_with_history_context',
+              details: { serviceName: svcCtx.serviceName },
+            },
+          });
+        }
+      }
+    } catch (err: any) {
+      logger.debug('[PreAgent] service link from history failed', { error: err?.message });
+    }
+    // No service in history — fall through to agent for clarification.
+  }
 
   // Early cancel-confirmation shortcut: if user sends bare YA on WA and there's
   // a recent cancel request in history, execute the cancellation immediately
@@ -1660,6 +2102,8 @@ export async function tryHandleLatePreAgentState(
       notifyStage('preparing', 80);
 
       if (recentCode.startsWith('LAP-')) {
+        // P1-5: fail-closed — no write after the turn was aborted.
+        assertNotAborted(signal, 'cancel_complaint');
         const result = await cancelComplaint(recentCode, buildChannelParams(channel, userId), undefined);
         tracker.complete();
         return buildGuardResult({
@@ -1671,6 +2115,8 @@ export async function tryHandleLatePreAgentState(
         });
       }
 
+      // P1-5: fail-closed — no write after the turn was aborted.
+      assertNotAborted(signal, 'cancel_service_request');
       const serviceResult = await cancelServiceRequest(recentCode, buildChannelParams(channel, userId), undefined);
       tracker.complete();
       return buildGuardResult({
@@ -1723,6 +2169,7 @@ export async function tryHandleLatePreAgentState(
       pendingConfirm,
       channel,
       mediaUrl,
+      { signal },
     );
     if (confirmResult) {
       return buildGuardResult({
@@ -1734,8 +2181,43 @@ export async function tryHandleLatePreAgentState(
     }
   }
 
+  // [TOPIC RESUME] "balik ke ktp tadi", "lanjut lapor tadi"
+  const resumePattern = /\b(balik|kembali|lanjut|terus)(kan)?\s+(ke\s+)?(.+?)\s+tadi\b/i;
+  const resumeMatch = message.match(resumePattern);
+  if (resumeMatch) {
+    const { peekTopic } = await import('./ump-state');
+    const prev = peekTopic(userId);
+    if (prev) {
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response: `Baik, kita kembali ke topik "${prev.topic}". Ada yang ingin ditanyakan atau dilanjutkan?`,
+        intent: prev.intent as any,
+      });
+    }
+  }
+
   const pendingAddr = await getPendingAddressRequestWithFallback(userId);
   if (pendingAddr) {
+    // [P2 FIX] Resolusi pronoun: jika pesan mengandung "itu"/"ini"/"tersebut" dan ada
+    // draft aktif, anggap sebagai deskripsi tambahan untuk draft, bukan alamat baru.
+    const hasPronoun = /\b(itu|ini|tersebut)\b/i.test(message);
+    const isElliptical = hasPronoun && message.trim().split(/\s+/).length <= 8;
+    if (isElliptical && pendingAddr.kategori) {
+      const { setPendingAddressRequest } = await import('./ump-state');
+      const updatedDeskripsi = `${pendingAddr.deskripsi} ${message.trim()}`.trim();
+      setPendingAddressRequest(userId, {
+        ...pendingAddr,
+        deskripsi: updatedDeskripsi,
+        timestamp: Date.now(),
+      });
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response: `Baik, saya catat tambahan untuk laporan ${pendingAddr.kategori}: "${message.trim()}". Mohon sebutkan lokasi spesifiknya (RT/RW atau patokan) ya Pak/Bu.`,
+        intent: 'CREATE_COMPLAINT',
+      });
+    }
     const { decideAddressResume } = await import('./complaint-fsm.service');
     const decision = await decideAddressResume({
       userId,
@@ -1745,14 +2227,80 @@ export async function tryHandleLatePreAgentState(
     });
 
     if (decision.action === 'interrupt') {
-      clearPendingAddressRequest(userId);
+      // E1/E2/E3: only release the draft for definitive topic changes.
+      // For correction/question/frustration/handoff, keep the draft so the
+      // agent can resume it with context instead of asking to repeat all.
+      const releaseReasons = ['explicit_cancel', 'service_info_switch', 'status_lookup'];
+      if (releaseReasons.includes(decision.reason)) {
+        clearPendingAddressRequest(userId);
+      }
       // Fall through so the rest of the router (contact lookup, status, etc.)
       // or the agent can handle this turn.
-      logger.info('🧭 complaint-fsm: pending address released due to interrupt', {
+      logger.info('🧭 complaint-fsm: interrupt during pending address', {
         userId,
         reason: decision.reason,
+        draftReleased: releaseReasons.includes(decision.reason),
         messagePreview: message.substring(0, 60),
       });
+      // E1 fix: answer timeline questions in draft context (same as pending-identity).
+      if (decision.reason === 'question' && !releaseReasons.includes(decision.reason)) {
+        const draftSummary = [
+          pendingAddr.kategori,
+          pendingAddr.deskripsi ? `- ${pendingAddr.deskripsi}` : '',
+        ].filter(Boolean).join(' ');
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: `Untuk laporan ${draftSummary || 'tersebut'}, saya belum bisa pastikan jadwalnya karena saya masih butuh lokasi kejadiannya dulu. Setelah laporan lengkap dan masuk, Bapak/Ibu akan dapat nomor pelacakan untuk cek status. Boleh sebutkan lokasinya (RT/RW atau patokan)?`,
+          intent: 'CREATE_COMPLAINT',
+        });
+      }
+      // E3 fix: for pending-address, a "correction" like "maksudnya gang mawar"
+      // is actually the user PROVIDING the address. Handle as resume directly.
+      if (decision.reason === 'correction' && !releaseReasons.includes(decision.reason)) {
+        const corrected = parseDraftCorrection(message);
+        if (corrected.alamat) {
+          clearPendingAddressRequest(userId);
+          if (mediaUrl) addPendingPhoto(userId, mediaUrl);
+          const complaintResult = await handleComplaintCreation(userId, channel, {
+            fields: {
+              village_id: pendingAddr.village_id,
+              kategori: pendingAddr.kategori,
+              deskripsi: pendingAddr.deskripsi,
+              alamat: corrected.alamat,
+            },
+          }, message, undefined, { signal });
+          const normalized = normalizeHandlerResult(complaintResult);
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: normalized.replyText,
+            contacts: normalized.contacts,
+            intent: 'CREATE_COMPLAINT',
+            guardrail: {
+              stage: 'pre_agent_complaint_fsm',
+              type: 'complaint_fsm_resume',
+              action: 'resumed',
+              reason: 'correction_as_address',
+              details: { waitingFor: 'alamat', extractedAddress: corrected.alamat },
+            },
+          });
+        } else if (corrected.kategori) {
+          const { setPendingAddressRequest } = await import('./ump-state');
+          setPendingAddressRequest(userId, {
+            ...pendingAddr,
+            kategori: corrected.kategori,
+            deskripsi: corrected.kategori,
+            timestamp: Date.now(),
+          });
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: `Baik, kategorinya saya ubah ke "${corrected.kategori}". Boleh sebutkan lokasi kejadiannya (RT/RW atau patokan)?`,
+            intent: 'CREATE_COMPLAINT',
+          });
+        }
+      }
     } else if (decision.action === 'resume') {
       clearPendingAddressRequest(userId);
       if (mediaUrl) addPendingPhoto(userId, mediaUrl);
@@ -1764,7 +2312,7 @@ export async function tryHandleLatePreAgentState(
           deskripsi: pendingAddr.deskripsi,
           alamat: decision.alamat,
         },
-      }, message);
+      }, message, undefined, { signal });
       const normalized = normalizeHandlerResult(complaintResult);
       return buildGuardResult({
         startTime,
@@ -1826,20 +2374,137 @@ export async function tryHandleLatePreAgentState(
     });
 
     if (identityDecision.action === 'interrupt') {
-      clearPendingComplaintData(userId);
-      logger.info('🧭 complaint-fsm: pending identity released due to interrupt', {
+      // E1/E2/E3: only release the draft for definitive topic changes.
+      // For correction/question/frustration/handoff, keep the draft so the
+      // agent can resume it with context instead of asking to repeat all.
+      const releaseReasons = ['explicit_cancel', 'service_info_switch', 'status_lookup'];
+      const released = releaseReasons.includes(identityDecision.reason);
+      if (released) {
+        clearPendingComplaintData(userId);
+      }
+      logger.info('🧭 complaint-fsm: interrupt during pending identity', {
         userId,
         reason: identityDecision.reason,
         waitingFor: pendingComplaint.waitingFor,
+        draftReleased: released,
         messagePreview: message.substring(0, 60),
       });
+      // E1 fix: untuk pertanyaan tentang draft (timeline/proses), jawab dalam konteks.
+      // Untuk pertanyaan topik lain (mis. syarat KK), biarkan agent yang jawab
+      // dengan konteks draft — jangan halusinasi "jadwal perbaikan".
+      if (identityDecision.reason === 'question' && !released) {
+        const isAboutDraft = /\b(jadwal|kapan|perbaikan|ditangani|diproses|laporan\s+(ini|tersebut|itu))\b/i.test(message);
+        if (!isAboutDraft) {
+          // Bukan tentang draft — fall through ke agent
+          logger.info('🧭 question not about draft, falling through to agent', { userId, messagePreview: message.substring(0, 60) });
+        } else {
+          const draftSummary = [
+            pendingComplaint.kategori,
+            pendingComplaint.alamat ? `di ${pendingComplaint.alamat}` : '',
+          ].filter(Boolean).join(' ');
+          const needField = pendingComplaint.waitingFor === 'nama'
+            ? 'nama Bapak/Ibu'
+            : pendingComplaint.waitingFor === 'no_hp'
+              ? 'nomor HP Bapak/Ibu'
+              : 'data yang kurang';
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: `Untuk laporan ${draftSummary || 'tersebut'}, saya belum bisa pastikan jadwal perbaikannya karena laporannya belum selesai dibuat — saya masih butuh ${needField} dulu. Setelah laporan masuk dan dapat nomor pelacakan, Bapak/Ibu bisa cek statusnya kapan saja. Boleh sebutkan ${needField} sekarang?`,
+            intent: 'CREATE_COMPLAINT',
+          });
+        }
+      }
+      // E3 fix: apply corrections to the draft (location/category).
+      if (identityDecision.reason === 'correction' && !released) {
+        const corrected = parseDraftCorrection(message);
+        if (corrected.alamat || corrected.kategori) {
+          setPendingComplaintData(userId, {
+            ...pendingComplaint,
+            ...(corrected.alamat ? { alamat: corrected.alamat } : {}),
+            ...(corrected.kategori ? { kategori: corrected.kategori, deskripsi: corrected.kategori } : {}),
+            timestamp: Date.now(),
+          });
+          const parts = [];
+          if (corrected.kategori) parts.push(`kategorinya saya ubah ke "${corrected.kategori}"`);
+          if (corrected.alamat) parts.push(`lokasinya saya ubah ke "${corrected.alamat}"`);
+          const needField = pendingComplaint.waitingFor === 'nama'
+            ? 'nama Bapak/Ibu'
+            : pendingComplaint.waitingFor === 'no_hp'
+              ? 'nomor HP Bapak/Ibu'
+              : 'data yang kurang';
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: `Baik, ${parts.join(' dan ')}. Untuk melanjutkan laporan, boleh saya tahu ${needField}?`,
+            intent: 'CREATE_COMPLAINT',
+          });
+        }
+      }
+    } else if (identityDecision.action === 'confirm') {
+      // VERIFY stage (§4 arsitektur): user merespons konfirmasi laporan
+      const resolution = identityDecision.resolution;
+      if (resolution === 'execute') {
+        clearPendingComplaintData(userId);
+        const complaintResult = await handleComplaintCreation(userId, pendingComplaint.channel, {
+          fields: {
+            village_id: pendingComplaint.village_id,
+            kategori: pendingComplaint.kategori,
+            deskripsi: pendingComplaint.deskripsi,
+            alamat: pendingComplaint.alamat,
+            rt_rw: pendingComplaint.rt_rw,
+          },
+        }, message, undefined, { signal });
+        const normalized = normalizeHandlerResult(complaintResult);
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: normalized.replyText,
+          contacts: normalized.contacts,
+          intent: 'CREATE_COMPLAINT',
+        });
+      } else if (resolution === 'cancel') {
+        clearPendingComplaintData(userId);
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: 'Baik, laporan dibatalkan. Ada lagi yang bisa saya bantu?',
+          intent: 'CREATE_COMPLAINT',
+        });
+      } else if (resolution === 'edit') {
+        setPendingComplaintData(userId, {
+          ...pendingComplaint,
+          waitingFor: 'nama',
+          timestamp: Date.now(),
+        });
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: 'Baik, bagian mana yang ingin diubah? Silakan sebutkan nama, kategori, deskripsi, atau lokasi yang baru.',
+          intent: 'CREATE_COMPLAINT',
+        });
+      } else {
+        const { buildConfirmationSummary } = await import('./complaint-fsm.service');
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: buildConfirmationSummary({
+            kategori: pendingComplaint.kategori,
+            deskripsi: pendingComplaint.deskripsi,
+            alamat: pendingComplaint.alamat,
+            reporter_name: pendingComplaint.reporter_name,
+            reporter_phone: pendingComplaint.reporter_phone,
+          }),
+          intent: 'CREATE_COMPLAINT',
+        });
+      }
     } else {
-      const userProfile = await getAutoFillSuggestionsWithFallback(userId);
+      const userProfile = await getAutoFillSuggestionsWithFallback(userId, villageId); // W5: village-scoped
 
       if (pendingComplaint.waitingFor === 'nama') {
         if (identityDecision.action === 'resume' && identityDecision.extractedName) {
           const extractedName = identityDecision.extractedName;
-          updateProfile(userId, { nama_lengkap: extractedName });
+          updateProfile(userId, { nama_lengkap: extractedName }, villageId); // W5: village-scoped
           syncNameToChannelService(userId, extractedName, villageId, channel);
 
           if (pendingComplaint.channel === 'webchat' && !userProfile.no_hp) {
@@ -1856,22 +2521,24 @@ export async function tryHandleLatePreAgentState(
             });
           }
 
-          clearPendingComplaintData(userId);
-          const complaintResult = await handleComplaintCreation(userId, pendingComplaint.channel, {
-            fields: {
-              village_id: pendingComplaint.village_id,
-              kategori: pendingComplaint.kategori,
-              deskripsi: pendingComplaint.deskripsi,
-              alamat: pendingComplaint.alamat,
-              rt_rw: pendingComplaint.rt_rw,
-            },
-          }, message);
-          const normalized = normalizeHandlerResult(complaintResult);
+          // VERIFY stage (§4): tampilkan ringkasan untuk konfirmasi, jangan langsung buat tiket
+          const { buildConfirmationSummary } = await import('./complaint-fsm.service');
+          setPendingComplaintData(userId, {
+            ...pendingComplaint,
+            reporter_name: extractedName,
+            waitingFor: 'konfirmasi',
+            timestamp: Date.now(),
+          });
           return buildGuardResult({
             startTime,
             traceId,
-            response: normalized.replyText,
-            contacts: normalized.contacts,
+            response: buildConfirmationSummary({
+              kategori: pendingComplaint.kategori,
+              deskripsi: pendingComplaint.deskripsi,
+              alamat: pendingComplaint.alamat,
+              reporter_name: extractedName,
+              reporter_phone: userProfile.no_hp,
+            }),
             intent: 'CREATE_COMPLAINT',
           });
         }
@@ -1886,27 +2553,30 @@ export async function tryHandleLatePreAgentState(
 
       if (identityDecision.action === 'resume' && identityDecision.extractedPhone) {
         const phone = identityDecision.extractedPhone;
-        updateProfile(userId, { no_hp: phone });
+        updateProfile(userId, { no_hp: phone }, villageId); // W5: village-scoped
         const channelUpper = (pendingComplaint.channel || 'webchat').toUpperCase() as 'WHATSAPP' | 'WEBCHAT';
         updateConversationUserProfile(userId, { user_phone: phone }, pendingComplaint.village_id, channelUpper)
           .catch(() => {});
 
-        clearPendingComplaintData(userId);
-        const complaintResult = await handleComplaintCreation(userId, pendingComplaint.channel, {
-          fields: {
-            village_id: pendingComplaint.village_id,
-            kategori: pendingComplaint.kategori,
-            deskripsi: pendingComplaint.deskripsi,
-            alamat: pendingComplaint.alamat,
-            rt_rw: pendingComplaint.rt_rw,
-          },
-        }, message);
-        const normalized = normalizeHandlerResult(complaintResult);
+        // VERIFY stage (§4): tampilkan ringkasan untuk konfirmasi, jangan langsung buat tiket
+        const { buildConfirmationSummary: buildSummary2 } = await import('./complaint-fsm.service');
+        const reporterName = pendingComplaint.reporter_name;
+        setPendingComplaintData(userId, {
+          ...pendingComplaint,
+          reporter_phone: phone,
+          waitingFor: 'konfirmasi',
+          timestamp: Date.now(),
+        });
         return buildGuardResult({
           startTime,
           traceId,
-          response: normalized.replyText,
-          contacts: normalized.contacts,
+          response: buildSummary2({
+            kategori: pendingComplaint.kategori,
+            deskripsi: pendingComplaint.deskripsi,
+            alamat: pendingComplaint.alamat,
+            reporter_name: reporterName,
+            reporter_phone: phone,
+          }),
           intent: 'CREATE_COMPLAINT',
         });
       }
@@ -1937,7 +2607,8 @@ export async function tryHandleLatePreAgentState(
     && !isComplaintInfoQuestion
     && !isServiceLikeReportMessage
     && !hasGenericReportIntent
-    && !SERVICE_ADMIN_PATTERN.test(message)
+    // [P0#1 FIX] Komplain serius (pungli/oknum) bypass pengecualian SERVICE_ADMIN_PATTERN
+    && (!SERVICE_ADMIN_PATTERN.test(message) || /\b(pungli|pungutan\s+liar|dimintai[n]?\s+uang|oknum)\b/i.test(message))
     && (
       COMPLAINT_INCIDENT_PATTERN.test(message)
       || EXPLICIT_REPORT_PATTERN.test(message)
@@ -1947,7 +2618,9 @@ export async function tryHandleLatePreAgentState(
     !!villageId
     && EMERGENCY_PATTERN.test(message)
     && !EXPLICIT_REPORT_PATTERN.test(message)
-    && !isLocationRichComplaintIncident
+    // [T-22 FIX] Darurat aktif (mis. "banjir ... tolong!") tetap jalur DARURAT
+    // walau pesannya kaya lokasi ("di rt 09") — keselamatan dulu, bukan form.
+    && (!isLocationRichComplaintIncident || matchesActiveEmergency(message.toLowerCase()))
     && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)
     && !isContactDirectoryLookup(message);
 
@@ -2008,12 +2681,31 @@ export async function tryHandleLatePreAgentState(
   }
 
   if (isEmergencyShortcut) {
-    const emergencyLookup = await lookupImportantContacts(message, villageId, {
-      limit: 3,
-      categoryHint: 'emergency',
-    });
-    const canAttachContacts = shouldAttachEmergencyShortcutContacts(emergencyLookup);
-    const contacts = canAttachContacts ? emergencyLookup.matches.map((match) => match.contact) : [];
+    // [T-22 FIX] Darurat aktif: ambil langsung kontak kategori Darurat agar tidak
+    // kalah skor dari kontak lain (mis. Ketua RT) oleh fuzzy query. Fallback ke
+    // lookup fuzzy bila kategori Darurat kosong.
+    let daruratContacts: ImportantContact[] = [];
+    try {
+      daruratContacts = await getImportantContacts(villageId, 'Darurat');
+    } catch {
+      daruratContacts = [];
+    }
+    const emergencyLookup = daruratContacts.length > 0
+      ? null
+      : await lookupImportantContacts(message, villageId, {
+        limit: 3,
+        categoryHint: 'emergency',
+      });
+    const canAttachContacts = daruratContacts.length > 0
+      ? true
+      : emergencyLookup
+        ? shouldAttachEmergencyShortcutContacts(emergencyLookup)
+        : false;
+    const contacts = daruratContacts.length > 0
+      ? daruratContacts
+      : canAttachContacts && emergencyLookup
+        ? emergencyLookup.matches.map((match) => match.contact)
+        : [];
     const contactsMessage = buildImportantContactsMessage(contacts, channel);
     const vcardContacts = canAttachContacts
       ? toVCardContacts(
@@ -2039,7 +2731,7 @@ export async function tryHandleLatePreAgentState(
       traceId,
       response: contacts.length > 0
         ? `Situasi ini darurat, mohon segera hubungi sekarang juga.${contactsMessage}\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.`
-        : emergencyLookup.matches.length > 0
+        : emergencyLookup && emergencyLookup.matches.length > 0
           ? 'Situasi ini darurat. Saya belum bisa memastikan kontak darurat desa yang paling tepat dari pesan ini. Mohon segera hubungi pihak darurat atau medis terdekat di lokasi Bapak/Ibu.\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.'
           : 'Situasi ini darurat. Saya belum menemukan kontak darurat desa yang tercatat saat ini. Mohon segera hubungi pihak darurat atau medis terdekat di lokasi Bapak/Ibu.\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.',
       contacts: vcardContacts,
@@ -2124,7 +2816,7 @@ export async function tryHandleLatePreAgentState(
     }
 
     addPendingPhoto(userId, mediaUrl);
-    const savedProfile = await getAutoFillSuggestionsWithFallback(userId);
+    const savedProfile = await getAutoFillSuggestionsWithFallback(userId, villageId); // W5: village-scoped
     const userName = savedProfile.nama_lengkap;
     const nameGreeting = userName ? ` ${userName}` : '';
     tracker.complete();
@@ -2207,6 +2899,8 @@ export async function tryHandleLatePreAgentState(
     if (decision === 'yes') {
       clearPendingCancelConfirmation(userId);
       if (pendingCancel.type === 'laporan') {
+        // P1-5: fail-closed — no write after the turn was aborted.
+        assertNotAborted(signal, 'cancel_complaint');
         const result = await cancelComplaint(
           pendingCancel.id,
           buildChannelParams(channel, userId),
@@ -2237,6 +2931,8 @@ export async function tryHandleLatePreAgentState(
         });
       }
 
+      // P1-5: fail-closed — no write after the turn was aborted.
+      assertNotAborted(signal, 'cancel_service_request');
       const serviceResult = await cancelServiceRequest(
         pendingCancel.id,
         buildChannelParams(channel, userId),
@@ -2371,7 +3067,7 @@ export async function tryHandleLatePreAgentState(
       intent: 'EDIT_SERVICE_REQUEST',
       fields: { request_number: code },
       reply_text: '',
-    });
+    }, { signal });
     const normalized = normalizeHandlerResult(editReply);
 
     tracker.complete();

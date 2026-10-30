@@ -1,16 +1,24 @@
 /**
  * Processing Status Service
- * 
+ *
  * Provides real-time processing status updates for:
  * - Dashboard admin (to see AI is working)
  * - Webchat users (typing indicator)
  * - WhatsApp users (via Channel Service)
- * 
+ *
+ * W13: NO filler text messages are ever sent to WhatsApp users. The only
+ * user-facing "we're working" signal on WA is the typing indicator
+ * (ai-service `sendTypingIndicator` → channel `/internal/typing` →
+ * gateway `/chat/presence`). The STAGE_LABELS below are neutral status labels
+ * for the webchat/dashboard UI only — never sent as chat messages.
+ *
  * Status stages:
- * 1. "Membaca pesan..." - Initial processing
- * 2. "Mencari informasi..." - RAG/Knowledge search
- * 3. "Menyiapkan jawaban..." - LLM processing
- * 4. "Mengirim..." - Sending response
+ * 1. "receiving"  - Initial processing
+ * 2. "reading"    - Reading message
+ * 3. "searching"  - RAG/Knowledge search
+ * 4. "thinking"   - LLM processing
+ * 5. "preparing"  - Preparing answer
+ * 6. "sending"    - Sending response
  */
 
 import logger from '../utils/logger';
@@ -45,44 +53,20 @@ export interface StatusUpdate {
 
 type StatusCallback = (status: ProcessingStatus) => void;
 
-// ==================== STATUS MESSAGES ====================
+// ==================== STAGE LABELS ====================
 
+// W13: neutral stage labels for webchat/dashboard UI. These are NOT chat
+// messages and are NEVER sent to WhatsApp users — the WA "working" signal
+// is the typing indicator only. Keep them short and non-conversational.
 const STAGE_MESSAGES: Record<ProcessingStage, string[]> = {
-  receiving: [
-    'Menerima pesan...',
-    'Pesan diterima...',
-  ],
-  reading: [
-    'Membaca pesan...',
-    'Sedang memahami pertanyaan...',
-    'Menganalisis pesan...',
-  ],
-  searching: [
-    'Mencari informasi yang relevan...',
-    'Menelusuri knowledge base...',
-    'Mencari data terkait...',
-  ],
-  thinking: [
-    'Sedang berpikir...',
-    'Memproses informasi...',
-    'Menyusun jawaban...',
-  ],
-  preparing: [
-    'Menyiapkan jawaban...',
-    'Hampir selesai...',
-    'Finalisasi response...',
-  ],
-  sending: [
-    'Mengirim jawaban...',
-    'Mengirim response...',
-  ],
-  completed: [
-    'Selesai',
-  ],
-  error: [
-    'Terjadi kesalahan',
-    'Gagal memproses',
-  ],
+  receiving: ['Menerima pesan'],
+  reading: ['Membaca pesan'],
+  searching: ['Mencari informasi'],
+  thinking: ['Memproses'],
+  preparing: ['Menyiapkan jawaban'],
+  sending: ['Mengirim jawaban'],
+  completed: ['Selesai'],
+  error: ['Terjadi kesalahan'],
 };
 
 const STAGE_PROGRESS: Record<ProcessingStage, number> = {

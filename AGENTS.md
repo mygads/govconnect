@@ -54,8 +54,10 @@ Schema per service: `channel`, `ai`, `cases`, `notification`, `dashboard`
 ## Testing
 
 Untuk testing, gunakan commands:
+- `npx vitest run` untuk govconnect-ai-service
+- `npx tsx --test <file>` untuk channel/case/notification-service (test mereka
+  pakai `node:test`, BUKAN vitest — vitest akan lapor "No test suite found")
 - `/testing-prd` — buat PRD testing lengkap sebelum mulai
-- `/testing-session-1` — jalankan TC ganjil (session 1)
 - `/testing-session-2` — jalankan TC genap (session 2)
 - `/testing-continue` — lanjutkan testing dari titik terakhir
 

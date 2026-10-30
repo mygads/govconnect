@@ -33,6 +33,19 @@ export interface ProcessMessageInput {
   /** Runtime behavior mode. `knowledge_test` keeps the production RAG/agent path but blocks workflow tools. */
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   /**
+   * WhatsApp interactive button id the citizen clicked (e.g. 'confirm_send').
+   * Forwarded by channel-service; the id is authoritative, the display text
+   * in `message` is not. See pipeline/confirmation.ts.
+   */
+  buttonId?: string;
+  /**
+   * True ONLY when the orchestrator bound a `confirm_send` button.id to the
+   * pending mutation in turn state (see bindConfirmation). Typed text
+   * ("Ya") NEVER sets this. No caller except the orchestrator's binding
+   * path may set it; the pipeline re-validates before EXECUTE.
+   */
+  confirmed?: boolean;
+  /**
    * Optional callback fired when the processing stage changes.
    * Used by the WhatsApp orchestrator to send typing indicators at the right moment.
    * Stages: 'reading' → 'searching' → 'thinking' → 'preparing' → 'sending'
@@ -114,6 +127,10 @@ export interface ProcessMessageResult {
     };
     /** Unique trace ID for correlating logs across NLU → RAG → LLM → response */
     traceId?: string;
+    /** R6: outbound response contained a canary token and was substituted */
+    canaryLeakBlocked?: boolean;
+    /** P0-3: outbound response was raw JSON / empty and was substituted */
+    rawJsonBlocked?: boolean;
     walletStatus?: string;
     walletBalanceUsd?: number;
     /** True when a wallet-exhausted message was held for later flush. */

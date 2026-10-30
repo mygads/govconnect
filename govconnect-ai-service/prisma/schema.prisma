@@ -12,6 +12,7 @@ datasource db {
   url        = env("DATABASE_URL")
   directUrl  = env("DIRECT_URL")
   extensions = [pgvector(map: "vector")]
+  schemas = ["ai", "public"]
 }
 
 // ==================== KNOWLEDGE VECTORS ====================
@@ -47,6 +48,7 @@ model knowledge_vectors {
   @@index([scope, is_global])
   @@index([village_id, scope, is_global])
   @@index([quality_score])
+  @@schema("ai")
 }
 
 // ==================== DOCUMENT VECTORS ====================
@@ -69,6 +71,12 @@ model document_vectors {
   section_title   String?
   provenance_json Json?
 
+  // KB publish review gate (§5.2): denormalized mirror of
+  // dashboard.knowledge_documents.publish_status so retrieval can exclude
+  // non-published documents without cross-database joins. New ingests enter
+  // as 'draft'; admin publish flips to 'published'.
+  publish_status String @default("published") // draft | published | withdrawn | superseded
+
   // Vector embedding
   embedding       Unsupported("vector(768)")
   embedding_model String                     @default("openai/text-embedding-3-small")
@@ -79,9 +87,11 @@ model document_vectors {
   @@unique([document_id, chunk_index])
   @@index([document_id])
   @@index([village_id])
+  @@index([village_id, publish_status])
   @@index([scope, is_global])
   @@index([village_id, scope, is_global])
   @@index([category])
+  @@schema("ai")
 }
 
 // ==================== EMBEDDING JOBS ====================
@@ -108,6 +118,7 @@ model embedding_jobs {
   @@index([priority])
   @@index([stage])
   @@index([next_retry_at])
+  @@schema("ai")
 }
 
 // ==================== QUESTION VARIANTS ====================
@@ -133,6 +144,7 @@ model question_variants {
   @@index([village_id])
   @@index([scope, is_global])
   @@index([village_id, scope, is_global])
+  @@schema("ai")
 }
 
 // ==================== AI TOKEN USAGE ====================
@@ -216,6 +228,7 @@ model ai_token_usage {
   @@index([billing_status, created_at])
   @@index([village_id, billing_status, created_at])
   @@index([village_id, created_at, call_type])
+  @@schema("ai")
 }
 
 model ai_village_wallets {
@@ -233,6 +246,7 @@ model ai_village_wallets {
 
   @@index([status])
   @@index([updated_at])
+  @@schema("ai")
 }
 
 model ai_wallet_ledger_entries {
@@ -259,6 +273,7 @@ model ai_wallet_ledger_entries {
   @@index([wallet_id, created_at])
   @@index([entry_type, created_at])
   @@index([reference_type, reference_id])
+  @@schema("ai")
 }
 
 model ai_message_billings {
@@ -291,6 +306,59 @@ model ai_message_billings {
   @@index([trace_id])
   @@index([status, created_at])
   @@index([ledger_entry_id])
+  @@schema("ai")
+}
+
+// R9 / §10: per-resolution billing. One row per VERIFIED resolution
+// (deterministic evidence per §12 — DB outcome, tool traces, ticket refs).
+// The village wallet is debited here, not per message/turn. Turn costs are
+// only accrued (ai_message_billings.status = 'accrued') until a resolution
+// references them; unresolved turns are never debited (vendor absorbs cost
+// — the §10 incentive alignment).
+model ai_resolutions {
+  id                        String   @id @default(cuid())
+  village_id                String
+  wa_user_id                String?
+  session_id                String?
+  channel                   String?
+  trace_id                  String
+  resolution_type           String
+  resolution_key            String
+  verified                  Boolean  @default(true)
+  verification_evidence_json Json?
+  billing_group_ids         String[]
+  total_actual_cost_usd     Float    @default(0)
+  total_adjusted_cost_usd   Float    @default(0)
+  total_margin_usd          Float    @default(0)
+  status                    String   @default("pending")
+  ledger_entry_id           String?  @unique
+  billed_at                 DateTime?
+  error_message             String?  @db.Text
+  metadata_json             Json?
+  created_at                DateTime @default(now())
+
+  @@unique([village_id, resolution_key])
+  @@index([village_id, created_at])
+  @@index([status, created_at])
+  @@index([trace_id])
+  @@schema("ai")
+}
+
+// R9: cost anomaly alerts (was the single MISSING sub-item). Alert-only by
+// design — pausing stays an explicit human action via VILLAGE_KILL_SWITCH.
+model ai_cost_anomaly_alerts {
+  id              String    @id @default(cuid())
+  village_id      String
+  alert_type      String
+  severity        String
+  details_json    Json
+  created_at      DateTime  @default(now())
+  acknowledged_at DateTime?
+  acknowledged_by String?
+
+  @@index([village_id, created_at])
+  @@index([alert_type, created_at])
+  @@schema("ai")
 }
 
 model ai_generation_logs {
@@ -338,6 +406,7 @@ model ai_generation_logs {
   @@index([layer_type])
   @@index([call_type])
   @@index([status, created_at])
+  @@schema("ai")
 }
 
 model ai_topup_vouchers {
@@ -357,6 +426,7 @@ model ai_topup_vouchers {
   @@index([status])
   @@index([redeemed_by_village_id])
   @@index([created_at])
+  @@schema("ai")
 }
 
 model ai_providers {
@@ -375,6 +445,7 @@ model ai_providers {
   models ai_models[]
 
   @@index([is_active])
+  @@schema("ai")
 }
 
 model ai_models {
@@ -409,6 +480,7 @@ model ai_models {
   @@index([provider_id])
   @@index([lane_type])
   @@index([is_active])
+  @@schema("ai")
 }
 
 model ai_lane_assignments {
@@ -430,6 +502,7 @@ model ai_lane_assignments {
   @@index([village_id])
   @@index([is_global_default])
   @@index([is_active])
+  @@schema("public")
 }
 
 // Smart routing health: 3 consecutive failures → demote provider for 1 hour.
@@ -447,6 +520,7 @@ model ai_provider_health {
   @@id([provider_id, lane_type])
   @@index([demoted_until])
   @@index([probe_in_flight_until])
+  @@schema("ai")
 }
 
 // ==================== CONVERSATION SESSIONS (Temuan 7) ====================
@@ -465,6 +539,7 @@ model conversation_sessions {
   @@unique([wa_user_id, session_key])
   @@index([wa_user_id])
   @@index([expires_at])
+  @@schema("public")
 }
 
 // ==================== RATE LIMIT BLACKLIST (Temuan 8) ====================
@@ -485,13 +560,17 @@ model rate_limit_blacklist {
   @@index([wa_user_id])
   @@index([village_id])
   @@index([expires_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE USER PROFILE MEMORY ====================
 // Long-term structured memory for reusable user facts/preferences.
 
 model durable_user_profiles {
-  wa_user_id             String    @id
+  // W5: composite key (village_id, wa_user_id). Legacy rows (pre-scoping) use
+  // village_id = '' and are lazily migrated by user-profile.service.ts.
+  village_id             String    @default("")
+  wa_user_id             String
   preferred_language     String    @default("auto")
   communication_style    String    @default("auto")
   response_detail        String    @default("auto")
@@ -515,8 +594,10 @@ model durable_user_profiles {
   created_at             DateTime  @default(now())
   updated_at             DateTime  @updatedAt
 
+  @@id([village_id, wa_user_id])
   @@index([last_interaction])
   @@index([updated_at])
+  @@schema("public")
 }
 
 // ==================== EPISODIC USER MEMORY ====================
@@ -541,6 +622,7 @@ model user_memory_entries {
   @@index([wa_user_id, created_at])
   @@index([wa_user_id, memory_type])
   @@index([village_id])
+  @@schema("public")
 }
 
 // ==================== EPISODIC MEMORY VECTORS ====================
@@ -564,6 +646,7 @@ model user_memory_vectors {
   @@index([wa_user_id])
   @@index([wa_user_id, memory_type])
   @@index([village_id])
+  @@schema("ai")
 }
 
 // ==================== DURABLE AI INTERACTION ANALYTICS ====================
@@ -593,6 +676,7 @@ model ai_interaction_events {
   @@index([village_id, created_at])
   @@index([intent, created_at])
   @@index([channel, created_at])
+  @@schema("ai")
 }
 
 model ai_tool_execution_traces {
@@ -619,6 +703,7 @@ model ai_tool_execution_traces {
   @@index([village_id, created_at])
   @@index([tool_name])
   @@index([success, created_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE RETRIEVAL OBSERVABILITY ====================
@@ -646,6 +731,7 @@ model ai_retrieval_traces {
   @@index([retrieval_mode, created_at])
   @@index([confidence, created_at])
   @@index([channel, created_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE MEMORY OBSERVABILITY ====================
@@ -670,6 +756,7 @@ model ai_memory_traces {
   @@index([village_id, created_at])
   @@index([source, created_at])
   @@index([channel, created_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE GUARDRAIL EVENTS ====================
@@ -693,6 +780,7 @@ model ai_guardrail_events {
   @@index([guard_stage, created_at])
   @@index([village_id, created_at])
   @@index([channel, created_at])
+  @@schema("ai")
 }
 
 // ==================== DURABLE TOOL POLICY TUNING ====================
@@ -713,6 +801,7 @@ model ai_tool_allowlist_policies {
 
   @@index([source, updated_at])
   @@index([confidence, updated_at])
+  @@schema("ai")
 }
 
 model ai_tool_policy_events {
@@ -745,6 +834,7 @@ model ai_tool_policy_events {
   @@index([first_turn_tool_choice, created_at])
   @@index([final_intent_source, created_at])
   @@index([state_resume_result, created_at])
+  @@schema("ai")
 }
 
 // ==================== KNOWLEDGE INCONSISTENCIES ====================
@@ -780,6 +870,7 @@ model ai_knowledge_inconsistencies {
   @@index([village_id, status, detected_at])
   @@index([kind, detected_at])
   @@index([severity, status])
+  @@schema("ai")
 }
 
 model ai_runtime_grounding_mismatches {
@@ -804,6 +895,7 @@ model ai_runtime_grounding_mismatches {
   @@index([mismatch_kind, detected_at])
   @@index([entity_type, detected_at])
   @@index([trace_id])
+  @@schema("ai")
 }
 
 model failed_messages {
@@ -824,6 +916,7 @@ model failed_messages {
 
   @@index([village_id, status])
   @@index([status])
+  @@schema("public")
 }
 
 // Admin-curated few-shot examples for the micro-NLU classifier. When an admin
@@ -842,4 +935,175 @@ model ai_nlu_few_shot_examples {
   created_at        DateTime @default(now())
 
   @@index([village_id, enabled])
+  @@schema("public")
+}
+
+// ── Pipeline v2 persistence (staged agent). Tables are created by
+// migration 20260929_pipeline_persistence; runtime access is via raw SQL in
+// src/pipeline/pipeline-store.ts so the code also typechecks without a
+// generated client.
+model pipeline_audit_events {
+  id          BigInt   @id @default(autoincrement())
+  occurred_at DateTime @default(now()) @db.Timestamptz(6)
+  tenant_id   String
+  trace_id    String
+  user_id     String
+  channel     String   @default("whatsapp")
+  stage       String
+  event       String
+  payload     Json     @default("{}")
+
+  @@index([tenant_id, trace_id])
+  @@index([occurred_at])
+  @@schema("ai")
+}
+
+model pipeline_idempotency_keys {
+  tenant_id  String
+  idem_key   String
+  response   Json
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at DateTime @db.Timestamptz(6)
+
+  @@id([tenant_id, idem_key])
+  @@index([expires_at])
+  @@schema("ai")
+}
+
+model pipeline_turn_states {
+  tenant_id            String
+  user_id              String
+  channel              String   @default("whatsapp")
+  stage                String
+  slots                Json     @default("{}")
+  assessor_confidences Json     @default("[]")
+  updated_at           DateTime @default(now()) @db.Timestamptz(6)
+  expires_at           DateTime @db.Timestamptz(6)
+
+  @@id([tenant_id, user_id, channel])
+  @@schema("ai")
+}
+
+model pipeline_takeovers {
+  tenant_id   String
+  user_id     String
+  channel     String    @default("whatsapp")
+  taken_by    String
+  reason      String    @default("")
+  taken_at    DateTime  @default(now()) @db.Timestamptz(6)
+  expires_at  DateTime  @db.Timestamptz(6)
+  released_at DateTime? @db.Timestamptz(6)
+  // W4: takeover state machine
+  state                   String    @default("HUMAN_ACTIVE")
+  last_human_activity_at  DateTime? @db.Timestamptz(6)
+  nudge_sent_at           DateTime? @db.Timestamptz(6)
+
+  @@id([tenant_id, user_id, channel])
+  @@schema("ai")
+}
+
+model pipeline_nik_vault {
+  token      String   @id
+  tenant_id  String
+  ciphertext String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at DateTime @db.Timestamptz(6)
+
+  @@index([expires_at])
+  @@schema("ai")
+}
+
+model pipeline_fallback_tickets {
+  ticket_id  String   @id
+  tenant_id  String
+  user_id    String
+  channel    String   @default("whatsapp")
+  stage      String
+  reason     String
+  detail     String   @default("")
+  status     String   @default("open")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id, status])
+  @@schema("ai")
+}
+
+model pipeline_semantic_cache {
+  cache_key   String   @id
+  tenant_id   String
+  doc_version String   @default("")
+  question    String
+  answer      String
+  hits        Int      @default(0)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  expires_at  DateTime @db.Timestamptz(6)
+
+  @@index([tenant_id, doc_version])
+  @@schema("ai")
+}
+
+model pipeline_improvement_proposals {
+  id         BigInt    @id @default(autoincrement())
+  tenant_id  String
+  kind       String
+  title      String
+  payload    Json      @default("{}")
+  status     String    @default("proposed")
+  decided_by String?
+  decided_at DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenant_id, status])
+  @@schema("ai")
+}
+
+model pipeline_lapor_outbox {
+  id            BigInt   @id @default(autoincrement())
+  tenant_id     String
+  complaint_ref String
+  payload       Json
+  tracking_id   String?
+  status        String   @default("pending")
+  attempts      Int      @default(0)
+  last_error    String   @default("")
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([status])
+  @@schema("ai")
+}
+
+model pipeline_ingress_quarantine {
+  id         BigInt   @id @default(autoincrement())
+  tenant_id  String
+  user_id    String
+  channel    String   @default("whatsapp")
+  reason     String
+  excerpt    String   @default("")
+  reviewed   Boolean  @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  @@schema("ai")
+}
+
+// ==================== W15: MEDIA INTAKE REGISTRY ====================
+// DB-backed SHA-256/pHash dedup for incoming images. Dedup rule: same
+// (village_id, user_id, sha256) within 24h => duplicate. Survives restarts.
+
+model media_registry {
+  id            String   @id @default(cuid())
+  village_id    String
+  user_id       String
+  sha256        String
+  phash         String?
+  message_id    String?
+  media_kind    String   @default("unknown") // 'photo' | 'document' | 'unknown'
+  bytes         BigInt?
+  exif_stripped Boolean  @default(false)
+  redaction     String   @default("degraded") // 'done' | 'degraded' | 'not_applicable'
+  admin_only    Boolean  @default(false)      // KTP/identity docs: admin eyes only
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([village_id, user_id, sha256, created_at])
+  @@index([village_id, user_id, phash])
+  @@schema("ai")
 }

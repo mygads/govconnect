@@ -118,7 +118,10 @@ export const pendingComplaintData = new LRUCache<string, {
   foto_url?: string;
   channel: ChannelType;
   timestamp: number;
-  waitingFor: 'nama' | 'no_hp';
+  waitingFor: 'nama' | 'no_hp' | 'konfirmasi';
+  // P1-1: VERIFY stage — reporter identity collected for the confirmation summary
+  reporter_name?: string;
+  reporter_phone?: string;
 }>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingComplaintData' });
 
 // --- Pending Complaint Data accessors with DB persistence (Temuan 7) ---
@@ -198,6 +201,41 @@ registerInterval(() => {
 // ==================== PHOTO HELPERS ====================
 
 export const MAX_PHOTOS_PER_COMPLAINT = 5;
+
+/**
+ * Topic stack for multi-turn resume ("balik ke ktp tadi", "lanjut lapor tadi").
+ * Stores recent topics per user: { topic, intent, timestamp }.
+ * Max 5 topics, TTL 30 minutes.
+ */
+export const topicStack = new LRUCache<string, Array<{ topic: string; intent: string; timestamp: number }>>({
+  maxSize: 10000,
+  ttlMs: 30 * 60 * 1000,
+});
+
+export function pushTopic(userId: string, topic: string, intent: string): void {
+  const stack = topicStack.get(userId) || [];
+  // Don't push duplicates consecutively
+  if (stack.length > 0 && stack[stack.length - 1].topic === topic) return;
+  stack.push({ topic, intent, timestamp: Date.now() });
+  // Keep max 5
+  if (stack.length > 5) stack.shift();
+  topicStack.set(userId, stack);
+}
+
+export function popTopic(userId: string): { topic: string; intent: string } | null {
+  const stack = topicStack.get(userId) || [];
+  if (stack.length === 0) return null;
+  const item = stack.pop()!;
+  topicStack.set(userId, stack);
+  return { topic: item.topic, intent: item.intent };
+}
+
+export function peekTopic(userId: string): { topic: string; intent: string } | null {
+  const stack = topicStack.get(userId) || [];
+  if (stack.length === 0) return null;
+  const item = stack[stack.length - 1];
+  return { topic: item.topic, intent: item.intent };
+}
 
 /**
  * Add a photo URL to the pending photos cache for a user.

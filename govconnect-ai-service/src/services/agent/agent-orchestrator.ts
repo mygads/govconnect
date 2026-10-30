@@ -1,4 +1,12 @@
 /**
+ * @deprecated — v1 legacy agent loop. Do NOT use for new code.
+ *
+ * Superseded by the staged pipeline (src/pipeline/staged-agent.ts), which is
+ * the single staged agent per arsitektur-final. This module is kept only
+ * because unit tests import it (`__test_only__`, `validateFinalAgentReply`);
+ * production traffic does not route through it. If the tests are migrated,
+ * this file (and agent-prompt.ts) should be deleted.
+ *
  * Agent Orchestrator — function-calling loop for single-agent architecture.
  *
  * Fase 2.3: Implements the core agent loop:
@@ -13,8 +21,9 @@ import logger from '../../utils/logger';
 import { callAIGatewayPrompt, type GatewayChatMessage } from '../ai-gateway.service';
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
 import { resolveLearnedToolPolicy } from './tool-policy.service';
-import { executeToolCall, type ToolCallResult, type ToolExecutionTrace, type ToolTrustLevel } from './tool-executor';
+import { executeToolCall, executeToolCalls, type ToolCallResult, type ToolExecutionTrace, type ToolTrustLevel, type ExecutedToolCall } from './tool-executor';
 import { buildAgentSystemPrompt, buildAgentDynamicContext, type AgentPromptContext } from './agent-prompt';
+import type { QueryRewriteContext } from '../query-rewrite.service';
 import { isContactDirectoryLookup } from '../important-contacts.service';
 
 const MAX_TOOL_ITERATIONS = 5;
@@ -74,6 +83,12 @@ interface ToolContext {
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   activeServiceSlug?: string;
   activeServiceName?: string;
+  /**
+   * Konteks percakapan untuk query rewriting sebelum RAG retrieval
+   * (query-rewrite.service.ts). Diteruskan via spread ke executor
+   * ToolContext; tool search_knowledge/search_documents memakainya.
+   */
+  rewriteContext?: QueryRewriteContext;
 }
 
 interface AgentGatewayTokenContext {
@@ -133,9 +148,25 @@ const ACTION_PRIORITY_TOOLS = new Set<AgentToolName>([
   'cancel_request',
 ]);
 
-function isMutationTool(toolName: AgentToolName): boolean {
+export function isMutationTool(toolName: AgentToolName): boolean {
   return !READ_ONLY_TOOLS.has(toolName);
 }
+
+/**
+ * P1-9: graceful copy for turns where the LLM returned empty/null output.
+ *
+ * The turn degrades to this honest, non-empty reply INSTEAD of triggering
+ * a full mutation-loop retry (the AI retry queue re-runs the whole agent
+ * loop; the 10-minute retry interval exceeds the 5-minute idempotency TTL,
+ * so a mutation executed before the empty output could run twice).
+ *
+ * INVARIANT: this copy must NEVER contain any GENERIC_TIMEOUT_PHRASES
+ * (see unified-message-processor.service.ts) — otherwise
+ * isProcessingFailure() would still classify the turn as failed and the
+ * retry would be enqueued anyway.
+ */
+export const EMPTY_LLM_FALLBACK_COPY =
+  'Maaf Pak/Bu, saya tidak bisa memproses pesan Anda saat ini. Silakan coba lagi beberapa saat lagi, atau datang langsung ke kantor desa pada jam kerja.';
 
 const TOOL_REPLY_BASE_PRIORITY: Partial<Record<AgentToolName, number>> = {
   create_service_request: 5000,
@@ -228,15 +259,37 @@ function isBetterPreferredToolReplyCandidate(
   return candidate.index > current.index;
 }
 
+function toolResultHasUsableContext(result: ToolCallResult): boolean {
+  const payload = result?.data;
+  const data = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
+  if (!data || data.found !== true) return false;
+  const context = data.context;
+  const sources = data.sources;
+  return (typeof context === 'string' && context.trim().length > 0)
+    || (Array.isArray(sources) && sources.length > 0);
+}
+
 function derivePreferredToolReply(
   toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
 ): { replyText?: string; guidanceText?: string } {
   let bestReply: PreferredToolReplyCandidate | undefined;
   let bestGuidance: PreferredToolReplyCandidate | undefined;
 
+  // I2 fix: a failed tool's suggested_response must never outrank a successful
+  // retrieval that actually returned context. Otherwise e.g. search_documents
+  // returning "not found" would discard a HIGH-confidence search_knowledge hit
+  // and the agent would answer "tidak ditemukan" despite having the answer.
+  const hasSuccessfulContext = toolResults.some(({ result }) => toolResultHasUsableContext(result));
+
   toolResults.forEach(({ toolName, result }, index) => {
     const { replyText, guidanceText } = readToolReplyFields(result);
     if (!replyText && !guidanceText) {
+      return;
+    }
+
+    const payload = result?.data;
+    const data = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
+    if (hasSuccessfulContext && data && data.found === false) {
       return;
     }
 
@@ -477,7 +530,11 @@ function buildMixedIntentLoopExhaustedReply(
 
   return partialReply
     ? `${partialReply}\n\nMaaf Pak/Bu,${suffix} ${retryHint}`
-    : '';
+    // P1-9: never return empty here. An empty replyText was classified as a
+    // processing failure (isProcessingFailure → AGENT_EMPTY_REPLY) and
+    // triggered a FULL mutation-loop retry via the AI retry queue — risking
+    // double-executed mutations. Degrade gracefully instead.
+    : EMPTY_LLM_FALLBACK_COPY;
 }
 
 function getSufficientServiceInfoStopReason(
@@ -538,6 +595,35 @@ function shouldStopAfterSufficientServiceInfo(
 }
 
 function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { toolName: AgentToolName; args: Record<string, unknown> } | null {
+  // Match [[ ... ]] (or malformed [[ ... ]) and try JSON.parse. Handles nested objects.
+  // (Fix K1/K6: LLM sometimes outputs malformed [[{...}] with missing bracket.)
+  const jsonMatch = text.match(/\[\[([\s\S]*?)(?:\]\]|$)/);
+  if (jsonMatch) {
+    // Try parsing as-is, then with fixed brackets.
+    const candidates = [jsonMatch[0]];
+    if (!jsonMatch[0].endsWith(']]')) {
+      candidates.push(jsonMatch[0] + ']');
+      candidates.push(jsonMatch[0] + ']]');
+    }
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Unwrap nested array: format is [[{name,...}]] so parsed[0] is [{...}], not the object.
+          const firstRaw = parsed[0] as unknown;
+          const first = (Array.isArray(firstRaw) ? firstRaw[0] : firstRaw) as { name?: string; parameters?: Record<string, unknown>; arguments?: Record<string, unknown> };
+          const toolName = first?.name as AgentToolName;
+          if (toolName && allowedToolNames.includes(toolName) && !isMutationTool(toolName)) {
+            const args = (first?.parameters ?? first?.arguments ?? {}) as Record<string, unknown>;
+            return { toolName, args };
+          }
+        }
+      } catch {
+        // Try next candidate.
+      }
+    }
+  }
+
   const functionMatch = text.match(/<function=([a-z_]+)>/i);
   if (!functionMatch) return null;
 
@@ -669,11 +755,14 @@ function buildAgentFallbackReply(userMessage: string, toolsUsed: string[] = []):
     return 'Maaf Pak/Bu, informasinya belum berhasil kami temukan sekarang. Untuk sementara, silakan datang ke kantor desa pada jam kerja atau kirim pertanyaan yang lebih spesifik ya.';
   }
 
-  // No grounding tool ran AND no real answer — this is a processing failure
-  // (LLM timeout/down, loop exhausted). Return EMPTY so isProcessingFailure()
-  // in the processor catches it and we stay silent + retry instead of sending
-  // a hollow "sorry, try again" apology to the resident.
-  return '';
+  // P1-9: no grounding tool ran AND no real answer — this is an LLM
+  // empty-output turn (timeout/down, loop exhausted). It must NOT return
+  // EMPTY: an empty replyText is classified as a processing failure and
+  // triggers a FULL mutation-loop retry via the AI retry queue, which can
+  // double-execute mutations (retry interval 10 min > idempotency TTL
+  // 5 min). Degrade gracefully with an honest, non-empty copy instead —
+  // the gateway already performed its one light non-mutating LLM retry.
+  return EMPTY_LLM_FALLBACK_COPY;
 }
 
 function detectAmbiguousIntent(userMessage: string, heuristicTools: AgentToolName[], allowedToolNames: AgentToolName[]): boolean {
@@ -889,7 +978,10 @@ export async function runAgent(
 
   const toolsUsed: string[] = [];
   const toolTrace: ToolExecutionTrace[] = [];
-  const executedToolSignatures = new Set<string>();
+  // P1-4: per-turn dedup map shared by every tool execution in this turn
+  // (see executeToolCall/executeToolCalls). Identical normalized tool+args
+  // execute once; duplicates share the real result.
+  const executedTools = new Map<string, Promise<ExecutedToolCall>>();
   const preferredToolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }> = [];
   let totalTokens = 0;
   let iterations = 0;
@@ -959,12 +1051,14 @@ export async function runAgent(
         content: string;
       }> = [];
 
-      // Tool execution strategy:
-      // - Parse + dedup all tool calls first into a plan.
-      // - Read-only tools (no side effects on DB/case) run in parallel.
-      // - Mutation tools (create/update/cancel, service form link) run
-      //   sequentially in the order the model emitted them so ordering
-      //   semantics stay intact.
+      // Tool execution strategy (P1-4):
+      // - Parse all tool calls first into a plan.
+      // - executeToolCalls handles the rest: normalized per-turn dedup
+      //   (identical tool+args execute once, the real result is shared with
+      //   every duplicate instead of a synthetic "cached" message),
+      //   dependency-aware waves for independent reads with a bounded
+      //   concurrency pool, and strictly sequential mutations in
+      //   model-emission order.
       type ExecutableTask = {
         tc: ToolCall;
         toolName: AgentToolName;
@@ -972,8 +1066,8 @@ export async function runAgent(
         kind: 'read' | 'mutation';
       };
 
-      const parallelTasks: ExecutableTask[] = [];
-      const serialTasks: ExecutableTask[] = [];
+      const readTasks: ExecutableTask[] = [];
+      const mutationTasks: ExecutableTask[] = [];
 
       for (const tc of assistantMsg.tool_calls as ToolCall[]) {
         const toolName = tc.function.name as AgentToolName;
@@ -1006,64 +1100,37 @@ export async function runAgent(
           continue;
         }
 
-        const toolSignature = `${toolName}:${JSON.stringify(args)}`;
-        if (executedToolSignatures.has(toolSignature)) {
-          logger.info('Skipping duplicate tool call', { toolName, args, iteration: i + 1 });
-          toolResults.push({
-            toolName,
-            result: {
-              success: true,
-              data: { cached: true, message: 'Tool already executed with same arguments' },
-              meta: { trustLevel: 'action_result', sourceKind: 'tool_deduplication' },
-            },
-            role: 'tool',
-            tool_call_id: tc.id,
-            name: toolName,
-            content: JSON.stringify({ success: true, cached: true }),
-          });
-          continue;
-        }
-        executedToolSignatures.add(toolSignature);
-        toolsUsed.push(toolName);
-
         const kind: 'read' | 'mutation' = READ_ONLY_TOOLS.has(toolName) ? 'read' : 'mutation';
-        (kind === 'read' ? parallelTasks : serialTasks).push({ tc, toolName, args, kind });
+        (kind === 'read' ? readTasks : mutationTasks).push({ tc, toolName, args, kind });
       }
 
-      // Run read-only tools in parallel.
-      const parallelResults = await Promise.all(
-        parallelTasks.map((task) =>
-          executeToolCall(task.toolName, task.args, { ...toolCtx, userMessage }),
-        ),
+      // Reads before mutations (same relative ordering as before); inside
+      // the batch, reads run in dependency-aware parallel waves and
+      // mutations run strictly sequentially.
+      const batchResults = await executeToolCalls(
+        [...readTasks, ...mutationTasks].map((task) => ({
+          id: task.tc.id,
+          tool: task.toolName,
+          args: task.args,
+        })),
+        { ...toolCtx, userMessage, executedTools },
       );
-      for (let pIdx = 0; pIdx < parallelTasks.length; pIdx += 1) {
-        const task = parallelTasks[pIdx];
-        const result = parallelResults[pIdx];
-        toolTrace.push(result.trace);
+      for (const batchResult of batchResults) {
+        const { call, executed, deduped } = batchResult;
+        // Preserve the old toolsUsed accounting: a call served from the
+        // per-turn dedup cache does not count as an additional tool use
+        // (billing/telemetry stay single-counted).
+        if (!deduped) toolsUsed.push(call.tool);
+        toolTrace.push(executed.trace);
         toolResults.push({
-          toolName: task.toolName,
-          result: result.result,
+          toolName: call.tool,
+          result: executed.result,
           role: 'tool',
-          tool_call_id: task.tc.id,
-          name: task.toolName,
-          content: result.content,
+          tool_call_id: call.id,
+          name: call.tool,
+          content: executed.content,
         });
       }
-
-      // Run mutation tools sequentially to preserve ordering semantics.
-      for (const task of serialTasks) {
-        const result = await executeToolCall(task.toolName, task.args, { ...toolCtx, userMessage });
-        toolTrace.push(result.trace);
-        toolResults.push({
-          toolName: task.toolName,
-          result: result.result,
-          role: 'tool',
-          tool_call_id: task.tc.id,
-          name: task.toolName,
-          content: result.content,
-        });
-      }
-
 
       preferredToolResults.push(...toolResults.map(({ toolName, result }) => ({ toolName, result })));
       const preferredFromTools = derivePreferredToolReply(preferredToolResults);
@@ -1185,7 +1252,9 @@ export async function runAgent(
         });
 
         toolsUsed.push(textToolCall.toolName);
-        const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage });
+        // P1-4: share the per-turn dedup map so a text-fallback call that
+        // repeats an earlier tool+args reuses the real result.
+        const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage, executedTools });
         result.trace = {
           ...result.trace,
           sourceKind: result.trace.sourceKind
@@ -2048,13 +2117,18 @@ async function selectAllowedTools(
 
   if (isVillageProfileQuery && !hasMixedIntentFamilies) {
     add('get_village_profile');
+    // BUGFIX(TEST): jangan deny search_knowledge/search_documents di sini;
+    // tambahkan sebagai fallback. get_village_profile membaca dari
+    // dashboard-service; bila dashboard mati atau profil kosong, agen tidak punya
+    // fallback dan menjawab "belum tersedia" padahal KB punya jawabannya.
+    // Presedens DB-tetap-menang dijaga oleh prompt
+    // ("DATA RESMI DARI DATABASE ... bersifat otoritatif") + db-rag-reconciler.
+    add('search_knowledge', 'search_documents');
     deny(
       'get_important_contact',
       'get_emergency_contacts',
       'get_service_info',
       'create_service_request',
-      'search_knowledge',
-      'search_documents',
       'create_complaint',
       'get_complaint_categories',
       'get_my_history',
@@ -2185,4 +2259,5 @@ export const __test_only__ = {
   getUncoveredMixedIntentFamilies,
   shouldForceMixedIntentContinuation,
   buildMixedIntentLoopExhaustedReply,
+  buildAgentFallbackReply,
 };

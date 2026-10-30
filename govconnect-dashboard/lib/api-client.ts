@@ -425,6 +425,23 @@ export const ai = {
   },
 
   /**
+   * §5.2 KB review gate: set a document's vector publish status
+   * ('draft' | 'published' | 'withdrawn'). Optionally supersedes older
+   * document ids when publishing.
+   */
+  async setDocumentPublishStatus(
+    documentId: string,
+    publishStatus: 'draft' | 'published' | 'withdrawn',
+    supersedeDocumentIds: string[] = [],
+  ) {
+    return apiFetch(buildUrl(ServicePath.AI, `/internal/documents/${documentId}/status`), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ publish_status: publishStatus, supersede_document_ids: supersedeDocumentIds }),
+    });
+  },
+
+  /**
    * Embed all knowledge
    */
   async embedAllKnowledge(villageId?: string) {
@@ -934,6 +951,16 @@ export const ai = {
       headers: getHeaders(),
       body: JSON.stringify(typeof payload === 'string' ? { model_id: payload } : payload),
       timeout: 20000,
+    });
+  },
+
+  /** Model Compatibility Test: 11 capability tests (5 basic + 6 GovConnect smartness). Timeout panjang karena 11 panggilan LLM. */
+  async testModelCompatibility(payload: { model_id: string } | { draft: Record<string, any> } | { manual: { base_url: string; api_key: string; model_name: string } }) {
+    return apiFetch('/api/superadmin/ai-models/test-compatibility', {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(payload),
+      timeout: 300000,
     });
   },
 

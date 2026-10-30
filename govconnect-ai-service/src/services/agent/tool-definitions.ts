@@ -43,7 +43,12 @@ export const AGENT_TOOLS: ToolDefinition[] = [
         'Detail layanan administrasi: daftar layanan aktif, persyaratan, dan mode layanan. ' +
         'Gunakan untuk menjelaskan syarat dan kesiapan layanan sebelum mengirim link formulir. ' +
         'Gunakan untuk pertanyaan syarat, biaya, proses, dokumen, surat, atau layanan kependudukan. ' +
-        'Jika service_name kosong, tool boleh dipakai untuk menampilkan layanan aktif yang tersedia.',
+        'Singkatan umum juga layanan desa: SKU = Surat Keterangan Usaha, SKTM = Surat Keterangan Tidak Mampu, ' +
+        'SKD/suket domisili = Surat Keterangan Domisili, akte = Akta Kelahiran. ' +
+        'Jika user menyebut singkatan tersebut, panggil tool ini dengan nama lengkapnya. ' +
+        'Jika service_name kosong, tool boleh dipakai untuk menampilkan layanan aktif yang tersedia. ' +
+        'Jika tidak ada layanan yang cocok di database, gunakan search_knowledge sebagai fallback — ' +
+        'dokumen KB mungkin memuat informasi yang dibutuhkan.',
       parameters: {
         type: 'object',
         properties: {
@@ -155,6 +160,28 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'load_skill',
+      strict: true,
+      description:
+        'Baca panduan prosedur/SKILL.md desa secara lengkap (Level 2). ' +
+        'Gunakan ketika [Panduan prosedur desa] di konteks mencantumkan panduan yang relevan dengan pertanyaan warga. ' +
+        'Hanya membaca; tidak mengubah apa pun.',
+      parameters: {
+        type: 'object',
+        properties: {
+          slug: {
+            type: 'string',
+            description: 'Slug panduan dari daftar [Panduan prosedur desa], contoh: "sktm".',
+          },
+        },
+        required: ['slug'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'search_user_memory',
       strict: true,
       description:
@@ -181,7 +208,8 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       strict: true,
       description:
         'Buat pengaduan resmi desa. Utamakan type_id resmi dari get_complaint_categories bila sudah tersedia. category_id boleh dipakai sebagai kategori induk, dan kategori string hanya fallback bila ID resmi belum ada. ' +
-        'Alamat hanya wajib untuk jenis pengaduan yang memang membutuhkan lokasi. Nama pelapor dan nomor telepon bersifat opsional. Untuk kanal WhatsApp jangan meminta nomor HP lagi jika masalah sudah jelas. Jangan bilang laporan berhasil dibuat jika tool ini gagal.',
+        'Alamat hanya wajib untuk jenis pengaduan yang memang membutuhkan lokasi. Nama pelapor dan nomor telepon bersifat opsional. Untuk kanal WhatsApp jangan meminta nomor HP lagi jika masalah sudah jelas. Jangan bilang laporan berhasil dibuat jika tool ini gagal. ' +
+        'Tool ini didelegasikan ke FSM yang menegakkan alur VERIFY (nama -> alamat -> konfirmasi YA -> tiket).',
       parameters: {
         type: 'object',
         properties: {
@@ -368,6 +396,7 @@ export type AgentToolName =
   | 'get_important_contact'
   | 'search_knowledge'
   | 'search_documents'
+  | 'load_skill'
   | 'search_user_memory'
   | 'create_complaint'
   | 'create_service_request'

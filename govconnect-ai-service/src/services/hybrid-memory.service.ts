@@ -9,6 +9,7 @@ import {
   upsertUserMemoryVector,
   type UserMemoryVectorSearchResult,
 } from './memory-vector.service';
+import { LEGACY_VILLAGE_SCOPE, normalizeVillageScope } from './profile-scope';
 
 const MEMORY_SUMMARY_CACHE = new LRUCache<string, string>({
   maxSize: 2000,
@@ -31,6 +32,11 @@ const OPERATIONAL_MEMORY_TYPES = new Set([
   'service_edit',
   'status_lookup',
   'cancellation',
+  // session_summary: ringkasan sesi terakhir ("interaksi terakhir") — harus
+  // ikut terambil oleh getLastInteraction()/buildLastInteractionContext().
+  // Tanpa ini, saveSessionSummary() tidak pernah bisa dibaca kembali
+  // (filter memory_type di searchUserMemories mengecualikannya).
+  'session_summary',
 ]);
 
 type MemoryEntryRow = {
@@ -306,6 +312,18 @@ export async function deleteAllMemories(wa_user_id: string): Promise<void> {
   }
 }
 
+/**
+ * P1-4: soft-invalidation check. memoryInvalidateEntry() marks
+ * metadata_json.invalidated = true instead of deleting; every read path
+ * must honor the flag or "forgotten" memories keep being served.
+ */
+export function isMemoryInvalidated(entry: unknown): boolean {
+  const meta = (entry as { metadata_json?: unknown } | null | undefined)?.metadata_json as {
+    invalidated?: unknown;
+  } | null | undefined;
+  return meta?.invalidated === true;
+}
+
 export async function searchUserMemories(input: {
   wa_user_id: string;
   query: string;
@@ -363,10 +381,22 @@ export async function searchUserMemories(input: {
       })(),
     ]);
 
-    let merged = mergeMemoryCandidates(lexicalCandidates, semanticCandidates, input.query, queryTerms);
+    // P1-4: drop soft-invalidated entries (metadata_json.invalidated = true)
+    // before they can reach the agent. memoryInvalidateEntry only marks the
+    // flag — without this filter the "deleted" memory kept being served.
+    // (No explicit callback param types: annotating them would narrow the
+    // filtered arrays and break assignability to MemoryEntryRow[] downstream.)
+    const liveLexicalCandidates = lexicalCandidates.filter(
+      (e) => !isMemoryInvalidated(e),
+    );
+    const liveSemanticCandidates = semanticCandidates.filter(
+      (e) => !isMemoryInvalidated(e),
+    );
 
-    if (merged.length === 0 && lexicalCandidates.length > 0) {
-      merged = lexicalCandidates
+    let merged = mergeMemoryCandidates(liveLexicalCandidates, liveSemanticCandidates, input.query, queryTerms);
+
+    if (merged.length === 0 && liveLexicalCandidates.length > 0) {
+      merged = liveLexicalCandidates
         .map((entry) => {
           const recencyScore = computeRecencyScore(entry.created_at);
           const importanceScore = clampImportance(entry.importance);
@@ -425,10 +455,20 @@ export async function buildHybridMemorySummary(input: {
   }
 
   try {
+    // W5: durable_user_profiles has a composite PK (village_id, wa_user_id);
+    // mirror the legacy fallback from user-profile.service.ts.
+    const profilePromise = (async () => {
+      const vid = normalizeVillageScope(input.village_id);
+      const stored = await prisma.durable_user_profiles.findUnique({
+        where: { village_id_wa_user_id: { village_id: vid, wa_user_id: input.wa_user_id } },
+      });
+      if (stored || vid === LEGACY_VILLAGE_SCOPE) return stored;
+      return prisma.durable_user_profiles.findUnique({
+        where: { village_id_wa_user_id: { village_id: LEGACY_VILLAGE_SCOPE, wa_user_id: input.wa_user_id } },
+      });
+    })();
     const [profile, rankedMemories] = await Promise.all([
-      prisma.durable_user_profiles.findUnique({
-        where: { wa_user_id: input.wa_user_id },
-      }),
+      profilePromise,
       searchUserMemories({
         wa_user_id: input.wa_user_id,
         query: input.query,

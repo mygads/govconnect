@@ -19,11 +19,13 @@
  */
 
 import logger from '../utils/logger';
+import { createTurnAbortController } from '../pipeline/abort-guard';
 import { formatVillageDateTimeForPrompt } from '../utils/wib-datetime';
 import { sanitizeUserInput } from './context-builder.service';
+import { maybeRecordUserCorrection } from './improvement-loop.service';
 import { getVillageProfileSummary } from './knowledge.service';
 import { isSpamMessage } from './rag.service';
-import { getAutoFillSuggestionsWithFallback } from './user-profile.service';
+import { getAutoFillSuggestionsWithFallback, learnFromMessage, getProfileWithFallback } from './user-profile.service';
 import { normalizeText } from './text-normalizer.service';
 import { classifyMessage, type UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { aiAnalyticsService } from './ai-analytics.service';
@@ -64,11 +66,19 @@ import {
   needsHumanEscalation,
 } from './sentiment-analysis.service';
 import { startTakeoverForUser } from './channel-client.service';
+import { buildQueryRewriteContext } from './query-rewrite.service';
 import { getEnhancedContext } from './conversation-context.service';
 import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village-behavior.service';
+import { getVillageIdentity } from './village-identity.service';
 import { canProcessVillageAI } from './ai-wallet.service';
 import { holdMessageForWallet } from './held-message-client.service';
 import { finishAiBillingTurn, startAiBillingTurn, type AiBillingTurnHandle } from './ai-turn-billing.service';
+import { recordResolution, type ResolutionType } from './ai-resolution-billing.service';
+// Cross-session memory: lazy session-end detection → auto-save session summary.
+// Fail-open & never throws; skipped outside production (eval/knowledge_test/shadow).
+import {
+  checkSessionEnd, noteSessionTurn, summarizeTurnForSession, TICKET_REF_RE,
+} from './session-summary.service';
 import { analyzeIncomingMedia } from './media-analysis.service';
 
 // ── Decomposed module imports ──
@@ -110,9 +120,18 @@ import {
   tryHandlePendingServiceClarification,
   tryHandleProtocolGuards,
   tryHandleOutOfScopeGuard,
+  tryHandleNikValidation,
+  detectMultiIntent,
+  buildMultiIntentResponse,
   tryHandleServiceListingShortcut,
   type FastIntentDecision,
 } from './pre-agent-state-router.service';
+
+// P1-5: safety bound for a v1 turn. When exceeded, the turn is marked
+// aborted and every mutation path fails closed (no write). 90s is
+// deliberately generous — normal turns finish in seconds; this only
+// fires on pathological/hung turns.
+const V1_TURN_ABORT_TIMEOUT_MS = 90_000;
 
 // ── Barrel re-exports (backward compatibility) ──
 export type { ChannelType } from './ump-formatters';
@@ -197,6 +216,11 @@ const DEFAULT_GROUNDING_SOURCE_BY_TOOL: Partial<Record<string, string>> = {
   get_important_contact: 'contact_directory_lookup',
   get_emergency_contacts: 'official_emergency_contacts',
 };
+
+// Tracks consecutive AGENT_ERROR per user to avoid immediate handoff on
+// transient model failures (fix N1/N3). In-memory is acceptable: worst case
+// is an extra handoff, not data loss.
+const transientErrorCounts = new Map<string, number>();
 
 interface PendingStateSnapshot {
   serviceOffer?: any;
@@ -863,6 +887,8 @@ function isExplicitHumanHandoffRequest(message: string): boolean {
     /\b(?:minta|mohon|tolong|ingin|mau|butuh|perlu)\b.*\b(?:dibantu|disambungkan|dialihkan|diteruskan|bicara|ngobrol|chat)\b.*\b(?:petugas|admin|operator|manusia)\b/,
     /\b(?:hubungkan|sambungkan|disambungkan|alih(?:kan)?|dialihkan|teruskan|diteruskan)\b.*\b(?:petugas|admin|operator|manusia)\b/,
     /\b(?:mau|ingin|butuh|perlu)\s+(?:orang|manusia|petugas|admin|operator)\b/,
+    /\b(?:mau|ingin|pengen)\b.*\b(?:ngomong|bicara|ngobrol)\b.*\b(?:sama|dengan)\b.*\b(?:orang|manusia)\b/,
+    /\b(?:panggilkan|panggil|hubungi)\b.*\b(?:petugas|admin|operator|orang)\b/,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -899,11 +925,25 @@ async function maybeTriggerHumanHandoff(input: {
   } else {
     const ctx = getEnhancedContext(input.userId);
     if (input.result.intent === 'AGENT_ERROR') {
+      // Retry on transient model errors before handing off to human.
+      // (Fix N1/N3: single AGENT_EMPTY_REPLY immediately triggered takeover.)
+      const key = `agent_error_count:${input.userId}`;
+      const count = (transientErrorCounts.get(key) || 0) + 1;
+      transientErrorCounts.set(key, count);
+      if (count < 2) {
+        // First failure: don't handoff yet, let caller retry or fallback.
+        return { started: false };
+      }
+      transientErrorCounts.delete(key);
       handoffReason = 'agent_error';
-    } else if (input.sentiment.isEscalationCandidate || needsHumanEscalation(input.userId)) {
-      handoffReason = 'negative_sentiment_escalation';
-    } else if (ctx.needsHumanHelp) {
-      handoffReason = 'conversation_stuck';
+    } else {
+      // Reset counter on success.
+      transientErrorCounts.delete(`agent_error_count:${input.userId}`);
+      if (input.sentiment.isEscalationCandidate || needsHumanEscalation(input.userId)) {
+        handoffReason = 'negative_sentiment_escalation';
+      } else if (ctx.needsHumanHelp) {
+        handoffReason = 'conversation_stuck';
+      }
     }
   }
 
@@ -969,6 +1009,20 @@ export function isProcessingFailure(result: ProcessMessageResult): boolean {
   return false;
 }
 
+/**
+ * BUG-008 never-silent: a failed turn that still produced a static fallback
+ * response (v1 smart fallback / v2 issueFallback with a real ticket ref) must
+ * be DELIVERED to the citizen, not swallowed by the 503 path. Returns true
+ * when the response is non-empty and is not one of the known hollow-apology
+ * strings (those stay on the 503 + failed_messages path).
+ */
+export function hasDeliverableFallback(result: ProcessMessageResult): boolean {
+  if (!result.response || !result.response.trim()) return false;
+  const response = result.response.toLowerCase();
+  if (GENERIC_TIMEOUT_PHRASES.some(phrase => response.includes(phrase))) return false;
+  return true;
+}
+
 async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessageResult> {
   const {
     userId,
@@ -1000,6 +1054,22 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     const villageBehavior = await getVillageBehaviorConfig(villageId);
     const villageBehaviorSummary = formatVillageBehaviorConfig(villageBehavior);
 
+    // Identitas AI per desa (pengaturan admin desa): nama, disclosure, persona.
+    // Fail-open ke default (transparan, "Gana") bila dashboard tak terjangkau.
+    const aiIdentity = await getVillageIdentity(villageId);
+
+    // Query rewriting sebelum RAG: bangun konteks percakapan (topik aktif +
+    // entitas) dari summary + recent messages secara deterministik. Tool
+    // search_knowledge/search_documents memakai ini untuk me-rewrite query
+    // anaforis ("kapan selesainya?") menjadi query lengkap sebelum embedding.
+    const queryRewriteContext = buildQueryRewriteContext({
+      summary: conversationSummary,
+      recentMessages: recentConversationHistory,
+    });
+    const hasRewriteContext = Boolean(
+      queryRewriteContext.activeTopic || (queryRewriteContext.entities?.length ?? 0) > 0,
+    );
+
     const result = await runAgent(
       message,
       {
@@ -1012,6 +1082,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         routingDecision,
         pendingStateSummary,
         sideEffectMode,
+        identity: aiIdentity,
       },
       {
         userId,
@@ -1022,6 +1093,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         sideEffectMode,
         activeServiceSlug,
         activeServiceName,
+        rewriteContext: hasRewriteContext ? queryRewriteContext : undefined,
       },
       {
         summary: conversationSummary,
@@ -1076,7 +1148,13 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
       });
     }
     const finalIntent = residentKnowledgeFallback?.intent || derivedIntent;
-    const finalResponse = residentKnowledgeFallback?.response || result.replyText;
+    let finalResponse = residentKnowledgeFallback?.response || result.replyText;
+
+    // W7/UU PDP: redact NIK (16 digit) dari respons sebelum dikirim ke user.
+    // Mencegah LLM meng-echo NIK yang disuplai user secara penuh.
+    if (finalResponse) {
+      finalResponse = finalResponse.replace(/\b\d{16}\b/g, '**** **** **** ****');
+    }
 
     // Empty reply = the agent produced no answer (LLM timeout/down or loop
     // exhausted without grounding). Treat as a processing FAILURE: stay silent
@@ -1186,11 +1264,156 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
   incrementActiveProcessing();
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange, messageId, batchedMessageIds } = input;
+
+  // [W8 FIX] Message-level rate limiting: max 20 messages/minute per user
+  // to prevent spam/DoS and wallet drain from excessive LLM calls.
+  if (!isEvaluation && (sideEffectMode ?? 'production') === 'production') {
+    const { rateLimiterService } = await import('./rate-limiter.service');
+    const rateCheck = rateLimiterService.checkMessageRateLimit(userId, villageId);
+    if (!rateCheck.allowed) {
+      decrementActiveProcessing();
+      return {
+        success: true,
+        response: rateCheck.reason || 'Terlalu banyak pesan. Mohon tunggu sebentar ya Pak/Bu.',
+        intent: 'RATE_LIMITED',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+          agentMode: 'pre_agent_guard',
+          traceId: `t-${Date.now()}`,
+        },
+      };
+    }
+  }
+
+  // Cross-session memory: lazy session-end detection. Bila turn terakhir user
+  // lebih lama dari SESSION_IDLE_TIMEOUT_MS, session lama dianggap berakhir
+  // dan ringkasannya di-save (fail-open, sekali per session). Dijalankan di
+  // bawah user lock (processUnifiedMessage) agar serial per user.
+  const trackSession = !isEvaluation && (sideEffectMode ?? 'production') === 'production';
+  if (trackSession && userId) {
+    checkSessionEnd(userId, villageId ?? undefined);
+  }
+
+  // F7: Guard untuk pesan kosong/whitespace-only — respons graceful langsung,
+  // tidak masuk full agent pipeline yang akan error.
+  if (!message || !message.trim()) {
+    decrementActiveProcessing();
+    return {
+      success: true,
+      intent: 'GREETING',
+      response: 'Halo! Ada yang bisa saya bantu? Silakan tulis pesan Anda.',
+      metadata: {
+        processingTimeMs: Date.now() - startTime,
+        hasKnowledge: false,
+        agentMode: 'pre_agent_guard',
+      },
+    };
+  }
+
+  // Improvement loop (additive, fail-open): user mengoreksi jawaban agent
+  // ("bukan itu maksud saya") adalah sinyal failure yang kuat. Dicatat
+  // sekali per turn di ingress; tidak pernah throw / blokir pipeline.
+  maybeRecordUserCorrection({
+    villageId,
+    sessionId: messageId ?? userId,
+    message,
+    recordable: (sideEffectMode ?? 'production') === 'production' && !isEvaluation,
+  });
+
+  // G7: Passive profile learning — extract name/phone/style from every message
+  // (e.g. "nama saya Rina Wijaya") into durable_user_profiles.nama_lengkap.
+  // Never breaks the pipeline: failures are swallowed after logging.
+  try {
+    learnFromMessage(userId, message, villageId);
+  } catch (err: any) {
+    logger.warn('profile learnFromMessage failed (non-fatal)', {
+      userId,
+      error: err?.message,
+    });
+  }
+
   let workingMessage = message;
   let resolvedHistory = conversationHistory;
   let villageTimezone: string | null = null;
   let finalResult: ProcessMessageResult | null = null;
   let routingOutcome: RoutingOutcomeMeta | undefined;
+
+  // Identity questions: answer directly from village identity settings,
+  // bypass KB lookup. The LLM system prompt already has the identity,
+  // but we handle it here deterministically for reliability.
+  // IMPORTANT: "kamu siapa?" follows persona/disclosure setting, but a DIRECT
+  // question like "apakah kamu AI?" must ALWAYS be answered honestly as AI,
+  // even when disclosure=false (honesty over persona).
+  const normalizedMsg = message.toLowerCase().trim();
+  const generalIdentityPatterns = [
+    /^(kamu|kau) siapa\??$/,
+    /^siapa (kamu|kau)\??$/,
+    /\bkamu\b.{0,10}\bsiapa\b/,
+  ];
+  const directAiQuestionPatterns = [
+    /^(apakah|apa) (kamu|kau) (ai|bot|robot)\??$/,
+    /^(kamu|kau) (ai|bot|robot) (ya|kan|bukan)\??$/,
+    /\bkamu\b.{0,20}\b(robot|ai|bot)\b/,
+    /\b(robot|ai|bot)\b.{0,20}\bkamu\b/,
+  ];
+  const isGeneralIdentity = generalIdentityPatterns.some(p => p.test(normalizedMsg));
+  const isDirectAiQuestion = directAiQuestionPatterns.some(p => p.test(normalizedMsg));
+  if (isGeneralIdentity || isDirectAiQuestion) {
+    const { getVillageIdentity } = await import('./village-identity.service');
+    const identity = await getVillageIdentity(villageId);
+    const personaName = identity.personaName || 'Gana';
+    let response: string;
+    if (isDirectAiQuestion) {
+      // Direct question → always honest, regardless of disclosure setting.
+      response = `Ya, saya ${personaName}, asisten AI layanan desa. Ada yang bisa saya bantu?`;
+    } else if (identity.disclosure !== false) {
+      response = `Saya ${personaName}, asisten AI resmi layanan desa. Ada yang bisa saya bantu?`;
+    } else {
+      response = `Saya ${personaName}, asisten layanan desa yang siap membantu. Ada yang bisa saya bantu?`;
+    }
+    decrementActiveProcessing();
+    return {
+      success: true,
+      response,
+      intent: 'identity',
+      metadata: {
+        processingTimeMs: Date.now() - startTime,
+        model: 'deterministic',
+        hasKnowledge: false,
+        agentMode: 'deterministic_fact_router' as const,
+      },
+    };
+  }
+
+  // G7: "siapa nama saya?" — answer deterministically from the durable profile
+  // instead of letting the agent guess (the agent prompt only carries a masked
+  // name, so it can never answer this reliably).
+  const selfNameQuestionPatterns = [
+    /^(siapa\s+nama\s+(saya|aku|gue|gw|ku)|siapa\s+namaku|namaku\s+siapa|nama\s+(saya|aku)\s+siapa)(\s+(dong|ya|sih|deh))?\??$/,
+    /^(apakah\s+)?(kamu|kau)\s+(tahu|tau|ingat)\s+(nama\s+(saya|aku|ku)|namaku)\??$/,
+    /^(kamu|kau)\s+(tahu|tau)\s+siapa\s+(saya|aku)\??$/,
+  ];
+  const isSelfNameQuestion = selfNameQuestionPatterns.some((p) => p.test(normalizedMsg));
+  if (isSelfNameQuestion) {
+    const knownName = (await getProfileWithFallback(userId, villageId)).nama_lengkap?.trim();
+    const selfNameResponse = knownName
+      ? `Nama Bapak/Ibu tercatat sebagai ${knownName}. Ada lagi yang bisa saya bantu?`
+      : 'Sepertinya saya belum tahu nama Bapak/Ibu. Boleh perkenalkan nama Anda?';
+    decrementActiveProcessing();
+    return {
+      success: true,
+      response: selfNameResponse,
+      intent: 'PROFILE_NAME_QUERY',
+      metadata: {
+        processingTimeMs: Date.now() - startTime,
+        model: 'deterministic',
+        hasKnowledge: false,
+        agentMode: 'deterministic_fact_router' as const,
+      },
+    };
+  }
+
   const finish = (result: ProcessMessageResult) => {
     result = attachGroundingMetadata(result);
 
@@ -1238,6 +1461,17 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     const split = splitFollowUpGuidance(result.response, result.guidanceText);
     result.response = split.response;
     result.guidanceText = split.guidanceText;
+
+    // C1/C2/E6: persist assistant reply to history cache so multi-turn
+    // context is available on the next turn (for webchat and whatsapp).
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test' && result.response) {
+      try {
+        appendToHistoryCache(userId, 'assistant', result.response);
+      } catch (err: any) {
+        logger.debug('[HistoryCache] append assistant skipped', { error: err?.message });
+      }
+    }
+
     finalResult = result;
     return result;
   };
@@ -1286,6 +1520,13 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     hasMedia: !!mediaUrl,
   });
   
+  // P1-5: per-turn abort controller for the v1 pipeline. The signal is
+  // threaded into the pre-agent router and mutation handlers; every
+  // mutation path re-checks it immediately before writing and fails
+  // closed (no write) when the turn was aborted. The timer also bounds
+  // pathological turns so a hung turn cannot land writes indefinitely.
+  const turnAbort = createTurnAbortController(V1_TURN_ABORT_TIMEOUT_MS);
+
   try {
     const resolvedVillageId = villageId;
     const agentChannel = channel === 'webchat' ? 'webchat' : 'whatsapp';
@@ -1507,6 +1748,14 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
               timeout = setTimeout(() => reject(new Error('Micro-NLU budget timeout')), remaining);
             }),
           ]);
+        } catch (err) {
+          // Fail-open: a slow or failing micro-classifier must not kill the whole message.
+          // Fall back to the rule-based classifier result instead of 503.
+          logger.warn('[UnifiedProcessor] Micro-NLU classifier failed, using fallback', {
+            error: err instanceof Error ? err.message : String(err),
+            elapsed: Date.now() - t0,
+          });
+          return fallback;
         } finally {
           if (timeout) clearTimeout(timeout);
         }
@@ -1543,12 +1792,15 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       }
     }
 
-    if (channel === 'whatsapp' && (!resolvedHistory || resolvedHistory.length === 0)) {
+    // C1/C2/E6: fetch history for webchat too, not just whatsapp, so
+    // multi-turn context (active topic, previous service) is available.
+    if ((channel === 'whatsapp' || channel === 'webchat') && (!resolvedHistory || resolvedHistory.length === 0)) {
       resolvedHistory = await fetchConversationHistoryFromChannel(userId, resolvedVillageId);
       // Append current user message to cache so subsequent calls see it
       appendToHistoryCache(userId, 'user', workingMessage);
-      logger.info('📚 [UnifiedProcessor] Loaded WhatsApp history', {
+      logger.info('📚 [UnifiedProcessor] Loaded channel history', {
         userId,
+        channel,
         historyCount: resolvedHistory?.length || 0,
       });
     }
@@ -1613,6 +1865,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     if (sideEffectMode !== 'knowledge_test') {
       const greetingShortcut = tryHandleGreetingShortcut({
         message: workingMessage,
+        userId,
         userName: null,
         villageName: null,
         traceId,
@@ -1689,6 +1942,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
           startTime,
           sideEffectMode,
           runWithMicroBudget: withMicroNluBudget,
+          signal: turnAbort.signal,
         });
     if (pendingOfferResult) {
       routingOutcome = {
@@ -1727,6 +1981,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
           runWithMicroBudget: withMicroNluBudget,
           tracker,
           notifyStage,
+          signal: turnAbort.signal,
         });
     if (latePreAgentResult) {
       const guardrail = latePreAgentResult.metadata.guardrail;
@@ -1832,13 +2087,55 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       return finish(activeServiceFollowUpResult);
     }
 
-    const outOfScopeGuardResult = sideEffectMode === 'knowledge_test' || !shouldHardBlockOutOfScope(routingDecision)
+    // [P1-3 FIX] Multi-intent: jika 2+ hal berbeda dalam satu pesan, tanya prioritas
+    const multiIntentResult: import('./ump-types').ProcessMessageResult | null = sideEffectMode === 'knowledge_test'
       ? null
-      : tryHandleOutOfScopeGuard({
-          message: workingMessage,
-          traceId,
-          startTime,
-        });
+      : (() => {
+          const detection = detectMultiIntent(workingMessage);
+          if (!detection.isMulti) return null;
+          const result: import('./ump-types').ProcessMessageResult = {
+            success: true,
+            response: buildMultiIntentResponse(detection),
+            intent: 'QUESTION',
+            metadata: {
+              processingTimeMs: Date.now() - startTime,
+              hasKnowledge: false,
+              agentMode: 'pre_agent_guard',
+              traceId,
+            },
+          };
+          return result;
+        })();
+    if (multiIntentResult) {
+      tracker.complete();
+      notifyStage('done', 100);
+      return finish(multiIntentResult);
+    }
+
+    // [P1-2 FIX] Government service redirect (SIM, paspor, dll) harus dicek
+    // independen dari routing decision — "di desa bisa perpanjang SIM nggak?"
+    // sering terklasifikasi SERVICE_INFO bukan OUT_OF_SCOPE.
+    const { buildGovtServiceRedirect: checkGovtRedirect } = await import('./pre-agent-state-router.service');
+    const govtServiceRedirect = sideEffectMode === 'knowledge_test' ? null : checkGovtRedirect(workingMessage);
+    const outOfScopeGuardResult: ProcessMessageResult | null = govtServiceRedirect
+      ? {
+          success: true,
+          response: govtServiceRedirect,
+          intent: 'QUESTION',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            hasKnowledge: false,
+            agentMode: 'pre_agent_guard' as const,
+            traceId,
+          },
+        }
+      : sideEffectMode === 'knowledge_test' || !shouldHardBlockOutOfScope(routingDecision)
+        ? null
+        : tryHandleOutOfScopeGuard({
+            message: workingMessage,
+            traceId,
+            startTime,
+          });
     if (outOfScopeGuardResult) {
       routingOutcome = {
         outcome: 'hard_blocked',
@@ -1859,6 +2156,34 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         messagePreview: workingMessage,
       });
       return finish(outOfScopeGuardResult);
+    }
+
+    // P1-4: NIK format validation — reject invalid NIK before it falls through
+    // to complaint classification.
+    const nikValidationResult = tryHandleNikValidation({
+      message: workingMessage,
+      traceId,
+      startTime,
+    });
+    if (nikValidationResult) {
+      routingOutcome = {
+        outcome: 'hard_blocked',
+        reason: nikValidationResult.intent,
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'pre_agent_identity',
+        guardType: 'nik_validation',
+        action: 'handled',
+        reason: nikValidationResult.intent,
+        messagePreview: workingMessage,
+      });
+      return finish(nikValidationResult);
     }
 
     // Deterministic service listing — bypasses RAG/knowledge for "layanan apa aja"
@@ -2102,8 +2427,8 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         : undefined,
     ].filter(Boolean).join('\n\n') || undefined;
 
-    const [savedProfile, memorySummary, sentiment, villageProfile] = await Promise.all([
-      getAutoFillSuggestionsWithFallback(userId),
+    const [savedProfile, memorySummary, sentiment, villageProfile, lastInteractionBlock] = await Promise.all([
+      getAutoFillSuggestionsWithFallback(userId, resolvedVillageId), // W5: village-scoped
       sideEffectMode === 'knowledge_test'
         ? Promise.resolve(undefined)
         : buildHybridMemorySummary({
@@ -2121,7 +2446,21 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         channel,
       }),
       resolvedVillageId ? getVillageProfileSummary(resolvedVillageId) : Promise.resolve(null),
+      // Cross-session memory (additive): last interaction summary for personalization.
+      // Never throws; returns undefined when no recent interaction.
+      sideEffectMode === 'knowledge_test'
+        ? Promise.resolve(undefined)
+        : import('../services/last-interaction.service').then(
+            ({ buildLastInteractionContext }) =>
+              buildLastInteractionContext(userId, resolvedVillageId),
+          ).catch(() => undefined),
     ]);
+    // Merge last-interaction block into memory summary (additive).
+    const enrichedMemorySummary = lastInteractionBlock
+      ? memorySummary
+        ? `${memorySummary}\n\n${lastInteractionBlock}`
+        : lastInteractionBlock
+      : memorySummary;
     syncCrossChannelContext(userId, agentChannel, sideEffectMode, !!isEvaluation, savedProfile);
     const sentimentContext = getSentimentContext(sentiment);
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
@@ -2150,7 +2489,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       memorySummary: enrichMemoryWithPromises(
         userId,
         villageId,
-        enrichMemoryWithCrossChannel(userId, memorySummary),
+        enrichMemoryWithCrossChannel(userId, enrichedMemorySummary),
         sanitizedMessage,
       ),
       routingDecision,
@@ -2410,6 +2749,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       error: error.message,
     });
   } finally {
+    turnAbort.dispose();
     const analyticsResult = finalResult as ProcessMessageResult | null;
     if (!isEvaluation && sideEffectMode !== 'knowledge_test' && analyticsResult && analyticsResult.intent !== 'SPAM') {
       await aiAnalyticsService.recordInteractionEvent({
@@ -2518,6 +2858,35 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         error: billingError?.message || String(billingError),
       });
     }
+    // §10 (integrator wiring): debit the village wallet exactly once per
+    // VERIFIED resolution — never per message. Accrual was finalized above,
+    // so recordResolution can sum this turn's accrued cost. Fire-and-forget;
+    // never throws into the message path.
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test' && analyticsResult && analyticsResult.success) {
+      void maybeBillV1Resolution({
+        userId, villageId, channel, traceId, billingGroupId,
+        result: analyticsResult, resolvedMessageId,
+      }).catch(() => undefined);
+    }
+    // Cross-session memory: snapshot turn ini untuk auto-save saat session
+    // berakhir (lazy detection di checkSessionEnd pada turn berikutnya).
+    // v1 memakai conversationSummary deterministik dari EnhancedContext
+    // (tanpa transcript mentah); fallback ke ringkasan hasil turn.
+    // Fail-open: tidak pernah melempar ke alur pesan.
+    if (trackSession && analyticsResult) {
+      const ectx = getEnhancedContext(userId);
+      const snapshot = (ectx.conversationSummary ?? '').trim()
+        || summarizeTurnForSession(analyticsResult);
+      noteSessionTurn({
+        userKey: userId,
+        wa_user_id: userId,
+        village_id: villageId ?? undefined,
+        summary: snapshot,
+        appendSummary: false,
+        hasOutcome: ectx.hasCompletedAction
+          || TICKET_REF_RE.test(analyticsResult.response ?? ''),
+      });
+    }
     decrementActiveProcessing();
   }
 }
@@ -2525,7 +2894,68 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
 export const __test_only__ = {
   isExplicitHumanHandoffRequest,
   classifyHelpfulnessForStuck,
+  maybeBillV1Resolution,
 };
+
+/**
+ * §10 integrator (v1): map a finished turn to a verified resolution and debit
+ * per resolution. Conservative: only turns with deterministic evidence
+ * (successful mutation tools + ticket refs, or DB-backed lookups) count.
+ * Greetings, clarifications, fallbacks and failed turns are NOT resolutions —
+ * the vendor absorbs those turns (the §10 incentive).
+ */
+async function maybeBillV1Resolution(params: {
+  userId: string;
+  villageId?: string | null;
+  channel: string;
+  traceId: string;
+  billingGroupId: string;
+  result: ProcessMessageResult;
+  resolvedMessageId: string;
+}): Promise<void> {
+  try {
+    const { userId, villageId, channel, traceId, billingGroupId, result, resolvedMessageId } = params;
+    const meta = (result.metadata ?? {}) as Record<string, any>;
+    const toolsUsed: string[] = Array.isArray(meta.toolsUsed) ? meta.toolsUsed : [];
+    const intent: string = result.intent ?? '';
+    const response: string = result.response ?? '';
+    const ticketRefs = Array.from(
+      response.matchAll(/\b(?:LAP|TMP|SRV|REQ|LAY)-\d{4}\d{2}\d{2}-\d{2,6}\b/g),
+    ).map((m) => m[0]);
+
+    let type: ResolutionType | null = null;
+    let evidenceRef: string | null = null;
+    if (toolsUsed.includes('create_complaint') && ticketRefs.length > 0) {
+      type = 'complaint_created'; evidenceRef = ticketRefs[0];
+    } else if (toolsUsed.includes('create_service_request') && ticketRefs.length > 0) {
+      type = 'service_request_created'; evidenceRef = ticketRefs[0];
+    } else if (toolsUsed.includes('check_status')) {
+      type = 'status_delivered';
+    } else if ((intent === 'KNOWLEDGE_QUERY' || intent === 'QUESTION')
+      && toolsUsed.some((t) => ['search_documents', 'search_knowledge', 'get_service_info', 'get_village_profile'].includes(t))) {
+      type = 'info_answered';
+    }
+    if (!type) return;
+
+    await recordResolution({
+      villageId: villageId ?? null,
+      waUserId: channel === 'whatsapp' ? userId : null,
+      sessionId: channel === 'webchat' ? userId : null,
+      channel,
+      traceId,
+      resolutionType: type,
+      evidenceRef,
+      evidence: { pipeline: 'v1', intent, toolsUsed, ticketRefs },
+      billingGroupIds: [billingGroupId],
+      resolutionKey: `msg:${villageId ?? 'novillage'}:${resolvedMessageId}:${type}:${evidenceRef ?? 'noref'}`,
+      metadata: { pipeline: 'v1' },
+    });
+  } catch (err) {
+    logger.warn('[unified-message-processor] resolution billing failed (non-blocking)', {
+      error: (err as Error)?.message ?? String(err),
+    });
+  }
+}
 
 export default {
   processUnifiedMessage,

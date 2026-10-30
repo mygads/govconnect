@@ -199,23 +199,105 @@ export interface ComplaintTypeInfo {
   };
 }
 
-export async function getComplaintTypes(villageId?: string): Promise<ComplaintTypeInfo[]> {
+/**
+ * P1-12 — Village scoping rule (explicit, fail-closed):
+ *
+ * - Complaint categories & types are ALWAYS per-village. There are NO global
+ *   categories: `complaint_categories.village_id` is NOT NULL in the schema,
+ *   and `complaint_types` inherit their village through their category
+ *   (`category.village_id`). An unscoped query would return another village's
+ *   categories — a cross-tenant leak.
+ * - `villageId` is REQUIRED. A call without village_id never reaches the
+ *   network: it returns [] immediately (fail-closed) instead of relying on
+ *   the server to reject an unscoped request.
+ */
+export async function getComplaintTypes(villageId: string): Promise<ComplaintTypeInfo[]> {
+  if (!villageId) {
+    logger.warn('getComplaintTypes called without villageId — refusing unscoped query (fail-closed)');
+    return [];
+  }
   try {
     const url = `${config.caseServiceUrl}/complaints/types`;
     const response = await resilientHttp.get<{ data: ComplaintTypeInfo[] }>(url, {
       headers: {
         'x-internal-api-key': config.internalApiKey,
         'Content-Type': 'application/json',
-        ...(villageId ? { 'x-admin-role': 'village_admin', 'x-village-id': villageId } : {}),
+        'x-admin-role': 'village_admin',
+        'x-village-id': villageId,
       },
-      params: villageId ? { village_id: villageId } : undefined,
+      params: { village_id: villageId },
+      timeout: 10000,
+    });
+
+    if (resilientHttp.isFallbackResponse(response)) return [];
+    const types = response.data.data || [];
+
+    // [P2-4 FIX] Fallback: jika complaint_types kosong tapi categories ada,
+    // gunakan categories sebagai types agar daftar tidak kosong.
+    // Admin desa mengisi categories; types adalah detail opsional.
+    if (types.length === 0) {
+      const categories = await getComplaintCategories(villageId);
+      if (categories.length > 0) {
+        logger.info('getComplaintTypes: types empty, falling back to categories', {
+          villageId,
+          categoriesCount: categories.length,
+        });
+        return categories.map((cat) => ({
+          id: cat.id,
+          name: cat.name,
+          description: cat.description,
+          category_id: cat.id,
+          is_urgent: false,
+          require_address: false,
+          send_important_contacts: false,
+          important_contact_category: null,
+        } as ComplaintTypeInfo));
+      }
+    }
+
+    return types;
+  } catch (error: any) {
+    logger.warn('Failed to fetch complaint types', {
+      error: error.message,
+      status: error.response?.status,
+    });
+    return [];
+  }
+}
+
+/**
+ * P1-2 — Fetch complaint CATEGORIES (not types) for a village.
+ * Used to normalize the raw kategori string to the canonical category name
+ * before storing a ticket. Fail-closed: returns [] without village_id.
+ */
+export interface ComplaintCategoryInfo {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export async function getComplaintCategories(villageId: string): Promise<ComplaintCategoryInfo[]> {
+  if (!villageId) {
+    logger.warn('getComplaintCategories called without villageId — refusing unscoped query (fail-closed)');
+    return [];
+  }
+  try {
+    const url = `${config.caseServiceUrl}/complaints/categories`;
+    const response = await resilientHttp.get<{ data: ComplaintCategoryInfo[] }>(url, {
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+        'Content-Type': 'application/json',
+        'x-admin-role': 'village_admin',
+        'x-village-id': villageId,
+      },
+      params: { village_id: villageId },
       timeout: 10000,
     });
 
     if (resilientHttp.isFallbackResponse(response)) return [];
     return response.data.data || [];
   } catch (error: any) {
-    logger.warn('Failed to fetch complaint types', {
+    logger.warn('Failed to fetch complaint categories', {
       error: error.message,
       status: error.response?.status,
     });

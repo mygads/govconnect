@@ -7,7 +7,7 @@
 -- Replaces the in-memory retry queue for durable persistence; the in-memory
 -- queue remains as a fast-access cache during active retries.
 
-CREATE TABLE IF NOT EXISTS ai."failed_messages" (
+CREATE TABLE IF NOT EXISTS public."failed_messages" (
   "id"               TEXT         NOT NULL,
   "village_id"       TEXT,
   "wa_user_id"       TEXT,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS ai."failed_messages" (
 );
 
 CREATE INDEX IF NOT EXISTS "failed_messages_village_status_idx"
-  ON ai."failed_messages" (village_id, status);
+  ON public."failed_messages" (village_id, status);
 
 CREATE INDEX IF NOT EXISTS "failed_messages_status_idx"
-  ON ai."failed_messages" (status);
+  ON public."failed_messages" (status);

@@ -11,6 +11,7 @@
 
 import logger from '../utils/logger';
 import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabledAsync } from './ai-gateway.service';
+import { callSmallTier } from '../llm/small-tier';
 import type { CallType } from './token-usage.service';
 
 // ---------- Model Priority ----------
@@ -24,6 +25,18 @@ async function callMicroLLM(
   call_type: CallType,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<string | null> {
+  // A6: small self-host tier first (MODEL_TIER_SMALL, default off).
+  // Any failure/misconfiguration → null → falls through to the main gateway.
+  try {
+    const small = await callSmallTier(
+      [{ role: 'system', content: prompt }],
+      { temperature: 0.1, maxTokens: call_type === 'summarize' ? 250 : 300 },
+    );
+    if (small) return small.text;
+  } catch {
+    // callSmallTier is designed never to throw; stay fail-safe regardless.
+  }
+
   if (!(await isAIGatewayEnabledAsync('llm', context?.village_id ?? null))) {
     logger.error('Micro LLM skipped: LLM gateway lane is not configured');
     return null;
@@ -448,6 +461,11 @@ CONTOH:
 - "ada orang sakit keras butuh bantuan cepat" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "emergency_contact", routing_confidence: 0.9
 - "minta nomor damkar sekarang" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "contact_lookup", routing_confidence: 0.85
 - "sampah menumpuk di jalan" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "air pam mati dari pagi" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "tetangga hajatan sound system kenceng banget" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "saya dimintain uang sama oknum pas ngurus surat" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
+- "kambing tetangga lepas masuk kebun saya" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "ngurus surat 2 minggu nggak jadi-jadi, petugas susah ditemui" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
 - "saya mau buat laporan tadi ada kecelakaan" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
 - "mau lapor kebakaran di kampung" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
 - "tolong ada kebakaran cepat" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "emergency_contact", routing_confidence: 0.92
@@ -1197,13 +1215,16 @@ export async function validateResponseAgainstKnowledge(
 }
 
 // Keyed cache for classify results — prevents race conditions under concurrent requests.
-// Key = hash(message), stores result per-message with 2s TTL.
+// P0-1: key = village_id + hash(message) because the prompt is village-dependent
+// (buildUnifiedClassifyPrompt(village_id)); a message-only key could leak one
+// village's classification into another. TTL 60s: classification is stable per
+// message+village and this cache sits in front of an LLM call.
 const _classifyCache = new Map<string, { result: UnifiedClassifyResult | null; ts: number }>();
-const CLASSIFY_CACHE_TTL = 2000; // 2 seconds
-const MAX_CLASSIFY_CACHE = 50;
+const CLASSIFY_CACHE_TTL = 60 * 1000; // 60 seconds
+const MAX_CLASSIFY_CACHE = 200;
 
 /**
- * Get unified classification result, cached within a 2-second window
+ * Get unified classification result, cached within a 60-second window
  * to avoid duplicate LLM calls when greeting/farewell/RAG check the same message.
  * Uses keyed Map instead of single global variable to handle concurrent requests safely.
  */
@@ -1212,7 +1233,7 @@ async function classifyMessageCached(
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<UnifiedClassifyResult | null> {
   const trimmed = message.trim();
-  const cacheKey = simpleHash(trimmed);
+  const cacheKey = `${context?.village_id ?? 'global'}:${simpleHash(trimmed)}`;
   const now = Date.now();
 
   const cached = _classifyCache.get(cacheKey);

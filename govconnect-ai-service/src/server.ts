@@ -8,6 +8,10 @@ import { drainActiveProcessing } from './services/unified-message-processor.serv
 import { clearAllTimers } from './utils/timer-registry';
 import { getAllAIGatewayInfoAsync } from './services/ai-gateway.service';
 import { startDocumentOcrWorker } from './services/document-ingest.service';
+import { installMicroAssessor } from './pipeline/micro-assessor';
+import { assertVaultKeyConfigured } from './pipeline/pii-vault';
+import { startLaporDrainScheduler } from './pipeline/lapor-bridge';
+import { startKbSuggesterScheduler } from './services/kb-suggester-scheduler';
 
 // UNIFIED PROCESSOR - same architecture for WhatsApp and Webchat
 // No more pattern matching, full LLM understanding
@@ -16,6 +20,16 @@ let server: any;
 
 async function startServer() {
   try {
+    // Track A2: fail-closed NIK vault guard FIRST — refuse to boot in
+    // production without a valid NIK_VAULT_KEY. Local/dev may opt into
+    // explicit degraded mode via NIK_VAULT_ALLOW_INSECURE_MEMORY=true.
+    assertVaultKeyConfigured();
+
+    // Track A2: install the micro-assessor's LLM hook once at startup so
+    // fuzzy stage transitions in v2 get LLM assessment with deterministic
+    // fallback (best-effort; gateway failures degrade gracefully).
+    installMicroAssessor();
+
     const gateways = await getAllAIGatewayInfoAsync();
 
     logger.info('🚀 Starting AI Orchestrator Service...', {
@@ -35,6 +49,10 @@ async function startServer() {
     
     await startConsuming(processMessage);
     startDocumentOcrWorker();
+    // W17: start the LAPOR! outbox drain scheduler (no-op unless LAPOR_ENABLED).
+    startLaporDrainScheduler();
+    // R5: start the KB suggester scheduler (no-op unless KB_SUGGESTER_ENABLED).
+    startKbSuggesterScheduler();
 
     // Start Express server (for health checks)
     server = app.listen(config.port, () => {

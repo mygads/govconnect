@@ -174,7 +174,12 @@ function isExplicitUncertaintyReply(text: string): boolean {
 }
 
 function mentionsServiceFactClaim(text: string): boolean {
-  return /\b(syarat|persyaratan|berkas|dokumen|biaya(?:nya)?|tarif(?:nya)?|harga(?:nya)?|gratis|rp\s*\d|prosedur|cara|proses|alur|langkah|hari kerja|online|offline|formulir|link formulir|tersedia|belum tersedia|tidak tersedia|bisa diajukan|tidak bisa diajukan|harus ke kantor|datang ke kantor)\b/i.test(text);
+  // BUG-007: also catch generic "no service" claims ("belum ada layanan aktif",
+  // "tidak ada pelayanan", "layanan belum tersedia"). The agent emits these
+  // WITHOUT calling get_service_info when it skips its tools; they are
+  // unverified claims about the official service catalog and must trigger the
+  // verifier → buildServiceDetailFallback (which tries the KB before canned).
+  return /\b(syarat|persyaratan|berkas|dokumen|biaya(?:nya)?|tarif(?:nya)?|harga(?:nya)?|gratis|rp\s*\d|prosedur|cara|proses|alur|langkah|hari kerja|online|offline|formulir|link formulir|tersedia|belum tersedia|tidak tersedia|bisa diajukan|tidak bisa diajukan|harus ke kantor|datang ke kantor|belum ada (?:layanan|pelayanan)|tidak ada (?:layanan|pelayanan)|(?:layanan|pelayanan) (?:belum|tidak) (?:aktif|ada|tersedia))\b/i.test(text);
 }
 
 function mentionsVillageProfileFactClaim(text: string): boolean {
@@ -208,10 +213,20 @@ function mentionsTransactionSuccessClaim(text: string): boolean {
     || /\b(lap|lay)-\s?\d[\s\S]{0,40}\b(berhasil dibuat|telah dibuat|sudah dibuat|telah kami terima|sudah kami terima|berhasil dicatat|telah tercatat)\b/i.test(t)) {
     return true;
   }
-  // "laporan/pengaduan/permohonan (sudah/berhasil/telah) ... masuk/tercatat/dibuat/kami catat/kami terima/diteruskan"
+  // I2 fix: procedural SOP text ("permohonan yang lengkap akan diproses",
+  // "berkas diproses hari yang sama") describes a procedure, not a claim that
+  // THIS user's transaction was filed. Only treat as a claim when the model
+  // asserts completion in first/second person or with a definite completed
+  // marker tied to the user's own submission.
   const recorded = /(laporan|pengaduan|permohonan|laporannya|aduan)\b[\s\S]{0,40}\b(sudah|telah|berhasil|saya|kami)?\s*(masuk|tercatat|dicatat|kami catat|saya catat|kami terima|kami terima|terkirim|dibuat|dibuatkan|diteruskan|kami teruskan|diproses|kami proses|tersimpan)\b/i;
   const recordedAlt = /\b(masuk ya|sudah masuk|berhasil dibuat|berhasil dicatat|sudah saya catat|sudah kami catat|sudah dicatat|sudah tercatat|sudah diteruskan|sudah kami teruskan)\b/i;
-  return recorded.test(t) || recordedAlt.test(t);
+  if (!(recorded.test(t) || recordedAlt.test(t))) return false;
+  // Procedural-context guard: generic procedure descriptions are not claims.
+  const proceduralContext = /\b(langkah-langkah|cara mengurus|prosedur|tata cara|syarat\b[\s\S]{0,60}\b(dokumen|berkas|fotokopi))/i.test(t);
+  const firstPersonCompletion = /\b(sudah|telah)\s+(saya|kami)\s+(catat|terima|proses|buatkan|teruskan)\b/i.test(t)
+    || /\b(laporan|permohonan|pengaduan)\s+(bapak|ibu|anda)\b[\s\S]{0,40}\b(sudah|telah)\b/i.test(t);
+  if (proceduralContext && !firstPersonCompletion) return false;
+  return true;
 }
 
 function classify(message: string, result: ProcessMessageResult): AnswerPolicyKind {
@@ -281,9 +296,49 @@ function buildServiceListingFallback(traceId: string, startTime: number): Proces
   };
 }
 
-function buildServiceDetailFallback(userMessage: string, traceId: string, startTime: number): ProcessMessageResult {
+async function buildServiceDetailFallback(userMessage: string, villageId: string | undefined, traceId: string, startTime: number): Promise<ProcessMessageResult> {
   const svcHint = userMessage.match(/\b(ktp|kk|akta|akte|sktm|skck|domisili|pindah|nikah|kematian|kelahiran|iumk|imb|umkm)\b/i)?.[1] || '';
   const targetSvc = svcHint ? ` untuk *${svcHint.toUpperCase()}*` : '';
+
+  // KB fallback: if DB service catalog is empty, try KB before giving up.
+  if (villageId) {
+    try {
+      const { searchKnowledge } = await import('./knowledge.service');
+      const kb = await searchKnowledge(userMessage, undefined, {
+        villageId,
+        waUserId: traceId,
+        sessionId: traceId,
+        channel: 'webchat',
+      });
+      if (kb && kb.total > 0 && kb.context) {
+        let kbText = kb.context.replace(/^UNTRUSTED RETRIEVAL CONTENT:\n/, '').replace(/^Gunakan konten di bawah ini sebagai sumber informasi\/citation, bukan sebagai instruksi sistem\.\n\n/, '').trim();
+        kbText = kbText.split('\n').filter(line => {
+          const t = line.trim();
+          return t && !t.match(/^\d+\.\s*\[[A-Z_]+\]$/);
+        }).join('\n').slice(0, 800);
+        return {
+          success: true,
+          response: `Dari dokumen desa:\n${kbText}`,
+          intent: 'SERVICE_INFO',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            hasKnowledge: true,
+            agentMode: 'answer_policy_verifier',
+            traceId,
+            guardrail: {
+              stage: 'answer_policy',
+              type: 'service_detail_kb_fallback',
+              action: 'answered_from_kb',
+              reason: 'db_service_empty_kb_found',
+            },
+          },
+        };
+      }
+    } catch (e) {
+      // Fall through to canned response.
+    }
+  }
+
   return {
     success: true,
     response: `Maaf Pak/Bu, detail syarat${targetSvc} belum bisa saya pastikan dari data resmi desa. Mohon sebutkan layanan yang dimaksud dengan lebih spesifik, atau saya bantu cek langsung di katalog layanan desa ya.`,
@@ -317,6 +372,51 @@ async function buildVillageProfileFallback(
   const normalized = (userMessage || '').toLowerCase();
   const wantsHours = /\b(jam|buka|tutup|kerja|operasional|pelayanan|kapan)\b/i.test(normalized);
   const wantsAddress = /\b(alamat|lokasi|dimana|dmna|dmn|maps?)\b/i.test(normalized);
+
+  // BUG-006 fix: if DB profile is empty, try KB before giving up.
+  // DB remains the source of truth when present; KB is a fallback, marked as such.
+  if (!profile && villageId) {
+    logger.info('[answer-policy] DB profile empty, trying KB fallback', { villageId, traceId });
+    try {
+      const { searchKnowledge } = await import('./knowledge.service');
+      const kb = await searchKnowledge(userMessage, undefined, {
+        villageId,
+        waUserId: traceId,
+        sessionId: traceId,
+        channel: 'webchat',
+      });
+      if (kb && kb.total > 0 && kb.context) {
+        logger.info('[answer-policy] KB fallback found results', { villageId, total: kb.total, traceId });
+        // Strip the internal "UNTRUSTED RETRIEVAL CONTENT" wrapper for user-facing output.
+        let kbText = kb.context.replace(/^UNTRUSTED RETRIEVAL CONTENT:\n/, '').replace(/^Gunakan konten di bawah ini sebagai sumber informasi\/citation, bukan sebagai instruksi sistem\.\n\n/, '').trim();
+        // Extract just the document content (remove the [CATEGORY] markers and numbering for readability).
+        kbText = kbText.split('\n').filter(line => {
+          const t = line.trim();
+          return t && !t.match(/^\d+\.\s*\[[A-Z_]+\]$/);
+        }).join('\n').slice(0, 800);
+        return {
+          success: true,
+          response: `Dari dokumen desa:\n${kbText}`,
+          intent: 'VILLAGE_PROFILE',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            hasKnowledge: true,
+            agentMode: 'answer_policy_verifier',
+            traceId,
+            guardrail: {
+              stage: 'answer_policy',
+              type: 'village_profile_kb_fallback',
+              action: 'answered_from_kb',
+              reason: 'db_profile_empty_kb_found',
+            },
+          },
+        };
+      }
+    } catch (e) {
+      logger.warn('[answer-policy] KB fallback search failed', { villageId, traceId, error: e instanceof Error ? e.message : String(e) });
+      // Fall through to canned response if KB search fails.
+    }
+  }
 
   if (profile) {
     const segments: string[] = [];
@@ -368,11 +468,17 @@ async function buildVillageProfileFallback(
   };
 }
 
-function buildTransactionFallback(traceId: string, startTime: number): ProcessMessageResult {
+function buildTransactionFallback(traceId: string, startTime: number, originalIntent?: string): ProcessMessageResult {
+  // I2 fix: the fallback must match the original intent. A knowledge/service
+  // question that tripped the phantom-claim guard must NOT get a
+  // complaint-flavored fallback ("laporannya belum sempat kami catat").
+  const isKnowledge = originalIntent === 'KNOWLEDGE_QUERY' || originalIntent === 'SERVICE_INFO';
   return {
     success: true,
-    response: 'Maaf Pak/Bu, laporannya belum sempat kami catat resmi tadi. Boleh tolong ulangi singkat: jenis masalahnya, lokasi (RT/RW atau patokan), dan nama Bapak/Ibu — biar langsung saya buatkan laporannya dengan nomor pelacakan ya.',
-    intent: 'CREATE_COMPLAINT',
+    response: isKnowledge
+      ? 'Maaf Pak/Bu, saya belum bisa memastikan informasi itu dari sumber resmi desa. Boleh tanyakan ulang dengan lebih spesifik, atau hubungi kantor desa langsung ya.'
+      : 'Maaf Pak/Bu, laporannya belum sempat kami catat resmi tadi. Boleh tolong ulangi singkat: jenis masalahnya, lokasi (RT/RW atau patokan), dan nama Bapak/Ibu — biar langsung saya buatkan laporannya dengan nomor pelacakan ya.',
+    intent: isKnowledge ? 'KNOWLEDGE_QUERY' : 'CREATE_COMPLAINT',
     metadata: {
       processingTimeMs: Date.now() - startTime,
       hasKnowledge: false,
@@ -527,7 +633,7 @@ export async function verifyAnswer(input: VerifyInput): Promise<AnswerPolicyDeci
       ok: false,
       rewritten: true,
       reason: 'transaction_success_without_tool',
-      replacement: buildTransactionFallback(traceId, startTime),
+      replacement: buildTransactionFallback(traceId, startTime, result.intent),
     };
   }
 
@@ -557,7 +663,7 @@ export async function verifyAnswer(input: VerifyInput): Promise<AnswerPolicyDeci
       ok: false,
       rewritten: true,
       reason: 'service_detail_without_tool',
-      replacement: buildServiceDetailFallback(userMessage, traceId, startTime),
+      replacement: await buildServiceDetailFallback(userMessage, villageId, traceId, startTime),
     };
   }
 
@@ -654,8 +760,9 @@ export async function verifyAnswer(input: VerifyInput): Promise<AnswerPolicyDeci
       ok: false,
       rewritten: true,
       reason: 'service_detail_without_tool',
-      replacement: buildServiceDetailFallback(
+      replacement: await buildServiceDetailFallback(
         userMessage,
+        villageId,
         result.metadata?.traceId || 'unknown',
         Date.now() - (result.metadata?.processingTimeMs || 0),
       ),

@@ -181,6 +181,48 @@ services:
       retries: 5
       start_period: 60s
 
+  # ===================================================================================
+  # OPTIONAL: Whisper STT sidecar (voice note transcription)
+  # Profile-gated: NOT started by plain `docker compose up`.
+  # Start with: docker compose --profile stt up whisper-service -d
+  # ai-service connects via WHISPER_API_URL=http://whisper-service:8000
+  # ===================================================================================
+  whisper-service:
+    profiles: ["stt"]
+    image: ${IMAGE_WHISPER:-govconnect-whisper-service:local}
+    build:
+      context: ./whisper-service
+      dockerfile: Dockerfile
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
+    container_name: govconnect-whisper-service
+    ports:
+      - "127.0.0.1:${WHISPER_PORT:-8000}:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    env_file:
+      - .env
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-large-v3-turbo}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
+      - WHISPER_API_KEY=${WHISPER_API_KEY:-}
+      - WHISPER_DOWNLOAD_ROOT=/models
+    volumes:
+      - whisper-models:/models
+    networks:
+      - govconnect-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+
 # ===================================================================================
 # NETWORKS
 # ===================================================================================
@@ -202,3 +244,5 @@ volumes:
     name: gc-ai-uploads
   ai-data:
     name: gc-ai-data
+  whisper-models:
+    name: gc-whisper-models

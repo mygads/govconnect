@@ -21,6 +21,13 @@ vi.mock('../../config/env', () => ({
   },
 }));
 
+vi.mock('../knowledge.service', () => ({
+  searchKnowledge: vi.fn(async () => ({
+    total: 1,
+    context: 'UNTRUSTED RETRIEVAL CONTENT:\nSyarat pembuatan KTP: fotokopi KK dan surat pengantar RT/RW.',
+  })),
+}));
+
 import { verifyAnswer } from '../answer-policy.service';
 import type { ProcessMessageResult } from '../ump-types';
 
@@ -699,5 +706,85 @@ describe('verifyAnswer — phantom transaction guard', () => {
     });
 
     expect(decision.reason).not.toBe('transaction_success_without_tool');
+  });
+});
+
+describe('verifyAnswer — BUG-007 generic "no service" claims without tool use', () => {
+  it('rewrites "belum ada layanan aktif" when get_service_info was not called', async () => {
+    const result = baseResult({
+      intent: 'SERVICE_INFO',
+      response: 'Saat ini belum ada layanan aktif di desa kami.',
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'syarat buat KTP apa aja?',
+      result,
+      toolsUsed: [],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.rewritten).toBe(true);
+    expect(decision.kind).toBe('structured_fact_service_detail');
+    expect(decision.reason).toBe('service_detail_without_tool');
+    // Without villageId the KB step is skipped → honest canned fallback.
+    expect(decision.replacement?.response).toContain('belum bisa saya pastikan dari data resmi desa');
+  });
+
+  it('rewrites "tidak ada pelayanan" variants without tool use', async () => {
+    for (const response of [
+      'Maaf, tidak ada pelayanan yang tersedia saat ini.',
+      'Layanan belum tersedia untuk saat ini, coba lagi nanti ya.',
+    ]) {
+      const result = baseResult({ intent: 'SERVICE_INFO', response });
+      const decision = await verifyAnswer({
+        userMessage: 'biaya bikin surat domisili berapa?',
+        result,
+        toolsUsed: [],
+        handledByGuard: false,
+      });
+      expect(decision.ok).toBe(false);
+      expect(decision.reason).toBe('service_detail_without_tool');
+    }
+  });
+
+  it('passes through an honest empty-catalog answer grounded in get_service_info', async () => {
+    const result = baseResult({
+      intent: 'SERVICE_INFO',
+      response: 'Saat ini belum ada layanan aktif di desa kami.',
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'syarat buat KTP apa aja?',
+      result,
+      toolsUsed: ['get_service_info'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(true);
+    expect(decision.rewritten).toBe(false);
+  });
+});
+
+describe('verifyAnswer — BUG-009 service detail KB fallback', () => {
+  it('answers from KB ("Dari dokumen desa:") when DB service catalog is empty', async () => {
+    const result = baseResult({
+      intent: 'SERVICE_INFO',
+      response: 'Saat ini belum ada layanan aktif.',
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'syarat buat KTP apa aja?',
+      result,
+      toolsUsed: [],
+      handledByGuard: false,
+      villageId: 'village-1',
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.reason).toBe('service_detail_without_tool');
+    expect(decision.replacement?.response).toMatch(/^Dari dokumen desa:/);
+    expect(decision.replacement?.response).toContain('fotokopi KK');
+    expect(decision.replacement?.metadata?.hasKnowledge).toBe(true);
   });
 });

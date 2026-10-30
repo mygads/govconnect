@@ -245,3 +245,114 @@ describe('tryHandleServiceListingShortcut', () => {
     expect(result?.response).toMatch(/belum ada layanan/i);
   });
 });
+
+describe('[P1-2] govt service out-of-scope redirects', () => {
+  it('rejects SIM renewal with honest redirect', async () => {
+    const { buildGovtServiceRedirect, tryHandleOutOfScopeGuard } = await import('../pre-agent-state-router.service');
+    const redirect = buildGovtServiceRedirect('di desa bisa perpanjang SIM nggak?');
+    expect(redirect).not.toBeNull();
+    expect(redirect).toMatch(/SIM/i);
+    expect(redirect).toMatch(/Polres|Samsat/i);
+
+    const result = tryHandleOutOfScopeGuard({
+      message: 'di desa bisa perpanjang SIM nggak?',
+      traceId: 't1', startTime: Date.now(),
+    });
+    expect(result).not.toBeNull();
+    expect(result?.response).toMatch(/SIM/i);
+  });
+
+  it('rejects passport/STNK/BPJS/NPWP', async () => {
+    const { buildGovtServiceRedirect } = await import('../pre-agent-state-router.service');
+    expect(buildGovtServiceRedirect('mau bikin paspor')).toMatch(/Imigrasi/i);
+    expect(buildGovtServiceRedirect('perpanjang STNK')).toMatch(/Samsat/i);
+    expect(buildGovtServiceRedirect('daftar BPJS')).toMatch(/BPJS/i);
+    expect(buildGovtServiceRedirect('bikin NPWP')).toMatch(/Pajak/i);
+  });
+
+  it('returns null for in-scope services', async () => {
+    const { buildGovtServiceRedirect } = await import('../pre-agent-state-router.service');
+    expect(buildGovtServiceRedirect('mau bikin KTP')).toBeNull();
+    expect(buildGovtServiceRedirect('syarat KK')).toBeNull();
+  });
+});
+
+describe('[P1-3] multi-intent detection', () => {
+  it('detects multiple complaint topics', async () => {
+    const { detectMultiIntent } = await import('../pre-agent-state-router.service');
+    const result = detectMultiIntent('jalan rusak di rt 05, lampu mati, sampah numpuk 4 hari');
+    expect(result.isMulti).toBe(true);
+    expect(result.intents).toContain('complaint');
+    expect(result.topics.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('detects complaint + service_info mix', async () => {
+    const { detectMultiIntent } = await import('../pre-agent-state-router.service');
+    const result = detectMultiIntent('jalan rusak parah, terus syarat bikin KTP apa aja?');
+    expect(result.isMulti).toBe(true);
+    expect(result.intents).toContain('complaint');
+    expect(result.intents).toContain('service_info');
+  });
+
+  it('returns not multi for single topic', async () => {
+    const { detectMultiIntent } = await import('../pre-agent-state-router.service');
+    const result = detectMultiIntent('jalan rusak di rt 05');
+    expect(result.isMulti).toBe(false);
+  });
+
+  it('builds priority question response', async () => {
+    const { detectMultiIntent, buildMultiIntentResponse } = await import('../pre-agent-state-router.service');
+    const detection = detectMultiIntent('lampu mati dan sampah numpuk');
+    const response = buildMultiIntentResponse(detection);
+    expect(response).toMatch(/beberapa hal/i);
+    expect(response).toMatch(/mau mulai dari yang mana/i);
+  });
+});
+
+describe('[P1-4] spam guard', () => {
+  it('detects repeated identical messages as spam', async () => {
+    const { checkSpamGuard, clearSpamTracker } = await import('../pre-agent-state-router.service');
+    const userId = 'spam-test-user-1';
+    clearSpamTracker(userId);
+
+    expect(checkSpamGuard(userId, 'halo').isSpam).toBe(false);
+    expect(checkSpamGuard(userId, 'halo').isSpam).toBe(false);
+    const third = checkSpamGuard(userId, 'halo');
+    expect(third.isSpam).toBe(true);
+    expect(third.count).toBe(3);
+
+    clearSpamTracker(userId);
+  });
+
+  it('does not flag different messages as spam', async () => {
+    const { checkSpamGuard, clearSpamTracker } = await import('../pre-agent-state-router.service');
+    const userId = 'spam-test-user-2';
+    clearSpamTracker(userId);
+
+    checkSpamGuard(userId, 'halo');
+    checkSpamGuard(userId, 'mau tanya');
+    const result = checkSpamGuard(userId, 'halo lagi');
+    expect(result.isSpam).toBe(false);
+
+    clearSpamTracker(userId);
+  });
+
+  it('greeting shortcut deflects spam with clarification', async () => {
+    const { tryHandleGreetingShortcut, clearSpamTracker } = await import('../pre-agent-state-router.service');
+    const userId = 'spam-test-user-3';
+    clearSpamTracker(userId);
+
+    const input = {
+      message: 'halo', userId, traceId: 't1',
+      startTime: Date.now(), hasActiveState: false,
+    };
+    // First 2 are normal greetings
+    expect(tryHandleGreetingShortcut(input)?.response).toMatch(/selamat datang/i);
+    expect(tryHandleGreetingShortcut(input)?.response).toMatch(/selamat datang/i);
+    // 3rd triggers spam guard
+    const spamResult = tryHandleGreetingShortcut(input);
+    expect(spamResult?.response).toMatch(/terkirim beberapa kali/i);
+
+    clearSpamTracker(userId);
+  });
+});

@@ -6,17 +6,20 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+  schemas   = ["cases", "public"]
 }
 
 enum ChannelType {
   WHATSAPP
   WEBCHAT
+  @@schema("public")
 }
 
 enum ServiceMode {
   ONLINE
   OFFLINE
   BOTH
+  @@schema("cases")
 }
 
 model Complaint {
@@ -69,6 +72,7 @@ model Complaint {
   @@index([rt_rw])
   @@index([deleted_at])
   @@map("complaints")
+  @@schema("cases")
 }
 
 // ==================== PENGADUAN KATEGORI & JENIS ====================
@@ -91,6 +95,7 @@ model ComplaintCategory {
   @@index([name])
   @@index([name_key])
   @@map("complaint_categories")
+  @@schema("cases")
 }
 
 model ComplaintType {
@@ -116,6 +121,7 @@ model ComplaintType {
   @@index([name_key])
   @@index([important_contact_category_id])
   @@map("complaint_types")
+  @@schema("cases")
 }
 
 model ComplaintUpdate {
@@ -130,6 +136,7 @@ model ComplaintUpdate {
 
   @@index([complaint_id])
   @@map("complaint_updates")
+  @@schema("cases")
 }
 
 // ==================== LAYANAN DINAMIS ====================
@@ -151,6 +158,7 @@ model ServiceCategory {
   @@index([name])
   @@index([name_key])
   @@map("service_categories")
+  @@schema("cases")
 }
 
 model ServiceItem {
@@ -177,6 +185,7 @@ model ServiceItem {
   @@index([category_id])
   @@index([mode])
   @@map("services_dynamic")
+  @@schema("cases")
 }
 
 model ServiceRequirement {
@@ -196,6 +205,7 @@ model ServiceRequirement {
   @@index([service_id])
   @@index([field_type])
   @@map("service_requirements")
+  @@schema("cases")
 }
 
 model ServiceRequest {
@@ -244,6 +254,7 @@ model ServiceRequest {
   @@index([deleted_at])
   @@unique([service_id, channel, channel_identifier, idempotency_key], map: "service_requests_idempotency_key")
   @@map("service_requests")
+  @@schema("cases")
 }
 
 model ServiceRequestUpdate {
@@ -266,6 +277,7 @@ model ServiceRequestUpdate {
   @@index([new_status])
   @@index([created_at])
   @@map("service_request_updates")
+  @@schema("cases")
 }
 
 // ==================== EVENT OUTBOX ====================
@@ -296,6 +308,7 @@ model EventOutbox {
   @@index([routing_key, created_at])
   @@index([correlation_id])
   @@map("event_outbox")
+  @@schema("cases")
 }
 
 

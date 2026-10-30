@@ -19,6 +19,7 @@
  */
 
 import logger from '../utils/logger';
+import { assertNotAborted } from '../pipeline/abort-guard';
 import { rememberMemoryEvent } from './hybrid-memory.service';
 import {
   setPendingAddressRequest,
@@ -47,6 +48,7 @@ export type ComplaintFsmState =
   | 'waiting_for_address'
   | 'waiting_for_name'
   | 'waiting_for_phone'
+  | 'waiting_for_confirmation'
   | 'ready_to_submit'
   | 'submitted'
   | 'cancelled';
@@ -87,12 +89,23 @@ export type FsmInterrupt =
   | 'status_lookup'
   | 'contact_directory_interrupt'
   | 'service_info_switch'
+  | 'frustration'
+  | 'handoff_request'
+  | 'correction'
+  | 'question'
   | 'none';
 
 const EXPLICIT_ESCAPE_PATTERN = /\b(batal|cancel|lupakan|gausah|gak\s*jadi|nanti\s+(aja|dulu)|stop|berhenti)\b/i;
 const GREETING_PATTERN = /^(halo|hai|hi|hello|assalamualaikum|permisi|p|selamat (pagi|siang|sore|malam))[\s!.,?]*$/i;
 const STATUS_LOOKUP_PATTERN = /\b(lap|lay)-?\d{8}-?\d{3}\b/i;
-const SERVICE_SWITCH_PATTERN = /\b(saya\s+mau|ingin|urus|urusin)\s+(ktp|kk|akta|domisili|sktm|surat)\b/i;
+const SERVICE_SWITCH_PATTERN = /\b(saya\s+mau|ingin|urus|urusin|ngurus)\s+(ktp|kk|akta|domisili|sktm|surat)\b|\b(syarat|biaya|caranya).*\b(ktp|kk|akta|domisili|sktm|surat)\b/i;
+// E1/E2/E3/J2/J4: detect frustration, handoff requests, corrections, and
+// questions while a complaint draft is active so the FSM does not hijack
+// the turn by endlessly re-asking for the pending field.
+const FRUSTRATION_PATTERN = /\b(muter[-\s]?muter|berputar[-\s]?putar|lama\s+banget|kelamaan|payah|bodoh|menyebalkan|kesal|kesel|frustrasi|tidak\s+membantu|nggak\s+membantu|gak\s+membantu|capek|bosan|nyebelin|gajelas|nggak\s+jelas|gak\s+jelas)\b/i;
+const HANDOFF_PATTERN = /\b(petugas\s+asli|orang\s+asli|manusia|operator|cs\s+asli|bicara\s+dengan\s+(petugas|orang|manusia)|sambungkan|hubungkan\s+(ke|sama)|mau\s+(bicara|ngomong|ngobrol)\s+(sama|dengan|ke)|panggilkan\s+(petugas|admin|operator|orang)|panggil\s+(petugas|admin))\b/i;
+const CORRECTION_PATTERN = /\b(eh\s+)?(salah|rubah|ubah|ganti|koreksi|revisi|maksud\s+(saya|aku|gue)|bukan\s+itu|bukan\s+di|bukan\s+[^,]+,\s*(?:tapi|melainkan)|eh\s+bukan,?\s*\w+|bukan\s+\w+,?\s*\w+\s+(?:rusak|mati|baru|lain))\b/i;
+const QUESTION_PATTERN = /^(kapan|bagaimana|gimana|kenapa|mengapa|dimana|di\s+mana|berapa|apakah|bisakah|bisa\s+nggak|bisa\s+tidak).*\?|^.*\?\s*$/i;
 
 export function detectComplaintInterrupt(message: string): FsmInterrupt {
   const trimmed = (message || '').trim();
@@ -103,6 +116,10 @@ export function detectComplaintInterrupt(message: string): FsmInterrupt {
   if (STATUS_LOOKUP_PATTERN.test(trimmed)) return 'status_lookup';
   if (isContactDirectoryLookup(trimmed)) return 'contact_directory_interrupt';
   if (SERVICE_SWITCH_PATTERN.test(trimmed)) return 'service_info_switch';
+  if (FRUSTRATION_PATTERN.test(trimmed)) return 'frustration';
+  if (HANDOFF_PATTERN.test(trimmed)) return 'handoff_request';
+  if (CORRECTION_PATTERN.test(trimmed)) return 'correction';
+  if (QUESTION_PATTERN.test(trimmed)) return 'question';
 
   return 'none';
 }
@@ -146,6 +163,13 @@ export async function decideAddressResume(input: {
     return { action: 'reprompt', reason: 'too_short' };
   }
 
+  // Deterministic: pola RT/RW sederhana langsung diterima tanpa LLM
+  // Contoh: "rt 05", "RT 05", "rt 05 rw 02", "rt05/rw02"
+  const rtRwPattern = /\brt\s*\.?\s*\d{1,3}\s*(\/\s*rw\s*\.?\s*\d{1,3}|rw\s*\.?\s*\d{1,3})?\b/i;
+  if (rtRwPattern.test(trimmed)) {
+    return { action: 'resume', alamat: trimmed, reason: 'nlu_extracted' };
+  }
+
   const extracted = await extractAddressFromMessage(trimmed, input.userId, {
     village_id: input.pendingAddr.village_id,
     channel: input.channel,
@@ -175,6 +199,14 @@ export async function decideAddressResume(input: {
       return { action: 'resume', alamat: addrAnalysis.address, reason: 'nlu_usable' };
     }
 
+    // [P0#2 FIX] Dalam konteks komplain, deskripsi lokasi landmark ("tps deket pasar",
+    // "depan masjid", "dekat sekolah") valid walau tanpa RT/RW formal. Terima jika
+    // mengandung kata lokasi umum.
+    const hasLocationHint = /\b(tps|pasar|masjid|mushola|sekolah|kantor|balai|desa|dusun|gang|jalan|jl\.?|depan|belakang|samping|dekat|samping|sebelah|depan|pos|ronda|pertigaan|perempatan|jembatan|sungai|kali|lapangan)\b/i.test(trimmed);
+    if (hasLocationHint && trimmed.length >= 10) {
+      return { action: 'resume', alamat: trimmed, reason: 'nlu_usable' };
+    }
+
     return { action: 'reprompt', reason: 'not_address' };
   }
 
@@ -184,7 +216,7 @@ export async function decideAddressResume(input: {
 export interface DecideIdentityResumeInput {
   userId: string;
   message: string;
-  waitingFor: 'nama' | 'no_hp';
+  waitingFor: 'nama' | 'no_hp' | 'konfirmasi';
   channel: ChannelType;
   villageId?: string;
 }
@@ -192,12 +224,84 @@ export interface DecideIdentityResumeInput {
 export type DecideIdentityResumeOutput =
   | { action: 'interrupt'; reason: FsmInterrupt }
   | { action: 'reprompt'; reason: 'invalid_name' | 'invalid_phone' }
+  | { action: 'confirm'; resolution: 'execute' | 'cancel' | 'edit' | 'reverify' }
   | { action: 'resume'; extractedName?: string; extractedPhone?: string };
 
+/**
+ * P0-4 (2026-10-02): Deterministic name extraction fallback.
+ */
+export function extractNameDeterministic(message: string): string | null {
+  const trimmed = message.trim();
+  if (!trimmed || trimmed.length > 50) return null;
+  const explicitMatch = trimmed.match(
+    /(?:nama\s+saya|namaku|saya\s+bernama|panggil\s+(?:saya|aku))\s+([A-Za-z][A-Za-z\s]{1,40})/i
+  );
+  if (explicitMatch) {
+    const name = normalizeDeterministicName(explicitMatch[1]);
+    if (name) return name;
+  }
+  const words = trimmed.split(/\s+/);
+  if (words.length >= 2 && words.length <= 3) {
+    const allCapitalized = words.every((w) => /^[A-Z][a-z]+$/.test(w));
+    const hasNumber = /\d/.test(trimmed);
+    const nonNameWords = /^(yang|dan|atau|dengan|untuk|dari|ke|di|saya|aku|kami|kita|ini|itu|adalah|jalan|gang|rt|rw|dusun|desa|nomor|no|telp|hp)$/i;
+    const hasNonNameWord = words.some((w) => nonNameWords.test(w));
+    if (allCapitalized && !hasNumber && !hasNonNameWord) {
+      return normalizeDeterministicName(trimmed);
+    }
+  }
+  return null;
+}
+
+function normalizeDeterministicName(name: string): string | null {
+  const cleaned = name.trim().replace(/\s+/g, ' ');
+  if (cleaned.length < 2) return null;
+  const words = cleaned.split(' ').slice(0, 3);
+  if (words.some((w) => w.length < 2 || !/^[A-Za-z]+$/.test(w))) return null;
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
 export async function decideIdentityResume(input: DecideIdentityResumeInput): Promise<DecideIdentityResumeOutput> {
+  // P1-1: VERIFY stage — check confirmation BEFORE interrupt detection,
+  // so "batal"/"ubah" during verify are handled as confirm resolutions.
+  // Explicit cancel during verify still releases via the interrupt path below
+  // for safety, but confirm resolutions take precedence for UX clarity.
+  if (input.waitingFor === 'konfirmasi') {
+    const { isExplicitConfirmation, isCancellation, isCorrectionRequest } = await import('../pipeline/slot-fsm');
+    const trimmed = input.message.trim();
+    // Check explicit confirmation first (highest priority)
+    if (isExplicitConfirmation(trimmed)) {
+      return { action: 'confirm', resolution: 'execute' };
+    }
+    if (isCancellation(trimmed)) {
+      return { action: 'confirm', resolution: 'cancel' };
+    }
+    if (isCorrectionRequest(trimmed)) {
+      return { action: 'confirm', resolution: 'edit' };
+    }
+    // Fall through to interrupt detection for other patterns,
+    // then to reverify if nothing matches
+    const interruptDuringVerify = detectComplaintInterrupt(input.message);
+    if (interruptDuringVerify !== 'none') {
+      return { action: 'interrupt', reason: interruptDuringVerify };
+    }
+    return { action: 'confirm', resolution: 'reverify' };
+  }
+
   const interrupt = detectComplaintInterrupt(input.message);
   if (interrupt !== 'none') {
     return { action: 'interrupt', reason: interrupt };
+  }
+
+  // E1: if waiting for name but the message looks like a location (not a
+  // name), treat it as an implicit location correction — don't hijack.
+  if (input.waitingFor === 'nama') {
+    const looksLikeLocation = /\b(gang|jl\.?|jln|jalan|rt\s*\d|rw\s*\d|dusun|kampung|depan|belakang|samping|sebelah|dekat|patokan)\b/i.test(input.message);
+    const looksLikeName = /^[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/.test(input.message.trim()) ||
+      /\b(nama\s+(saya|aku)|namaku|saya\s+bernama|panggil\s+(saya|aku))\b/i.test(input.message);
+    if (looksLikeLocation && !looksLikeName) {
+      return { action: 'interrupt', reason: 'correction' };
+    }
   }
 
   const trimmed = input.message.trim();
@@ -214,7 +318,11 @@ export async function decideIdentityResume(input: DecideIdentityResumeInput): Pr
         return { action: 'resume', extractedName: result.name };
       }
     } catch {
-      // fall through
+      // fall through to deterministic fallback
+    }
+    const deterministicName = extractNameDeterministic(trimmed);
+    if (deterministicName) {
+      return { action: 'resume', extractedName: deterministicName };
     }
     return { action: 'reprompt', reason: 'invalid_name' };
   }
@@ -258,9 +366,13 @@ export async function getComplaintSnapshot(userId: string): Promise<ComplaintFsm
   ]);
 
   if (identityPending) {
+    const state: ComplaintFsmState =
+      identityPending.waitingFor === 'nama' ? 'waiting_for_name'
+      : identityPending.waitingFor === 'no_hp' ? 'waiting_for_phone'
+      : 'waiting_for_confirmation';
     return {
-      state: identityPending.waitingFor === 'nama' ? 'waiting_for_name' : 'waiting_for_phone',
-      waitingFor: identityPending.waitingFor,
+      state,
+      waitingFor: identityPending.waitingFor === 'konfirmasi' ? undefined : identityPending.waitingFor,
       draft: {
         kategori: identityPending.kategori,
         deskripsi: identityPending.deskripsi,
@@ -269,6 +381,8 @@ export async function getComplaintSnapshot(userId: string): Promise<ComplaintFsm
         village_id: identityPending.village_id,
         channel: identityPending.channel,
         foto_url: identityPending.foto_url,
+        reporter_name: identityPending.reporter_name,
+        reporter_phone: identityPending.reporter_phone,
       },
       action: 'persist_waiting_identity',
       reason: 'pending_identity_state',
@@ -301,7 +415,7 @@ export async function submitComplaintDraft(input: {
   userId: string;
   draft: ComplaintDraft;
   channel: ChannelType;
-}): Promise<{ ok: boolean; reference?: string; reason?: string }> {
+}, opts?: { signal?: AbortSignal }): Promise<{ ok: boolean; reference?: string; reason?: string }> {
   const categoryConfig = input.draft.kategori
     ? await resolveComplaintTypeConfig(input.draft.kategori, input.draft.village_id)
     : null;
@@ -310,15 +424,23 @@ export async function submitComplaintDraft(input: {
     return { ok: false, reason: 'missing_fields' };
   }
 
+  // P1-2: normalize kategori to the canonical category name from DB.
+  const { resolveComplaintCategoryName } = await import('./ump-utils');
+  const normalizedKategori = await resolveComplaintCategoryName(input.draft.kategori, input.draft.village_id)
+    || categoryConfig?.name
+    || input.draft.kategori;
+
   try {
+    // P1-5: fail-closed — no write after the turn was aborted.
+    assertNotAborted(opts?.signal, 'create_complaint');
     const { createComplaint } = await import('./case-client.service');
-    const profile = await getAutoFillSuggestionsWithFallback(input.userId);
+    const profile = await getAutoFillSuggestionsWithFallback(input.userId, input.draft.village_id); // W5: village-scoped
 
     const complaintId = await createComplaint({
       wa_user_id: input.channel === 'whatsapp' ? input.userId : undefined,
       channel: input.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
       channel_identifier: input.channel === 'webchat' ? input.userId : undefined,
-      kategori: categoryConfig?.name || input.draft.kategori,
+      kategori: normalizedKategori,
       deskripsi: input.draft.deskripsi,
       alamat: input.draft.alamat,
       rt_rw: input.draft.rt_rw,
@@ -349,7 +471,7 @@ export async function submitComplaintDraft(input: {
       content: `Laporan ${complaintId} dibuat via FSM resume untuk kategori ${categoryConfig?.name || input.draft.kategori}${input.draft.alamat ? ` di ${input.draft.alamat}` : ''}.`,
       metadata_json: {
         reference_number: complaintId,
-        kategori: categoryConfig?.name || input.draft.kategori,
+        kategori: normalizedKategori,
         alamat: input.draft.alamat,
         rt_rw: input.draft.rt_rw,
         is_urgent: categoryConfig?.is_urgent === true,
@@ -396,4 +518,32 @@ export async function releaseIdentityDraft(userId: string): Promise<void> {
 
 export const __test_only__ = {
   detectComplaintInterrupt,
+  buildConfirmationSummary,
 };
+
+/**
+ * P1-1: Build the VERIFY-stage summary shown to the citizen before a
+ * complaint is created. Per architecture \u00a74 (VERIFIKASI \u2192 EKSEKUSI), the
+ * citizen must review and explicitly confirm the collected data.
+ */
+export function buildConfirmationSummary(input: {
+  kategori: string;
+  deskripsi?: string;
+  alamat?: string;
+  reporter_name?: string;
+  reporter_phone?: string;
+  kategoriLabel?: string;
+}): string {
+  const lines = [
+    'Mohon periksa kembali laporan Anda:',
+    '',
+    `\uD83D\uDCCB Kategori: ${input.kategoriLabel || input.kategori}`,
+    `\uD83D\uDCDD Deskripsi: ${input.deskripsi || '-'}`,
+  ];
+  if (input.alamat) lines.push(`\uD83D\uDCCD Lokasi: ${input.alamat}`);
+  if (input.reporter_name) lines.push(`\uD83D\uDC64 Nama: ${input.reporter_name}`);
+  if (input.reporter_phone) lines.push(`\uD83D\uDCDE Telepon: ${input.reporter_phone}`);
+  lines.push('');
+  lines.push('Apakah data sudah benar? Balas **YA** untuk mengirim laporan, atau sebutkan bagian yang perlu diubah.');
+  return lines.join('\n');
+}
