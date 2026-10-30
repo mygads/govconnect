@@ -400,6 +400,25 @@ jobs:
             echo "⏭️ ENV_FILE secret not set, skipping .env update"
           fi
 
+      - name: Validate required secrets (fail-fast)
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          # Fail-fast: ai-service refuses to boot in production without a
+          # valid 64-hex NIK_VAULT_KEY (assertVaultKeyConfigured in
+          # govconnect-ai-service/src/pipeline/pii-vault.ts). Catch a
+          # missing/invalid key here in seconds instead of after a full
+          # deploy + health-check failure.
+          key=$(printf '%s' "$ENV_FILE" | grep -E '^(export[[:space:]]+)?NIK_VAULT_KEY=' | tail -n 1 | cut -d= -f2- | tr -d '[:space:]' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+          if ! printf '%s' "$key" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+            echo "❌ NIK_VAULT_KEY missing or invalid in ENV_FILE secret."
+            echo "   Generate one with: openssl rand -hex 32"
+            echo "   Then add this line to the ENV_FILE secret:"
+            echo "   NIK_VAULT_KEY=<64 hex chars>"
+            exit 1
+          fi
+          echo "✅ NIK_VAULT_KEY present and well-formed (value not shown)"
+
       - name: Deploy with Docker Compose
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -737,6 +756,16 @@ jobs:
 
             if [ "$failures" -gt 0 ]; then
               echo "❌ $failures health checks failed"
+              echo ""
+              echo "=== Container status ==="
+              docker compose ps
+              echo ""
+              echo "=== Recent service logs (for diagnosis) ==="
+              for service in ai-service case-service notification-service channel-service dashboard; do
+                echo "--- $service (last 60 lines) ---"
+                docker compose logs --tail=60 "$service" 2>&1 | tail -60
+                echo ""
+              done
               exit 1
             fi
 
