@@ -292,6 +292,18 @@ export async function setDocumentPublishStatus(
  * Read the current publish status of a document's vectors (null = no vectors).
  * Used by ingest to preserve the review state across re-ingests.
  */
+/**
+ * Resolve the village scope(s) owning a document's vectors ([] = no vectors
+ * indexed yet). Used by the publish/withdraw flow for tenant-aware cache
+ * invalidation — retrieval, semantic & FAQ caches are all keyed per tenant.
+ */
+export async function getDocumentVillageIds(documentId: string): Promise<Array<string | null>> {
+  const rows = await prisma.$queryRaw<Array<{ village_id: string | null }>>`
+    SELECT DISTINCT village_id FROM ai.document_vectors WHERE document_id = ${documentId}
+  `;
+  return rows.map((r: { village_id: string | null }) => r.village_id);
+}
+
 export async function getDocumentPublishStatus(documentId: string): Promise<DocumentPublishStatus | null> {
   const rows = await prisma.$queryRaw<Array<{ publish_status: string }>>`
     SELECT DISTINCT publish_status FROM ai.document_vectors WHERE document_id = ${documentId} LIMIT 2

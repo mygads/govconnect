@@ -1292,7 +1292,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
   // bawah user lock (processUnifiedMessage) agar serial per user.
   const trackSession = !isEvaluation && (sideEffectMode ?? 'production') === 'production';
   if (trackSession && userId) {
-    checkSessionEnd(userId);
+    checkSessionEnd(userId, villageId ?? undefined);
   }
 
   // F7: Guard untuk pesan kosong/whitespace-only — respons graceful langsung,

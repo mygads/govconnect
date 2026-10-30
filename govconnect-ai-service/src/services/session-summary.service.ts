@@ -94,6 +94,11 @@ export function noteSessionTurn(note: SessionTurnNote): void {
     if (!note.userKey) return;
     const now = Date.now();
     let entry = tracked.get(note.userKey);
+    // Backfill village scope: entry bisa dibuat lebih dulu oleh
+    // checkSessionEnd() tanpa village_id (lih. AGENTS.md: village scoping wajib).
+    if (entry && !entry.village_id && note.village_id) {
+      entry.village_id = note.village_id;
+    }
     if (!entry) {
       entry = {
         wa_user_id: note.wa_user_id,
@@ -135,15 +140,18 @@ export function noteSessionTurn(note: SessionTurnNote): void {
  * lalu tracking di-reset untuk session baru.
  * Tidak pernah throw.
  */
-export function checkSessionEnd(userKey: string): void {
+export function checkSessionEnd(userKey: string, villageId?: string): void {
   try {
     if (!userKey) return;
     const entry = tracked.get(userKey);
     const now = Date.now();
     if (!entry) {
       // Belum pernah tercatat — mulai tracking session baru.
+      // villageId langsung disimpan agar summary final tidak kehilangan scope
+      // (searchUserMemories memfilter per village; village_id null = tak ketemu).
       tracked.set(userKey, {
         wa_user_id: userKey,
+        village_id: villageId,
         sessionStartTs: now,
         lastActivityTs: now,
         digest: '',
@@ -151,6 +159,10 @@ export function checkSessionEnd(userKey: string): void {
         hasOutcome: false,
       });
       return;
+    }
+    // Backfill bila entry lama belum punya village scope.
+    if (!entry.village_id && villageId) {
+      entry.village_id = villageId;
     }
     if (now - entry.lastActivityTs < SESSION_IDLE_TIMEOUT_MS) return;
 

@@ -1195,7 +1195,7 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
   // dan ringkasannya di-save (fail-open, sekali per session).
   const trackSession = billable;
   if (trackSession && input.userId) {
-    checkSessionEnd(input.userId);
+    checkSessionEnd(input.userId, input.villageId ?? undefined);
   }
 
   const messageId = input.messageId ?? `${input.channel}:${input.userId}:${Date.now().toString(36)}`;

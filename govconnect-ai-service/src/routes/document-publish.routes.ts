@@ -19,9 +19,14 @@ import { Router, type Request, type Response } from 'express';
 import {
   setDocumentPublishStatus,
   isValidPublishStatus,
+  getDocumentVillageIds,
   type DocumentPublishStatus,
 } from '../services/vector-db.service';
 import { updateDashboardDocument } from '../services/document-ingest.service';
+import { faqCacheInvalidate } from '../services/faq-cache.service';
+import { semanticCacheInvalidate } from '../pipeline/pipeline-store';
+import { clearRetrievalCache } from '../services/rag.service';
+import { invalidateVillageCache } from '../services/response-cache.service';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -66,6 +71,38 @@ async function applyStatus(
   }
 
   await mirrorToDashboard(documentId, status);
+
+  // Publication change → cached answers may still cite withdrawn/superseded
+  // docs (process-message-v2 serves FAQ hits before the agent without
+  // rechecking publish_status). Invalidate retrieval + semantic/FAQ caches
+  // for every affected village scope. Best-effort: never fail the publish.
+  try {
+    const tenants = new Set<string>();
+    for (const id of [documentId, ...superseded]) {
+      try {
+        const villages = await getDocumentVillageIds(id);
+        for (const v of villages) tenants.add(v ?? 'global');
+      } catch {
+        // Resolve best-effort; fall through to tenant fallback below.
+      }
+    }
+    if (tenants.size === 0) tenants.add('global');
+    for (const tenant of tenants) {
+      const villageId = tenant === 'global' ? null : tenant;
+      clearRetrievalCache(villageId);
+      if (villageId) invalidateVillageCache(villageId);
+      void semanticCacheInvalidate(tenant).catch(() => undefined);
+      void faqCacheInvalidate(tenant).catch(() => undefined);
+    }
+    logger.info('Document caches invalidated on publish change', {
+      documentId, status, tenants: [...tenants],
+    });
+  } catch (err: any) {
+    logger.warn('Document cache invalidation failed (non-fatal)', {
+      documentId, status, error: err?.message,
+    });
+  }
+
   return { chunks_updated: chunksUpdated, superseded };
 }
 

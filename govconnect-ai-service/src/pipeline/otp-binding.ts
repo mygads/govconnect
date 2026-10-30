@@ -89,8 +89,13 @@ export async function requestOtp(input: {
     }
 
     // Invalidate kode lama yang belum terverifikasi (single active code).
+    // PENTING: invalidasi via expires_at, BUKAN verified_at. verified_at hanya
+    // boleh diset oleh verifyOtp() saat warga memasukkan kode yang benar —
+    // bindNik() menganggap setiap baris verified_at non-null sebagai bukti
+    // verifikasi, jadi menandai kode lama sebagai "verified" membuka bypass
+    // (minta 2 kode → bind tanpa verifikasi).
     await db.$executeRawUnsafe(
-      `UPDATE pipeline_otp_codes SET verified_at=now()
+      `UPDATE pipeline_otp_codes SET expires_at=now()
         WHERE tenant_id=$1 AND wa_number=$2 AND purpose=$3 AND verified_at IS NULL
           AND expires_at > now()`,
       tenantId, waNumber, purpose,
